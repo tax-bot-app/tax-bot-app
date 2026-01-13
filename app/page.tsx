@@ -17,7 +17,7 @@ export default function Home() {
       } = await supabase.auth.getSession();
 
       if (sessionErr || !session?.access_token) {
-        alert("ログインしてください（セッションが取得できません）");
+        window.location.href = "/login";
         return;
       }
 
