@@ -15,10 +15,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// priceId → plan/quota 対応表（実IDに差し替え）
+// priceId → plan/quota 対応表（実ID）
 const PRICE_TO_PLAN: Record<string, { plan: string; monthly_quota: number }> = {
-  // "price_xxx": { plan: "lite", monthly_quota: 5 },
-  // "price_yyy": { plan: "pro", monthly_quota: 30 },
+  price_1SmqJoQ3OyVaMed9QdAkDBzA: { plan: "lite", monthly_quota: 5 },
+  price_1Sm8qnQ3OyVaMed9WMDOPgLZ: { plan: "standard", monthly_quota: 20 },
+  price_1Smq2QQ3OyVaMed9uh5CgQfD: { plan: "enterprise", monthly_quota: 100 },
 };
 
 function planFromPrice(priceId?: string | null) {
@@ -51,37 +52,39 @@ async function updateUserById(params: {
   if (error) throw new Error(`Supabase update failed: ${error.message}`);
 }
 
+async function getUserIdFromCustomer(customerId: string) {
+  const customer = (await stripe.customers.retrieve(customerId)) as Stripe.Customer;
+
+  if (!customer || (customer as any).deleted) return null;
+
+  const userId =
+    typeof customer.metadata?.user_id === "string" ? customer.metadata.user_id : null;
+
+  return userId;
+}
+
 async function handleSubscription(sub: Stripe.Subscription) {
   const customerId =
     typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
+
   if (!customerId) throw new Error("Subscription has no customer id");
 
-  // ★最優先：client_reference_id = user.id
+  // まずは subscription.metadata.user_id（将来用）
   let userId: string | null =
     typeof sub.metadata?.user_id === "string" ? sub.metadata.user_id : null;
 
-  // Checkout経由なら subscription に client_reference_id は入らないので
-  // customer or session 側を見る
+  // 次に customer.metadata.user_id（現メイン）
   if (!userId) {
-    // customer metadata fallback
-    const customer = (await stripe.customers.retrieve(
-      customerId
-    )) as Stripe.Customer;
-
-    if (customer && !customer.deleted) {
-      userId =
-        typeof customer.metadata?.user_id === "string"
-          ? customer.metadata.user_id
-          : null;
-    }
+    userId = await getUserIdFromCustomer(customerId);
   }
 
   if (!userId) {
     console.warn("⚠ userId not found on subscription/customer", {
+      event: "subscription.*",
       subscriptionId: sub.id,
       customerId,
     });
-    return; // user特定できない場合は落とさず終了（再送地獄回避）
+    return; // user特定できない場合は落とさず終了（Stripe再送ループ回避）
   }
 
   const priceId = sub.items.data?.[0]?.price?.id ?? null;
@@ -89,12 +92,74 @@ async function handleSubscription(sub: Stripe.Subscription) {
 
   const active = isActiveLike(sub.status);
 
+  console.log("✅ subscription event mapped", {
+    subscriptionId: sub.id,
+    customerId,
+    userId,
+    status: sub.status,
+    priceId,
+    mappedPlan: mapped.plan,
+    mappedQuota: mapped.monthly_quota,
+    willSetPlan: active ? mapped.plan : "free",
+    willSetQuota: active ? mapped.monthly_quota : 0,
+  });
+
   await updateUserById({
     userId,
     plan: active ? mapped.plan : "free",
     monthly_quota: active ? mapped.monthly_quota : 0,
     stripe_customer_id: customerId,
   });
+}
+
+async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
+  const userId =
+    typeof session.client_reference_id === "string"
+      ? session.client_reference_id
+      : null;
+
+  const customerId =
+    typeof session.customer === "string" ? session.customer : null;
+
+  const sessionId = session.id;
+
+  console.log("✅ checkout.session.completed", {
+    sessionId,
+    userId,
+    customerId,
+    mode: session.mode,
+    payment_status: session.payment_status,
+  });
+
+  // Customer に user_id を刻む（subscriptionイベントが customer から user_id を取れるようになる）
+  if (userId && customerId) {
+    await stripe.customers.update(customerId, {
+      metadata: { user_id: userId },
+    });
+    console.log("✅ customer.metadata.user_id set", { customerId, userId });
+  } else {
+    console.warn("⚠ missing userId or customerId on checkout session", {
+      sessionId,
+      userId,
+      customerId,
+    });
+  }
+
+  // ついでに「今すぐ反映」もやる（subscription.created を待たず plan 反映）
+  // ここがあると、体感が爆速になる & “永遠にfree” をさらに潰せる
+  try {
+    if (userId) {
+      const subId =
+        typeof session.subscription === "string" ? session.subscription : null;
+
+      if (subId) {
+        const sub = await stripe.subscriptions.retrieve(subId);
+        await handleSubscription(sub);
+      }
+    }
+  } catch (e: any) {
+    console.warn("⚠ optional immediate sync failed (safe to ignore)", e?.message);
+  }
 }
 
 export async function POST(req: Request) {
@@ -123,21 +188,7 @@ export async function POST(req: Request) {
 
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
-
-        const userId =
-          typeof session.client_reference_id === "string"
-            ? session.client_reference_id
-            : null;
-
-        const customerId =
-          typeof session.customer === "string" ? session.customer : null;
-
-        // Customer に user_id を刻んでおく（今後のsubscriptionイベント用）
-        if (userId && customerId) {
-          await stripe.customers.update(customerId, {
-            metadata: { user_id: userId },
-          });
-        }
+        await handleCheckoutCompleted(session);
         break;
       }
 
