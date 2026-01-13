@@ -14,6 +14,12 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
+const PLAN_TO_PRICE: Record<string, string> = {
+  lite: "price_1SmqJoQ3OyVaMed9QdAkDBzA",
+  standard: "price_1Sm8qnQ3OyVaMed9WMDOPgLZ",
+  enterprise: "price_1Smq2QQ3OyVaMed9uh5CgQfD",
+};
+
 function getBaseUrl(req: NextRequest) {
   const vercelUrl = process.env.VERCEL_URL;
   if (vercelUrl) return `https://${vercelUrl}`;
@@ -58,15 +64,25 @@ export async function POST(req: NextRequest) {
     const userId = user.id;
     const userEmail = user.email ?? null;
 
-    // ② Checkout Session作成：Stripeに user.id を埋め込む（メール依存脱却の核）
+    // ② ここが肝：body から plan を読む（読めなければ lite）
+    const body = await req.json().catch(() => ({}));
+    const plan = typeof body?.plan === "string" ? body.plan : "lite";
+
+    const priceId = PLAN_TO_PRICE[plan];
+    if (!priceId) {
+      return NextResponse.json({ error: "invalid plan" }, { status: 400 });
+    }
+
+    // ③ どのpriceを使ってるかログ（確認用）
+    console.log("✅ create-checkout", { userId, plan, priceId });
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      line_items: [{ price: process.env.STRIPE_PRICE_ID!, quantity: 1 }],
+      line_items: [{ price: priceId, quantity: 1 }],
 
-      // ★これが重要：Webhook側で user.id で更新できるようになる
+      // Webhook側で user.id で更新できる
       client_reference_id: userId,
 
-      // 初回Customer作成/紐付けの保険（メールが取れてるなら入れる）
       ...(userEmail ? { customer_email: userEmail } : {}),
 
       success_url: `${baseUrl}/success`,
@@ -74,7 +90,7 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ url: session.url });
-  } catch (err) {
+  } catch (err: any) {
     console.error(err);
     return NextResponse.json({ error: "checkout error" }, { status: 500 });
   }
