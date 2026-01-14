@@ -8,60 +8,74 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-type ChatMsg = { role: "user" | "assistant"; text: string };
+type ChatRes =
+  | {
+      ok: true;
+      plan: string;
+      used_talks: number | null;
+      limit_talks: number | null;
+      reply: string;
+    }
+  | {
+      error: string;
+      plan?: string;
+      used_talks?: number | null;
+      limit_talks?: number | null;
+    };
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [messages, setMessages] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
 
   const send = async () => {
-    const text = input.trim();
-    if (!text || sending) return;
+    if (!input || sending) return;
+
+    const text = input;
+    setInput("");
+    setMessages((prev) => [...prev, `あなた: ${text}`]);
 
     setSending(true);
-    setMessages((prev) => [...prev, { role: "user", text }]);
-    setInput("");
-
     try {
+      // ① ログインセッション（Bearerトークン）取得
       const {
         data: { session },
+        error: sessionErr,
       } = await supabase.auth.getSession();
 
-      if (!session?.access_token) {
+      if (sessionErr || !session?.access_token) {
         window.location.href = "/login";
         return;
       }
 
+      const accessToken = session.access_token;
+
+      // ② /api/chat を Bearer付きで叩く
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({ message: text }),
       });
 
-      const data = await res.json();
+      const data = (await res.json()) as ChatRes;
 
       if (!res.ok) {
-        // quota超過はここに来る
+        // 回数制限（402想定）
         const msg =
           data?.error === "quota exceeded"
-            ? `今月の上限です（${data.used_talks}/${data.limit_talks}）。プラン変更をご検討ください。`
-            : data?.error ?? "エラーが発生しました";
-
-        setMessages((prev) => [...prev, { role: "assistant", text: msg }]);
+            ? `AI: 回数上限です（${data.used_talks ?? "?"}/${data.limit_talks ?? "?"}）`
+            : `AI: ${data?.error ?? "chat error"}`;
+        setMessages((prev) => [...prev, msg]);
         return;
       }
 
-      setMessages((prev) => [...prev, { role: "assistant", text: data.reply }]);
+      setMessages((prev) => [...prev, `AI: ${data.reply}`]);
     } catch (e) {
       console.error(e);
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", text: "通信エラーです。もう一回やってみて。" },
-      ]);
+      setMessages((prev) => [...prev, "AI: 予期せぬエラー"]);
     } finally {
       setSending(false);
     }
@@ -82,7 +96,7 @@ export default function ChatPage() {
       >
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 8 }}>
-            <b>{m.role === "user" ? "あなた" : "AI"}:</b> {m.text}
+            {m}
           </div>
         ))}
         {messages.length === 0 && (
@@ -104,7 +118,6 @@ export default function ChatPage() {
           onKeyDown={(e) => {
             if (e.key === "Enter") send();
           }}
-          disabled={sending}
         />
         <button
           onClick={send}
@@ -117,7 +130,7 @@ export default function ChatPage() {
             opacity: sending ? 0.6 : 1,
           }}
         >
-          {sending ? "送信中…" : "送信"}
+          {sending ? "送信中" : "送信"}
         </button>
       </div>
     </main>
