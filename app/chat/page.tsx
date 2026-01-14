@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
 
 type ChatRes =
   | {
@@ -14,125 +14,211 @@ type ChatRes =
       plan: string;
       used_talks: number | null;
       limit_talks: number | null;
-      reply: string;
+      message: string;
     }
   | {
+      ok: false;
       error: string;
-      plan?: string;
       used_talks?: number | null;
       limit_talks?: number | null;
     };
 
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
 export default function ChatPage() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<string[]>([]);
-  const [sending, setSending] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { role: "assistant", content: "AI: 相談内容をどうぞ。" },
+  ]);
+  const [loading, setLoading] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
 
-  const send = async () => {
-    if (!input || sending) return;
+  const bottomRef = useRef<HTMLDivElement | null>(null);
 
-    const text = input;
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  useEffect(() => {
+    // セッションの準備（ログイン済み前提の画面）
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "AI: ログインが必要です。" },
+        ]);
+        setSessionReady(false);
+        return;
+      }
+      setSessionReady(true);
+    })();
+  }, []);
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || loading) return;
+
     setInput("");
-    setMessages((prev) => [...prev, `あなた: ${text}`]);
+    setLoading(true);
+    setMessages((prev) => [...prev, { role: "user", content: text }]);
 
-    setSending(true);
     try {
-      // ① ログインセッション（Bearerトークン）取得
-      const {
-        data: { session },
-        error: sessionErr,
-      } = await supabase.auth.getSession();
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
 
-      if (sessionErr || !session?.access_token) {
-        window.location.href = "/login";
+      if (!accessToken) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "AI: セッションが切れています。再ログインしてください。" },
+        ]);
+        setLoading(false);
         return;
       }
 
-      const accessToken = session.access_token;
-
-      // ② /api/chat を Bearer付きで叩く
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({
+          message: text,
+        }),
       });
 
-      const data = (await res.json()) as ChatRes;
-
-      if (!res.ok) {
-        // 回数制限（402想定）
-        const msg =
-          data?.error === "quota exceeded"
-            ? `AI: 回数上限です（${data.used_talks ?? "?"}/${data.limit_talks ?? "?"}）`
-            : `AI: ${data?.error ?? "chat error"}`;
-        setMessages((prev) => [...prev, msg]);
-        return;
+      // ここで落ちても JSON を拾えるようにする
+      let dataJson: ChatRes | null = null;
+      try {
+        dataJson = (await res.json()) as ChatRes;
+      } catch {
+        dataJson = null;
       }
 
-      setMessages((prev) => [...prev, `AI: ${data.reply}`]);
-    } catch (e) {
-      console.error(e);
-      setMessages((prev) => [...prev, "AI: 予期せぬエラー"]);
+      let msg: string;
+
+      if (!dataJson) {
+        msg = "AI: 返答の解析に失敗しました（JSONではない応答）。";
+      } else if (!dataJson.ok) {
+        // ✅ ここが今回のビルドエラーの原因：data.error を union 型のエラー側で扱う
+        msg =
+          dataJson.error === "quota exceeded"
+            ? `AI: 回数上限です (${dataJson.used_talks ?? "?"}/${dataJson.limit_talks ?? "?"})`
+            : `AI: ${dataJson.error}`;
+      } else {
+        msg = dataJson.message;
+      }
+
+      setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
+    } catch (e: any) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `AI: 通信エラー (${e?.message ?? "unknown"})` },
+      ]);
     } finally {
-      setSending(false);
+      setLoading(false);
     }
-  };
+  }
 
   return (
-    <main style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700 }}>税務相談チャット</h1>
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
+      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>税務顧問bot｜チャット</h1>
+
+      {!sessionReady && (
+        <div
+          style={{
+            padding: 12,
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            marginBottom: 12,
+          }}
+        >
+          ログイン状態を確認中…（ログインしてないと動かんで）
+        </div>
+      )}
 
       <div
         style={{
-          marginTop: 16,
           border: "1px solid #ddd",
-          borderRadius: 8,
+          borderRadius: 12,
           padding: 12,
-          minHeight: 300,
+          height: "60vh",
+          overflowY: "auto",
+          background: "#fff",
         }}
       >
         {messages.map((m, i) => (
-          <div key={i} style={{ marginBottom: 8 }}>
-            {m}
+          <div
+            key={i}
+            style={{
+              margin: "10px 0",
+              display: "flex",
+              justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+            }}
+          >
+            <div
+              style={{
+                maxWidth: "80%",
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid #eee",
+                background: m.role === "user" ? "#f3f4f6" : "#fafafa",
+                whiteSpace: "pre-wrap",
+                lineHeight: 1.5,
+              }}
+            >
+              {m.content}
+            </div>
           </div>
         ))}
-        {messages.length === 0 && (
-          <div style={{ color: "#888" }}>ここに相談内容を入力してください。</div>
+
+        {loading && (
+          <div style={{ margin: "10px 0", color: "#666" }}>AI: うーん…（考え中）</div>
         )}
+        <div ref={bottomRef} />
       </div>
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="例：ゴルフのウェアって経費になりますか？"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSend();
+            }
+          }}
+          placeholder="相談内容を入力（Enterで送信）"
           style={{
             flex: 1,
             padding: "10px 12px",
-            borderRadius: 6,
-            border: "1px solid #ccc",
+            borderRadius: 10,
+            border: "1px solid #ddd",
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") send();
-          }}
+          disabled={!sessionReady || loading}
         />
         <button
-          onClick={send}
-          disabled={sending}
+          onClick={handleSend}
+          disabled={!sessionReady || loading || !input.trim()}
           style={{
-            padding: "10px 16px",
-            background: "#000",
-            color: "#fff",
-            borderRadius: 6,
-            opacity: sending ? 0.6 : 1,
+            padding: "10px 14px",
+            borderRadius: 10,
+            border: "1px solid #ddd",
+            background: !sessionReady || loading || !input.trim() ? "#f3f4f6" : "#fff",
+            cursor: !sessionReady || loading || !input.trim() ? "not-allowed" : "pointer",
+            fontWeight: 700,
           }}
         >
-          {sending ? "送信中" : "送信"}
+          送信
         </button>
       </div>
-    </main>
+
+      <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
+        ※ “quota exceeded / no active plan” が出る場合は、API側の users 取得（RLS/ServiceRole）問題が本丸。
+      </div>
+    </div>
   );
 }
