@@ -6,22 +6,15 @@ import { createClient } from "@supabase/supabase-js";
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
 type ChatRes =
-  | {
-      ok: true;
-      plan: string;
-      used_talks: number | null;
-      limit_talks: number | null;
-      message: string;
-    }
-  | {
-      ok: false;
-      error: string;
-      used_talks?: number | null;
-      limit_talks?: number | null;
-    };
+  | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null; message: string }
+  | { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
 
 type StatusRes =
   | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null }
+  | { ok: false; error: string };
+
+type CheckoutRes =
+  | { ok: true; url: string }
   | { ok: false; error: string };
 
 const supabase = createClient(
@@ -29,8 +22,11 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-// ✅ ここを将来 Stripe の価格ページ/アップグレード導線に変える
-const UPGRADE_URL = "/"; // いったんトップ。あとで /pricing や /create-checkout に差し替え
+const PLAN_LABEL: Record<string, string> = {
+  lite: "Lite",
+  standard: "Standard",
+  enterprise: "Enterprise",
+};
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
@@ -42,6 +38,9 @@ export default function ChatPage() {
   const [plan, setPlan] = useState<string>("free");
   const [used, setUsed] = useState<number>(0);
   const [limit, setLimit] = useState<number>(0);
+
+  // checkout
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -55,31 +54,26 @@ export default function ChatPage() {
   const zeroRemaining = hasActivePlan && remaining === 0;
 
   function statusTheme() {
-    // 背景色は指定せず、ボーダーと文字で雰囲気を出す（指定色は最小限）
-    if (!hasActivePlan) {
-      return { border: "#ddd", text: "#333", badge: "未契約" };
-    }
-    if (zeroRemaining) {
-      return { border: "#dc2626", text: "#991b1b", badge: "上限到達" };
-    }
-    if (lowRemaining) {
-      return { border: "#f59e0b", text: "#92400e", badge: "残りわずか" };
-    }
+    if (!hasActivePlan) return { border: "#ddd", text: "#333", badge: "未契約" };
+    if (zeroRemaining) return { border: "#dc2626", text: "#991b1b", badge: "上限到達" };
+    if (lowRemaining) return { border: "#f59e0b", text: "#92400e", badge: "残りわずか" };
     return { border: "#16a34a", text: "#166534", badge: "利用可能" };
   }
 
   const theme = statusTheme();
 
-  async function fetchStatus() {
+  async function getAccessToken(): Promise<string | null> {
     const { data } = await supabase.auth.getSession();
-    const accessToken = data.session?.access_token;
+    return data.session?.access_token ?? null;
+  }
+
+  async function fetchStatus() {
+    const accessToken = await getAccessToken();
     if (!accessToken) return;
 
     const res = await fetch("/api/chat/status", {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
+      headers: { Authorization: `Bearer ${accessToken}` },
       cache: "no-store",
     });
 
@@ -94,6 +88,59 @@ export default function ChatPage() {
       setPlan(json.plan);
       setUsed(json.used_talks ?? 0);
       setLimit(json.limit_talks ?? 0);
+    }
+  }
+
+  async function startCheckout(nextPlan: "lite" | "standard" | "enterprise") {
+    if (checkoutLoading) return;
+
+    setCheckoutLoading(true);
+
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "AI: セッションが切れています。再ログインしてください。" },
+        ]);
+        return;
+      }
+
+      const res = await fetch("/api/create-checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ plan: nextPlan }),
+      });
+
+      let json: CheckoutRes | null = null;
+      try {
+        json = (await res.json()) as CheckoutRes;
+      } catch {
+        json = null;
+      }
+
+      if (!json) {
+        setMessages((prev) => [...prev, { role: "assistant", content: "AI: 決済URLの取得に失敗しました（JSONでない）。" }]);
+        return;
+      }
+
+      if (!json.ok) {
+        setMessages((prev) => [...prev, { role: "assistant", content: `AI: 決済に進めません（${json.error}）` }]);
+        return;
+      }
+
+      // ✅ Stripe Checkoutへ飛ぶ
+      window.location.href = json.url;
+    } catch (e: any) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `AI: 決済開始で通信エラー（${e?.message ?? "unknown"}）` },
+      ]);
+    } finally {
+      setCheckoutLoading(false);
     }
   }
 
@@ -114,14 +161,20 @@ export default function ChatPage() {
     const text = input.trim();
     if (!text || loading) return;
 
-    // ✅ 上限到達なら送らせない（UX改善）
+    // 0回なら送らせない
     if (zeroRemaining) {
       setMessages((prev) => [
         ...prev,
-        {
-          role: "assistant",
-          content: "AI: 今月の上限に到達しています。プラン更新で即回復できます。",
-        },
+        { role: "assistant", content: "AI: 今月の上限に到達しています。下のボタンからプラン更新できます。" },
+      ]);
+      return;
+    }
+
+    // 未契約なら送らせない
+    if (!hasActivePlan) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "AI: プラン未契約です。下のボタンから決済に進んでください。" },
       ]);
       return;
     }
@@ -131,8 +184,7 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, { role: "user", content: text }]);
 
     try {
-      const { data } = await supabase.auth.getSession();
-      const accessToken = data.session?.access_token;
+      const accessToken = await getAccessToken();
 
       if (!accessToken) {
         setMessages((prev) => [...prev, { role: "assistant", content: "AI: セッションが切れています。再ログインしてください。" }]);
@@ -157,7 +209,6 @@ export default function ChatPage() {
       }
 
       let msg: string;
-
       if (!dataJson) {
         msg = "AI: 返答の解析に失敗しました（JSONではない応答）。";
       } else if (!dataJson.ok) {
@@ -171,12 +222,8 @@ export default function ChatPage() {
 
       setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
 
-      // ✅ 送信後に残数を更新
+      // 送信後に残数更新
       await fetchStatus();
-
-      // ✅ 残りわずかになったら自動で一言（営業はウザくない程度に）
-      // （状態は fetchStatus の結果反映後になるので、ざっくり予告だけ）
-      // ここは好みで削ってOK
     } catch (e: any) {
       setMessages((prev) => [...prev, { role: "assistant", content: `AI: 通信エラー (${e?.message ?? "unknown"})` }]);
     } finally {
@@ -191,18 +238,18 @@ export default function ChatPage() {
   const hintText = !hasActivePlan
     ? "この画面で相談するにはプラン契約が必要です。"
     : zeroRemaining
-      ? "今月の上限に到達。プラン更新で即回復できます。"
+      ? "今月の上限に到達。プラン更新（または上位プラン）で即回復できます。"
       : lowRemaining
         ? `残りわずか（あと ${remaining} 回）。必要なら早めにプラン調整を。`
         : "利用可能です。";
 
-  const canSend = sessionReady && !loading && !!input.trim() && (!hasActivePlan ? false : !zeroRemaining);
+  const canSend = sessionReady && !loading && !!input.trim() && hasActivePlan && !zeroRemaining;
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
       <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 10 }}>税務顧問bot｜チャット</h1>
 
-      {/* ✅ ステータスバー（警告UI付き） */}
+      {/* ステータスバー */}
       <div
         style={{
           padding: "10px 12px",
@@ -217,8 +264,8 @@ export default function ChatPage() {
           gap: 10,
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800 }}>{badgeText}</span>
             <span
               style={{
@@ -234,24 +281,55 @@ export default function ChatPage() {
           </div>
           <div style={{ fontSize: 12, color: "#666" }}>{hintText}</div>
 
-          {/* ✅ 0回のときだけ導線を出す */}
-          {zeroRemaining && (
-            <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center" }}>
-              <a
-                href={UPGRADE_URL}
+          {/* ✅ 未契約 or 0回 のときだけ決済導線を出す */}
+          {(!hasActivePlan || zeroRemaining) && (
+            <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                onClick={() => startCheckout("lite")}
+                disabled={!sessionReady || checkoutLoading}
                 style={{
-                  display: "inline-block",
                   padding: "8px 10px",
                   borderRadius: 10,
-                  border: `1px solid ${theme.border}`,
-                  textDecoration: "none",
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  cursor: !sessionReady || checkoutLoading ? "not-allowed" : "pointer",
                   fontWeight: 800,
-                  color: theme.text,
                 }}
               >
-                プラン更新へ
-              </a>
-              <span style={{ fontSize: 12, color: "#666" }}>（更新したらすぐ使えるようにする）</span>
+                {PLAN_LABEL.lite}で開始
+              </button>
+
+              <button
+                onClick={() => startCheckout("standard")}
+                disabled={!sessionReady || checkoutLoading}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  cursor: !sessionReady || checkoutLoading ? "not-allowed" : "pointer",
+                  fontWeight: 800,
+                }}
+              >
+                {PLAN_LABEL.standard}で開始
+              </button>
+
+              <button
+                onClick={() => startCheckout("enterprise")}
+                disabled={!sessionReady || checkoutLoading}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  cursor: !sessionReady || checkoutLoading ? "not-allowed" : "pointer",
+                  fontWeight: 800,
+                }}
+              >
+                {PLAN_LABEL.enterprise}へ
+              </button>
+
+              {checkoutLoading && <span style={{ fontSize: 12, color: "#666" }}>決済ページを準備中…</span>}
             </div>
           )}
         </div>
@@ -335,7 +413,7 @@ export default function ChatPage() {
             borderRadius: 10,
             border: "1px solid #ddd",
           }}
-          disabled={!sessionReady || loading || (!hasActivePlan ? true : zeroRemaining)}
+          disabled={!sessionReady || loading || !hasActivePlan || zeroRemaining}
         />
         <button
           onClick={handleSend}
@@ -355,7 +433,7 @@ export default function ChatPage() {
       </div>
 
       <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-        ※ 残り0回の場合は送信できません（無駄打ち防止）。プラン更新で即復帰する導線にします。
+        ※ 未契約/上限到達のときは送信不可（無駄打ち防止）。決済ボタンから Stripe Checkout に直行します。
       </div>
     </div>
   );
