@@ -71,7 +71,7 @@ export default function ChatPage() {
       }
       setSessionReady(true);
 
-      const res = await fetch("/api/status", {
+      const res = await fetch("/api/chat/status", {
         headers: { Authorization: `Bearer ${data.session.access_token}` },
       });
       const json = (await res.json().catch(() => null)) as StatusRes | null;
