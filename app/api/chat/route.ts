@@ -1,115 +1,158 @@
-import { NextRequest, NextResponse } from "next/server";
+// app/api/chat/route.ts
+import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-export const runtime = "nodejs";
+// もし Edge で動かしたいなら下記を有効化（NodeでもOKなら不要）
+// export const runtime = "edge";
 
-// Supabase（Auth取得だけなので anon でOK）
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+type ChatRes =
+  | {
+      ok: true;
+      plan: string;
+      used_talks: number | null;
+      limit_talks: number | null;
+      message: string;
+    }
+  | {
+      ok: false;
+      error: string;
+      used_talks?: number | null;
+      limit_talks?: number | null;
+    };
 
-function extractBearerToken(req: NextRequest) {
-  const auth = req.headers.get("authorization");
-  if (!auth) return null;
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  return m?.[1] ?? null;
+function env(name: string): string | undefined {
+  return process.env[name];
 }
 
-export async function POST(req: NextRequest) {
+function getSupabaseUrl(): string {
+  return (
+    env("SUPABASE_URL") ||
+    env("NEXT_PUBLIC_SUPABASE_URL") ||
+    ""
+  );
+}
+
+function getSupabaseAnonKey(): string {
+  return (
+    env("SUPABASE_ANON_KEY") ||
+    env("NEXT_PUBLIC_SUPABASE_ANON_KEY") ||
+    ""
+  );
+}
+
+function bearerFromReq(req: Request): string | null {
+  const auth = req.headers.get("authorization") || req.headers.get("Authorization");
+  if (!auth) return null;
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1] : null;
+}
+
+export async function POST(req: Request) {
   try {
-    // 1) 認証
-    const accessToken = extractBearerToken(req);
+    const supabaseUrl = getSupabaseUrl();
+    const supabaseAnonKey = getSupabaseAnonKey();
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      const body: ChatRes = { ok: false, error: "server env missing (supabase)" };
+      return NextResponse.json(body, { status: 500 });
+    }
+
+    const accessToken = bearerFromReq(req);
     if (!accessToken) {
-      return NextResponse.json(
-        { error: "missing Authorization Bearer token" },
-        { status: 401 }
-      );
+      const body: ChatRes = { ok: false, error: "missing bearer token" };
+      return NextResponse.json(body, { status: 401 });
     }
 
-    const {
-      data: { user },
-      error: userErr,
-    } = await supabase.auth.getUser(accessToken);
+    // ✅ 認証チェック用（anonでOK）
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
 
-    if (userErr || !user) {
-      return NextResponse.json({ error: "not authenticated" }, { status: 401 });
+    const { data: userData, error: userErr } = await supabaseAuth.auth.getUser(accessToken);
+    if (userErr || !userData?.user) {
+      const body: ChatRes = { ok: false, error: "unauthorized" };
+      return NextResponse.json(body, { status: 401 });
     }
 
-    const userId = user.id;
+    const user = userData.user;
 
-    // 2) 入力
-    const body = await req.json().catch(() => ({}));
-    const message = typeof body?.message === "string" ? body.message.trim() : "";
-    if (!message) {
-      return NextResponse.json({ error: "message is required" }, { status: 400 });
+    // ✅ ここが本丸：DBアクセス用 client は JWT付きで作る（RLS通す）
+    const supabaseDb = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    });
+
+    const { message } = (await req.json().catch(() => ({}))) as { message?: string };
+
+    if (!message || typeof message !== "string" || !message.trim()) {
+      const body: ChatRes = { ok: false, error: "message required" };
+      return NextResponse.json(body, { status: 400 });
     }
 
-    // 3) users から plan / monthly_quota を読む
-    const { data: urow, error: uerr } = await supabase
+    // 1) users から plan / monthly_quota を取得（RLS: id = auth.uid() 前提）
+    const { data: urow, error: uerr } = await supabaseDb
       .from("users")
       .select("plan, monthly_quota")
-      .eq("id", userId)
+      .eq("id", user.id)
       .maybeSingle();
 
     if (uerr) {
-      return NextResponse.json(
-        { error: `users read failed: ${uerr.message}` },
-        { status: 500 }
-      );
+      console.error("users select error:", uerr);
+      const body: ChatRes = { ok: false, error: "db error (users)" };
+      return NextResponse.json(body, { status: 500 });
     }
 
     const plan = urow?.plan ?? "free";
-    const monthlyQuota = urow?.monthly_quota ?? 0;
+    const monthly_quota = urow?.monthly_quota ?? 0;
 
-    if (plan === "free" || monthlyQuota <= 0) {
-      return NextResponse.json(
-        { error: "no active plan", plan, monthly_quota: monthlyQuota },
-        { status: 402 }
-      );
+    // free / quota 0 は no active plan
+    if (!plan || plan === "free" || !monthly_quota || monthly_quota <= 0) {
+      const body: ChatRes = { ok: false, error: "no active plan" };
+      return NextResponse.json(body, { status: 402 });
     }
 
-    // 4) quota を 1回消費（原子的）
-    const { data: consumeRes, error: cerr } = await supabase.rpc("consume_talk", {
-      p_user_id: userId,
-      p_limit: monthlyQuota,
+    // 2) 回数消費（RPC consume_talk）
+    // 期待：consume_talk が { used_talks, limit_talks } を返す
+    const { data: consume, error: cerr } = await supabaseDb.rpc("consume_talk", {
+      p_user_id: user.id,
+      p_limit: monthly_quota,
     });
 
     if (cerr) {
-      return NextResponse.json(
-        { error: `consume_talk failed: ${cerr.message}` },
-        { status: 500 }
-      );
+      console.error("consume_talk error:", cerr);
+      const body: ChatRes = { ok: false, error: "db error (consume_talk)" };
+      return NextResponse.json(body, { status: 500 });
     }
 
-    const allowed = Array.isArray(consumeRes) ? consumeRes[0]?.allowed : null;
-    const used_talks = Array.isArray(consumeRes) ? consumeRes[0]?.used_talks : null;
-    const limit_talks = Array.isArray(consumeRes) ? consumeRes[0]?.limit_talks : null;
+    // consume の形に強く依存しないようにゆるく拾う
+    const used_talks: number | null =
+      (consume && (consume.used_talks ?? consume.used ?? consume[0]?.used_talks ?? consume[0]?.used)) ?? null;
 
-    if (!allowed) {
-      return NextResponse.json(
-        {
-          error: "quota exceeded",
-          plan,
-          used_talks,
-          limit_talks,
-        },
-        { status: 402 }
-      );
+    const limit_talks: number | null =
+      (consume && (consume.limit_talks ?? consume.limit ?? consume[0]?.limit_talks ?? consume[0]?.limit)) ?? monthly_quota;
+
+    // quota超過の判定（RPC側で弾いてるなら、ここは保険）
+    if (typeof used_talks === "number" && typeof limit_talks === "number" && used_talks > limit_talks) {
+      const body: ChatRes = { ok: false, error: "quota exceeded", used_talks, limit_talks };
+      return NextResponse.json(body, { status: 402 });
     }
 
-    // 5) ここで本来LLM呼ぶ（いまはダミー）
-    const reply = `（仮）受け取った: ${message}`;
+    // 3) ここでAI応答（いまはダミー。既存のLLM呼び出しに置換してOK）
+    // 既に別実装があるなら、この message を渡してその結果を message に入れて。
+    const reply = `AI: 受け付けました（plan=${plan} / ${used_talks ?? "?"}/${limit_talks ?? "?"}）\n\nあなた: ${message.trim()}`;
 
-    return NextResponse.json({
+    const body: ChatRes = {
       ok: true,
       plan,
       used_talks,
       limit_talks,
-      reply,
-    });
+      message: reply,
+    };
+    return NextResponse.json(body, { status: 200 });
   } catch (e: any) {
-    console.error(e);
-    return NextResponse.json({ error: "chat error" }, { status: 500 });
+    console.error("chat route fatal:", e);
+    const body: ChatRes = { ok: false, error: `server error: ${e?.message ?? "unknown"}` };
+    return NextResponse.json(body, { status: 500 });
   }
 }
