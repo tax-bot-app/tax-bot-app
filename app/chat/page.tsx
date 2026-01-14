@@ -1,15 +1,70 @@
 "use client";
 
 import { useState } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+type ChatMsg = { role: "user" | "assistant"; text: string };
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<string[]>([]);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [sending, setSending] = useState(false);
 
-  const send = () => {
-    if (!input) return;
-    setMessages((prev) => [...prev, "あなた: " + input]);
+  const send = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+
+    setSending(true);
+    setMessages((prev) => [...prev, { role: "user", text }]);
     setInput("");
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        window.location.href = "/login";
+        return;
+      }
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ message: text }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        // quota超過はここに来る
+        const msg =
+          data?.error === "quota exceeded"
+            ? `今月の上限です（${data.used_talks}/${data.limit_talks}）。プラン変更をご検討ください。`
+            : data?.error ?? "エラーが発生しました";
+
+        setMessages((prev) => [...prev, { role: "assistant", text: msg }]);
+        return;
+      }
+
+      setMessages((prev) => [...prev, { role: "assistant", text: data.reply }]);
+    } catch (e) {
+      console.error(e);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: "通信エラーです。もう一回やってみて。" },
+      ]);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -27,13 +82,11 @@ export default function ChatPage() {
       >
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 8 }}>
-            {m}
+            <b>{m.role === "user" ? "あなた" : "AI"}:</b> {m.text}
           </div>
         ))}
         {messages.length === 0 && (
-          <div style={{ color: "#888" }}>
-            ここに相談内容を入力してください。
-          </div>
+          <div style={{ color: "#888" }}>ここに相談内容を入力してください。</div>
         )}
       </div>
 
@@ -48,17 +101,23 @@ export default function ChatPage() {
             borderRadius: 6,
             border: "1px solid #ccc",
           }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") send();
+          }}
+          disabled={sending}
         />
         <button
           onClick={send}
+          disabled={sending}
           style={{
             padding: "10px 16px",
             background: "#000",
             color: "#fff",
             borderRadius: 6,
+            opacity: sending ? 0.6 : 1,
           }}
         >
-          送信
+          {sending ? "送信中…" : "送信"}
         </button>
       </div>
     </main>
