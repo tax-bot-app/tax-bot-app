@@ -3,25 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-type ChatMessage = {
-  role: "user" | "assistant";
-  content: string;
-};
+type ChatMessage = { role: "user" | "assistant"; content: string };
 
 type ChatRes =
-  | {
-      ok: true;
-      plan: string;
-      used_talks: number | null;
-      limit_talks: number | null;
-      message: string;
-    }
-  | {
-      ok: false;
-      error: string;
-      used_talks?: number | null;
-      limit_talks?: number | null;
-    };
+  | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null; message: string }
+  | { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
+
+type StatusRes =
+  | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null }
+  | { ok: false; error: string };
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -30,11 +20,14 @@ const supabase = createClient(
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "assistant", content: "AI: 相談内容をどうぞ。" },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "AI: 相談内容をどうぞ。" }]);
   const [loading, setLoading] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
+
+  // ✅ 追加：プラン表示
+  const [plan, setPlan] = useState<string>("free");
+  const [used, setUsed] = useState<number>(0);
+  const [limit, setLimit] = useState<number>(0);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -42,19 +35,41 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  async function fetchStatus() {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+    if (!accessToken) return;
+
+    const res = await fetch("/api/chat/status", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    let json: StatusRes | null = null;
+    try {
+      json = (await res.json()) as StatusRes;
+    } catch {
+      json = null;
+    }
+    if (json && json.ok) {
+      setPlan(json.plan);
+      setUsed(json.used_talks ?? 0);
+      setLimit(json.limit_talks ?? 0);
+    }
+  }
+
   useEffect(() => {
-    // セッションの準備（ログイン済み前提の画面）
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (!data.session) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: "AI: ログインが必要です。" },
-        ]);
+        setMessages((prev) => [...prev, { role: "assistant", content: "AI: ログインが必要です。" }]);
         setSessionReady(false);
         return;
       }
       setSessionReady(true);
+      await fetchStatus(); // ✅ 初回表示
     })();
   }, []);
 
@@ -71,10 +86,7 @@ export default function ChatPage() {
       const accessToken = data.session?.access_token;
 
       if (!accessToken) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: "AI: セッションが切れています。再ログインしてください。" },
-        ]);
+        setMessages((prev) => [...prev, { role: "assistant", content: "AI: セッションが切れています。再ログインしてください。" }]);
         setLoading(false);
         return;
       }
@@ -85,12 +97,9 @@ export default function ChatPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({
-          message: text,
-        }),
+        body: JSON.stringify({ message: text }),
       });
 
-      // ここで落ちても JSON を拾えるようにする
       let dataJson: ChatRes | null = null;
       try {
         dataJson = (await res.json()) as ChatRes;
@@ -99,11 +108,9 @@ export default function ChatPage() {
       }
 
       let msg: string;
-
       if (!dataJson) {
         msg = "AI: 返答の解析に失敗しました（JSONではない応答）。";
       } else if (!dataJson.ok) {
-        // ✅ ここが今回のビルドエラーの原因：data.error を union 型のエラー側で扱う
         msg =
           dataJson.error === "quota exceeded"
             ? `AI: 回数上限です (${dataJson.used_talks ?? "?"}/${dataJson.limit_talks ?? "?"})`
@@ -113,30 +120,61 @@ export default function ChatPage() {
       }
 
       setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
+
+      // ✅ 送信後、status再取得（残り回数を更新）
+      await fetchStatus();
     } catch (e: any) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `AI: 通信エラー (${e?.message ?? "unknown"})` },
-      ]);
+      setMessages((prev) => [...prev, { role: "assistant", content: `AI: 通信エラー (${e?.message ?? "unknown"})` }]);
     } finally {
       setLoading(false);
     }
   }
 
+  const remaining = Math.max(0, (limit ?? 0) - (used ?? 0));
+  const badgeText =
+    plan && plan !== "free" && limit > 0
+      ? `プラン: ${plan} / 残り ${remaining} 回（${used}/${limit}）`
+      : "プラン: free（未契約）";
+
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
-      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>税務顧問bot｜チャット</h1>
+      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 10 }}>税務顧問bot｜チャット</h1>
 
-      {!sessionReady && (
-        <div
+      {/* ✅ 追加：常時表示のステータス */}
+      <div
+        style={{
+          padding: "8px 10px",
+          border: "1px solid #ddd",
+          borderRadius: 10,
+          marginBottom: 12,
+          fontSize: 13,
+          color: "#333",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <div>{badgeText}</div>
+        <button
+          onClick={() => fetchStatus()}
+          disabled={!sessionReady || loading}
           style={{
-            padding: 12,
+            padding: "6px 10px",
+            borderRadius: 10,
             border: "1px solid #ddd",
-            borderRadius: 8,
-            marginBottom: 12,
+            background: !sessionReady || loading ? "#f3f4f6" : "#fff",
+            cursor: !sessionReady || loading ? "not-allowed" : "pointer",
+            fontWeight: 700,
           }}
         >
-          ログイン状態を確認中…（ログインしてないと動かんで）
+          更新
+        </button>
+      </div>
+
+      {!sessionReady && (
+        <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 8, marginBottom: 12 }}>
+          ログイン状態を確認中…
         </div>
       )}
 
@@ -175,9 +213,7 @@ export default function ChatPage() {
           </div>
         ))}
 
-        {loading && (
-          <div style={{ margin: "10px 0", color: "#666" }}>AI: うーん…（考え中）</div>
-        )}
+        {loading && <div style={{ margin: "10px 0", color: "#666" }}>AI: うーん…（考え中）</div>}
         <div ref={bottomRef} />
       </div>
 
@@ -192,12 +228,7 @@ export default function ChatPage() {
             }
           }}
           placeholder="相談内容を入力（Enterで送信）"
-          style={{
-            flex: 1,
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid #ddd",
-          }}
+          style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd" }}
           disabled={!sessionReady || loading}
         />
         <button
@@ -214,10 +245,6 @@ export default function ChatPage() {
         >
           送信
         </button>
-      </div>
-
-      <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-        ※ “quota exceeded / no active plan” が出る場合は、API側の users 取得（RLS/ServiceRole）問題が本丸。
       </div>
     </div>
   );
