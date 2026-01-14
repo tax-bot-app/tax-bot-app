@@ -1,207 +1,219 @@
+// app/api/stripe/webhook/route.ts
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-// --- Stripe ---
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+function mustEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
+
+const stripe = new Stripe(mustEnv("STRIPE_SECRET_KEY"), {
   apiVersion: "2025-12-15.clover",
 });
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
-// --- Supabase (Service Role: RLS回避して更新する) ---
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const webhookSecret = mustEnv("STRIPE_WEBHOOK_SECRET");
 
-// priceId → plan/quota 対応表（実ID）
-const PRICE_TO_PLAN: Record<string, { plan: string; monthly_quota: number }> = {
-  price_1SmqJoQ3OyVaMed9QdAkDBzA: { plan: "lite", monthly_quota: 5 },
-  price_1Sm8qnQ3OyVaMed9WMDOPgLZ: { plan: "standard", monthly_quota: 20 },
-  price_1Smq2QQ3OyVaMed9uh5CgQfD: { plan: "enterprise", monthly_quota: 100 },
-};
+function planFromPriceId(priceId: string | null | undefined): { plan: string; monthly_quota: number } {
+  const lite = mustEnv("STRIPE_PRICE_LITE");
+  const standard = mustEnv("STRIPE_PRICE_STANDARD");
+  const enterprise = mustEnv("STRIPE_PRICE_ENTERPRISE");
 
-function planFromPrice(priceId?: string | null) {
   if (!priceId) return { plan: "free", monthly_quota: 0 };
-  return PRICE_TO_PLAN[priceId] ?? { plan: "free", monthly_quota: 0 };
+  if (priceId === lite) return { plan: "lite", monthly_quota: 5 };
+  if (priceId === standard) return { plan: "standard", monthly_quota: 30 };
+  if (priceId === enterprise) return { plan: "enterprise", monthly_quota: 100 };
+  return { plan: "free", monthly_quota: 0 };
 }
 
-function isActiveLike(status: Stripe.Subscription.Status) {
-  return status === "active" || status === "trialing";
+function adminSupabase() {
+  const url = mustEnv("SUPABASE_URL");
+  const serviceRole = mustEnv("SUPABASE_SERVICE_ROLE_KEY");
+  return createClient(url, serviceRole, { auth: { persistSession: false } });
 }
 
-async function updateUserById(params: {
-  userId: string;
+async function upsertUserByEmail(params: {
+  email: string;
   plan: string;
   monthly_quota: number;
   stripe_customer_id?: string | null;
+  stripe_subscription_id?: string | null;
 }) {
-  const { userId, plan, monthly_quota, stripe_customer_id } = params;
+  const supabase = adminSupabase();
 
-  const { error } = await supabase
+  // 既存ユーザーをemailで取得
+  const { data: user, error: findErr } = await supabase
+    .from("users")
+    .select("id,email")
+    .eq("email", params.email)
+    .maybeSingle();
+
+  if (findErr) throw findErr;
+
+  // update（存在しないなら insert しても良いが、今の設計上は auth 登録で必ずいる前提）
+  if (!user?.id) {
+    // いない場合は保険でinsert（email uniqueがある前提ならOK）
+    const { error: insErr } = await supabase.from("users").insert({
+      email: params.email,
+      plan: params.plan,
+      monthly_quota: params.monthly_quota,
+      stripe_customer_id: params.stripe_customer_id ?? null,
+      stripe_subscription_id: params.stripe_subscription_id ?? null,
+    });
+    if (insErr) throw insErr;
+    return;
+  }
+
+  const { error: updErr } = await supabase
     .from("users")
     .update({
-      plan,
-      monthly_quota,
-      stripe_customer_id: stripe_customer_id ?? null,
+      plan: params.plan,
+      monthly_quota: params.monthly_quota,
+      stripe_customer_id: params.stripe_customer_id ?? null,
+      stripe_subscription_id: params.stripe_subscription_id ?? null,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", userId);
+    .eq("id", user.id);
 
-  if (error) throw new Error(`Supabase update failed: ${error.message}`);
+  if (updErr) throw updErr;
 }
 
-async function getUserIdFromCustomer(customerId: string) {
-  const customer = (await stripe.customers.retrieve(customerId)) as Stripe.Customer;
+async function updateUserByCustomerId(params: {
+  stripe_customer_id: string;
+  plan: string;
+  monthly_quota: number;
+  stripe_subscription_id?: string | null;
+}) {
+  const supabase = adminSupabase();
 
-  if (!customer || (customer as any).deleted) return null;
+  const { data: user, error: findErr } = await supabase
+    .from("users")
+    .select("id")
+    .eq("stripe_customer_id", params.stripe_customer_id)
+    .maybeSingle();
 
-  const userId =
-    typeof customer.metadata?.user_id === "string" ? customer.metadata.user_id : null;
+  if (findErr) throw findErr;
+  if (!user?.id) return; // customer_id未紐付けなら何もしない（checkout.completedで紐付く想定）
 
-  return userId;
-}
+  const { error: updErr } = await supabase
+    .from("users")
+    .update({
+      plan: params.plan,
+      monthly_quota: params.monthly_quota,
+      stripe_subscription_id: params.stripe_subscription_id ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", user.id);
 
-async function handleSubscription(sub: Stripe.Subscription) {
-  const customerId =
-    typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
-
-  if (!customerId) throw new Error("Subscription has no customer id");
-
-  // まずは subscription.metadata.user_id（将来用）
-  let userId: string | null =
-    typeof sub.metadata?.user_id === "string" ? sub.metadata.user_id : null;
-
-  // 次に customer.metadata.user_id（現メイン）
-  if (!userId) {
-    userId = await getUserIdFromCustomer(customerId);
-  }
-
-  if (!userId) {
-    console.warn("⚠ userId not found on subscription/customer", {
-      event: "subscription.*",
-      subscriptionId: sub.id,
-      customerId,
-    });
-    return; // user特定できない場合は落とさず終了（Stripe再送ループ回避）
-  }
-
-  const priceId = sub.items.data?.[0]?.price?.id ?? null;
-  const mapped = planFromPrice(priceId);
-
-  const active = isActiveLike(sub.status);
-
-  console.log("✅ subscription event mapped", {
-    subscriptionId: sub.id,
-    customerId,
-    userId,
-    status: sub.status,
-    priceId,
-    mappedPlan: mapped.plan,
-    mappedQuota: mapped.monthly_quota,
-    willSetPlan: active ? mapped.plan : "free",
-    willSetQuota: active ? mapped.monthly_quota : 0,
-  });
-
-  await updateUserById({
-    userId,
-    plan: active ? mapped.plan : "free",
-    monthly_quota: active ? mapped.monthly_quota : 0,
-    stripe_customer_id: customerId,
-  });
-}
-
-async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
-  const userId =
-    typeof session.client_reference_id === "string"
-      ? session.client_reference_id
-      : null;
-
-  const customerId =
-    typeof session.customer === "string" ? session.customer : null;
-
-  const sessionId = session.id;
-
-  console.log("✅ checkout.session.completed", {
-    sessionId,
-    userId,
-    customerId,
-    mode: session.mode,
-    payment_status: session.payment_status,
-  });
-
-  // Customer に user_id を刻む（subscriptionイベントが customer から user_id を取れるようになる）
-  if (userId && customerId) {
-    await stripe.customers.update(customerId, {
-      metadata: { user_id: userId },
-    });
-    console.log("✅ customer.metadata.user_id set", { customerId, userId });
-  } else {
-    console.warn("⚠ missing userId or customerId on checkout session", {
-      sessionId,
-      userId,
-      customerId,
-    });
-  }
-
-  // ついでに「今すぐ反映」もやる（subscription.created を待たず plan 反映）
-  // ここがあると、体感が爆速になる & “永遠にfree” をさらに潰せる
-  try {
-    if (userId) {
-      const subId =
-        typeof session.subscription === "string" ? session.subscription : null;
-
-      if (subId) {
-        const sub = await stripe.subscriptions.retrieve(subId);
-        await handleSubscription(sub);
-      }
-    }
-  } catch (e: any) {
-    console.warn("⚠ optional immediate sync failed (safe to ignore)", e?.message);
-  }
+  if (updErr) throw updErr;
 }
 
 export async function POST(req: Request) {
   const sig = req.headers.get("stripe-signature");
-  if (!sig) return new Response("Missing stripe-signature", { status: 400 });
+  if (!sig) return NextResponse.json({ ok: false, error: "Missing stripe-signature" }, { status: 400 });
 
   const rawBody = await req.text();
 
   let event: Stripe.Event;
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
-  } catch (err: any) {
-    console.error("❌ Webhook signature verification failed:", err?.message);
-    return new Response(`Webhook Error: ${err?.message}`, { status: 400 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: `Webhook signature verification failed: ${e?.message ?? e}` }, { status: 400 });
   }
 
   try {
-    switch (event.type) {
-      case "customer.subscription.created":
-      case "customer.subscription.updated":
-      case "customer.subscription.deleted": {
-        const sub = event.data.object as Stripe.Subscription;
-        await handleSubscription(sub);
-        break;
+    // 1) Checkout完了（emailが取れる最強イベント）
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as Stripe.Checkout.Session;
+
+      const customerId = typeof session.customer === "string" ? session.customer : null;
+      const subscriptionId = typeof session.subscription === "string" ? session.subscription : null;
+
+      // session.customer_details.email が最優先、無ければ customer を取りに行く
+      let email =
+        session.customer_details?.email ||
+        (typeof session.customer_email === "string" ? session.customer_email : null);
+
+      if (!email && customerId) {
+        const cust = (await stripe.customers.retrieve(customerId)) as Stripe.Customer;
+        email = cust.email ?? null;
       }
 
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
-        await handleCheckoutCompleted(session);
-        break;
+      if (!email) {
+        // email無いとusers特定できん（ログだけ残して200で返す＝Stripeの再送地獄回避）
+        console.warn("checkout.session.completed but no email", { id: session.id, customerId, subscriptionId });
+        return NextResponse.json({ received: true }, { status: 200 });
       }
 
-      default:
-        console.log(`Unhandled event type: ${event.type}`);
+      // priceIdはsubscriptionから取る（checkout sessionだけでは取りにくい）
+      let priceId: string | null = null;
+      if (subscriptionId) {
+        const sub = (await stripe.subscriptions.retrieve(subscriptionId)) as Stripe.Subscription;
+        priceId = sub.items.data?.[0]?.price?.id ?? null;
+      }
+
+      const { plan, monthly_quota } = planFromPriceId(priceId);
+
+      await upsertUserByEmail({
+        email,
+        plan,
+        monthly_quota,
+        stripe_customer_id: customerId,
+        stripe_subscription_id: subscriptionId,
+      });
+
+      return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    return new Response(JSON.stringify({ received: true }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
-  } catch (err: any) {
-    console.error("❌ Webhook handler failed:", err?.message);
-    return new Response(`Handler Error: ${err?.message}`, { status: 500 });
+    // 2) サブスク作成/更新
+    if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated") {
+      const sub = event.data.object as Stripe.Subscription;
+
+      const customerId = typeof sub.customer === "string" ? sub.customer : null;
+      const subscriptionId = sub.id;
+      const priceId = sub.items.data?.[0]?.price?.id ?? null;
+
+      const active = ["active", "trialing"].includes(sub.status);
+      const { plan, monthly_quota } = planFromPriceId(priceId);
+
+      if (customerId) {
+        await updateUserByCustomerId({
+          stripe_customer_id: customerId,
+          plan: active ? plan : "free",
+          monthly_quota: active ? monthly_quota : 0,
+          stripe_subscription_id: subscriptionId,
+        });
+      }
+
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
+    // 3) 解約（ここが今回の追加の肝）
+    if (event.type === "customer.subscription.deleted") {
+      const sub = event.data.object as Stripe.Subscription;
+
+      const customerId = typeof sub.customer === "string" ? sub.customer : null;
+      if (customerId) {
+        await updateUserByCustomerId({
+          stripe_customer_id: customerId,
+          plan: "free",
+          monthly_quota: 0,
+          stripe_subscription_id: null,
+        });
+      }
+
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
+    // それ以外は握りつぶしてOK（受領だけ返す）
+    return NextResponse.json({ received: true }, { status: 200 });
+  } catch (e: any) {
+    console.error("webhook handler error", e);
+    // Stripeは5xxで再送してくる。DB一時不調の時はありがたいが、恒常バグだと地獄。
+    // ここは 500 で返す（現状はバグ潰すフェーズなので再送で気づける）。
+    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
   }
 }
