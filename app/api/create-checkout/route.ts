@@ -1,4 +1,3 @@
-import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 
@@ -8,90 +7,100 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2025-12-15.clover",
 });
 
-// Supabase（Authのuser取得だけなので anon でOK）
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-const PLAN_TO_PRICE: Record<string, string> = {
-  lite: "price_1SmqJoQ3OyVaMed9QdAkDBzA",
-  standard: "price_1Sm8qnQ3OyVaMed9WMDOPgLZ",
-  enterprise: "price_1Smq2QQ3OyVaMed9uh5CgQfD",
+const PRICE_ID_BY_PLAN: Record<string, string> = {
+  lite: process.env.STRIPE_PRICE_LITE!,
+  standard: process.env.STRIPE_PRICE_STANDARD!,
+  enterprise: process.env.STRIPE_PRICE_ENTERPRISE!,
 };
 
-function getBaseUrl(req: NextRequest) {
-  const vercelUrl = process.env.VERCEL_URL;
-  if (vercelUrl) return `https://${vercelUrl}`;
-
-  const host = req.headers.get("host");
-  const proto = req.headers.get("x-forwarded-proto") ?? "http";
-  return `${proto}://${host}`;
-}
-
-function extractBearerToken(req: NextRequest) {
-  const auth = req.headers.get("authorization");
-  if (!auth) return null;
+function getBearerToken(req: Request) {
+  const auth = req.headers.get("authorization") || "";
   const m = auth.match(/^Bearer\s+(.+)$/i);
   return m?.[1] ?? null;
 }
 
-export async function POST(req: NextRequest) {
+function mustAppUrl(req: Request) {
+  // ✅ 推奨：必ず本番URLに戻す（Previewドメイン事故を防ぐ）
+  const envUrl = process.env.APP_URL?.trim();
+  if (envUrl) return envUrl.replace(/\/$/, "");
+
+  // 保険（APP_URL未設定でも動くようにするが、Preview事故が起きる）
+  const origin = req.headers.get("origin") || "";
+  return origin.replace(/\/$/, "");
+}
+
+export async function POST(req: Request) {
   try {
-    const baseUrl = getBaseUrl(req);
-
-    // ① ログインユーザー特定（フロントから access_token をBearerで渡す前提）
-    const accessToken = extractBearerToken(req);
-    if (!accessToken) {
-      return NextResponse.json(
-        { error: "missing Authorization Bearer token" },
-        { status: 401 }
-      );
+    const token = getBearerToken(req);
+    if (!token) {
+      return Response.json({ ok: false, error: "missing bearer token" }, { status: 401 });
     }
 
-    const {
-      data: { user },
-      error: userErr,
-    } = await supabase.auth.getUser(accessToken);
-
-    if (userErr || !user) {
-      return NextResponse.json(
-        { error: "not authenticated" },
-        { status: 401 }
-      );
-    }
-
-    const userId = user.id;
-    const userEmail = user.email ?? null;
-
-    // ② ここが肝：body から plan を読む（読めなければ lite）
     const body = await req.json().catch(() => ({}));
-    const plan = typeof body?.plan === "string" ? body.plan : "lite";
+    const plan = String(body?.plan ?? "").toLowerCase();
 
-    const priceId = PLAN_TO_PRICE[plan];
-    if (!priceId) {
-      return NextResponse.json({ error: "invalid plan" }, { status: 400 });
+    if (!["lite", "standard", "enterprise"].includes(plan)) {
+      return Response.json({ ok: false, error: "invalid plan" }, { status: 400 });
     }
 
-    // ③ どのpriceを使ってるかログ（確認用）
-    console.log("✅ create-checkout", { userId, plan, priceId });
+    const priceId = PRICE_ID_BY_PLAN[plan];
+    if (!priceId) {
+      return Response.json({ ok: false, error: `missing priceId for plan=${plan}` }, { status: 500 });
+    }
+
+    const supabaseUrl = process.env.SUPABASE_URL!;
+    const supabaseAnon = process.env.SUPABASE_ANON_KEY!;
+    const supabase = createClient(supabaseUrl, supabaseAnon, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false },
+    });
+
+    const { data: userData, error: userErr } = await supabase.auth.getUser(token);
+    if (userErr || !userData?.user) {
+      return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    }
+
+    const email = userData.user.email;
+    if (!email) {
+      return Response.json({ ok: false, error: "no email" }, { status: 400 });
+    }
+
+    // Stripe customer（なければ作成）
+    const customers = await stripe.customers.search({
+      query: `email:'${email.replace(/'/g, "\\'")}'`,
+      limit: 1,
+    });
+
+    const customer =
+      customers.data[0] ??
+      (await stripe.customers.create({
+        email,
+        metadata: { supabase_user_id: userData.user.id },
+      }));
+
+    const appUrl = mustAppUrl(req);
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
+      customer: customer.id,
       line_items: [{ price: priceId, quantity: 1 }],
-
-      // Webhook側で user.id で更新できる
-      client_reference_id: userId,
-
-      ...(userEmail ? { customer_email: userEmail } : {}),
-
-      success_url: `${baseUrl}/success`,
-      cancel_url: `${baseUrl}/`,
+      allow_promotion_codes: true,
+      success_url: `${appUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${appUrl}/chat`,
+      // webhook側で使うなら残しとくと便利
+      metadata: {
+        plan,
+        supabase_user_id: userData.user.id,
+        email,
+      },
     });
 
-    return NextResponse.json({ url: session.url });
-  } catch (err: any) {
-    console.error(err);
-    return NextResponse.json({ error: "checkout error" }, { status: 500 });
+    return Response.json({ ok: true, url: session.url }, { status: 200 });
+  } catch (e: any) {
+    console.error("create-checkout error:", e);
+    return Response.json(
+      { ok: false, error: e?.message ?? "internal error" },
+      { status: 500 }
+    );
   }
 }

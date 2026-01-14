@@ -40,7 +40,11 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: "assistant", content: "AI: 相談内容をどうぞ。" },
   ]);
+
   const [loading, setLoading] = useState(false);
+
+  // ✅ ここがポイント：チェック完了/未ログイン/ログイン済を分ける
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
 
   // status
@@ -100,7 +104,6 @@ export default function ChatPage() {
     }
   }
 
-  // ✅ 決済（本番用）：raw表示なし／URLキー名ゆらぎ吸収
   async function startCheckout(nextPlan: "lite" | "standard" | "enterprise") {
     if (checkoutLoading) return;
 
@@ -140,10 +143,7 @@ export default function ChatPage() {
 
       if (!res.ok) {
         const errMsg = json?.error || `create-checkout failed (status=${res.status})`;
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: `AI: 決済に進めません（${errMsg}）` },
-        ]);
+        setMessages((prev) => [...prev, { role: "assistant", content: `AI: 決済に進めません（${errMsg}）` }]);
         return;
       }
 
@@ -166,22 +166,32 @@ export default function ChatPage() {
     }
   }
 
+  // ✅ 起動時：セッション確認 → sessionChecked を必ず true にする
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) {
-        setMessages((prev) => [...prev, { role: "assistant", content: "AI: ログインが必要です。" }]);
-        setSessionReady(false);
-        return;
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!data.session) {
+          setSessionReady(false);
+          setMessages((prev) => [...prev, { role: "assistant", content: "AI: ログインが必要です。" }]);
+          return;
+        }
+        setSessionReady(true);
+        await fetchStatus();
+      } finally {
+        setSessionChecked(true);
       }
-      setSessionReady(true);
-      await fetchStatus();
     })();
   }, []);
 
   async function handleSend() {
     const text = input.trim();
     if (!text || loading) return;
+
+    if (!sessionReady) {
+      setMessages((prev) => [...prev, { role: "assistant", content: "AI: ログインが必要です。" }]);
+      return;
+    }
 
     if (zeroRemaining) {
       setMessages((prev) => [
@@ -243,7 +253,6 @@ export default function ChatPage() {
       }
 
       setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
-
       await fetchStatus();
     } catch (e: any) {
       setMessages((prev) => [
@@ -259,21 +268,25 @@ export default function ChatPage() {
     ? "プラン: free（未契約）"
     : `プラン: ${plan} / 残り ${remaining} 回（${used}/${limit}）`;
 
-  const hintText = !hasActivePlan
-    ? "この画面で相談するにはプラン契約が必要です。"
-    : zeroRemaining
-      ? "今月の上限に到達。プラン更新（または上位プラン）で即回復できます。"
-      : lowRemaining
-        ? `残りわずか（あと ${remaining} 回）。必要なら早めにプラン調整を。`
-        : "利用可能です。";
+  const hintText = !sessionChecked
+    ? "ログイン状態を確認中…"
+    : !sessionReady
+      ? "ログインが必要です（別ドメイン/別環境だと未ログイン扱いになります）"
+      : !hasActivePlan
+        ? "この画面で相談するにはプラン契約が必要です。"
+        : zeroRemaining
+          ? "今月の上限に到達。プラン更新（または上位プラン）で即回復できます。"
+          : lowRemaining
+            ? `残りわずか（あと ${remaining} 回）。必要なら早めにプラン調整を。`
+            : "利用可能です。";
 
-  const canSend = sessionReady && !loading && !!input.trim() && hasActivePlan && !zeroRemaining;
+  const canSend =
+    sessionReady && sessionChecked && !loading && !!input.trim() && hasActivePlan && !zeroRemaining;
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
       <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 10 }}>税務顧問bot｜チャット</h1>
 
-      {/* ステータスバー */}
       <div
         style={{
           padding: "10px 12px",
@@ -303,20 +316,20 @@ export default function ChatPage() {
               {theme.badge}
             </span>
           </div>
+
           <div style={{ fontSize: 12, color: "#666" }}>{hintText}</div>
 
-          {/* 未契約 or 0回 のときだけ決済導線 */}
-          {(!hasActivePlan || zeroRemaining) && (
+          {sessionChecked && sessionReady && (!hasActivePlan || zeroRemaining) && (
             <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <button
                 onClick={() => startCheckout("lite")}
-                disabled={!sessionReady || checkoutLoading}
+                disabled={checkoutLoading}
                 style={{
                   padding: "8px 10px",
                   borderRadius: 10,
                   border: "1px solid #ddd",
                   background: "#fff",
-                  cursor: !sessionReady || checkoutLoading ? "not-allowed" : "pointer",
+                  cursor: checkoutLoading ? "not-allowed" : "pointer",
                   fontWeight: 800,
                 }}
               >
@@ -325,13 +338,13 @@ export default function ChatPage() {
 
               <button
                 onClick={() => startCheckout("standard")}
-                disabled={!sessionReady || checkoutLoading}
+                disabled={checkoutLoading}
                 style={{
                   padding: "8px 10px",
                   borderRadius: 10,
                   border: "1px solid #ddd",
                   background: "#fff",
-                  cursor: !sessionReady || checkoutLoading ? "not-allowed" : "pointer",
+                  cursor: checkoutLoading ? "not-allowed" : "pointer",
                   fontWeight: 800,
                 }}
               >
@@ -340,13 +353,13 @@ export default function ChatPage() {
 
               <button
                 onClick={() => startCheckout("enterprise")}
-                disabled={!sessionReady || checkoutLoading}
+                disabled={checkoutLoading}
                 style={{
                   padding: "8px 10px",
                   borderRadius: 10,
                   border: "1px solid #ddd",
                   background: "#fff",
-                  cursor: !sessionReady || checkoutLoading ? "not-allowed" : "pointer",
+                  cursor: checkoutLoading ? "not-allowed" : "pointer",
                   fontWeight: 800,
                 }}
               >
@@ -374,12 +387,6 @@ export default function ChatPage() {
           更新
         </button>
       </div>
-
-      {!sessionReady && (
-        <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 8, marginBottom: 12 }}>
-          ログイン状態を確認中…
-        </div>
-      )}
 
       <div
         style={{
@@ -415,7 +422,6 @@ export default function ChatPage() {
             </div>
           </div>
         ))}
-
         {loading && <div style={{ margin: "10px 0", color: "#666" }}>AI: うーん…（考え中）</div>}
         <div ref={bottomRef} />
       </div>
@@ -437,7 +443,7 @@ export default function ChatPage() {
             borderRadius: 10,
             border: "1px solid #ddd",
           }}
-          disabled={!sessionReady || loading || !hasActivePlan || zeroRemaining}
+          disabled={!sessionChecked || !sessionReady || loading || !hasActivePlan || zeroRemaining}
         />
         <button
           onClick={handleSend}
@@ -457,7 +463,7 @@ export default function ChatPage() {
       </div>
 
       <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-        ※ 未契約/上限到達のときは送信不可（無駄打ち防止）。決済ボタンから Stripe Checkout に直行します。
+        ※ 決済後に別ドメインに戻ると未ログイン扱いになります。APP_URL固定で回避済み。
       </div>
     </div>
   );
