@@ -140,52 +140,54 @@ async function updateUserByCustomerId(params: {
  * ✅ 複数サブスク対応の“正”同期
  * - customer の全サブスクを見て「今有効な中で最強プラン」を決める
  * - active/trialing は有効（cancel_at_period_end=true でも期間中はstatus=activeなのでOK）
- * - items が複数でも、その中で最強 price を採用
  */
 async function computeBestPlanForCustomer(customerId: string): Promise<{
   plan: Plan;
   monthly_quota: number;
   subscription_id: string | null;
 }> {
-  // Stripeのlistはページングあるけど、通常ここまで多くならない想定で first 100
   const subs = await stripe.subscriptions.list({
     customer: customerId,
     status: "all",
     limit: 100,
   });
 
-  // 有効扱い候補
   const candidates = subs.data.filter((s) => ["active", "trialing"].includes(s.status));
 
   if (candidates.length === 0) {
     return { plan: "free", monthly_quota: 0, subscription_id: null };
   }
 
-  // 各サブスクごとに「そのサブスク内の最強プラン」を算出
   const scored = candidates.map((s) => {
     let best: Plan = "free";
     for (const item of s.items.data ?? []) {
       const p = planFromPriceId(item.price?.id ?? null);
       if (planRank(p) > planRank(best)) best = p;
     }
+
+    // ✅ Stripeの型定義差を吸収（実データには普通に入ってる）
+    const anyS = s as any;
+    const periodEnd = Number(anyS.current_period_end ?? 0);
+    const created = Number(anyS.created ?? 0);
+
     return {
       sub: s,
       bestPlanInSub: best,
       rank: planRank(best),
-      // 期間末が未来でも status=active なら候補、tie-breakで period_end を使う
-      periodEnd: s.current_period_end ?? 0,
+      periodEnd,
+      created,
     };
   });
 
-  // 最強プラン > 同点なら period_end が一番未来 > それでも同点なら最新(created)優先
   scored.sort((a, b) => {
     if (b.rank !== a.rank) return b.rank - a.rank;
-    if ((b.periodEnd ?? 0) !== (a.periodEnd ?? 0)) return (b.periodEnd ?? 0) - (a.periodEnd ?? 0);
-    return (b.sub.created ?? 0) - (a.sub.created ?? 0);
+    if (b.periodEnd !== a.periodEnd) return b.periodEnd - a.periodEnd;
+    return b.created - a.created;
   });
 
   const best = scored[0];
   const plan = best.bestPlanInSub;
+
   return { plan, monthly_quota: quotaByPlan(plan), subscription_id: best.sub.id };
 }
 
@@ -233,22 +235,19 @@ export async function POST(req: Request) {
       }
 
       if (!email) {
-        console.warn("checkout.session.completed but no email", {
-          id: session.id,
-          customerId,
-          subscriptionId,
-        });
+        console.warn("checkout.session.completed but no email", { id: session.id, customerId, subscriptionId });
         return NextResponse.json({ received: true }, { status: 200 });
       }
 
-      // まずは紐付けを確実に（customerId / subscriptionId を users に保存）
-      // plan は “一旦” subscriptionId の内容で入れてOK（後でsyncで上書きする）
+      // まずは紐付けを確実に
       let priceId: string | null = null;
       if (subscriptionId) {
         const sub = (await stripe.subscriptions.retrieve(subscriptionId)) as Stripe.Subscription;
         priceId = sub.items.data?.[0]?.price?.id ?? null;
       }
+
       const tempPlan = planFromPriceId(priceId);
+
       await upsertUserByEmail({
         email,
         plan: tempPlan,
@@ -265,7 +264,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    // 2) サブスク作成/更新 → ✅ 毎回 customer 全体を同期
+    // 2) サブスク作成/更新 → customer全体を同期
     if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated") {
       const sub = event.data.object as Stripe.Subscription;
       const customerId = typeof sub.customer === "string" ? sub.customer : null;
@@ -277,7 +276,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    // 3) 解約（deleted） → ✅ free固定にせず、残りサブスクで再計算
+    // 3) 解約（deleted） → free固定にせず、残りサブスクで再計算
     if (event.type === "customer.subscription.deleted") {
       const sub = event.data.object as Stripe.Subscription;
       const customerId = typeof sub.customer === "string" ? sub.customer : null;
