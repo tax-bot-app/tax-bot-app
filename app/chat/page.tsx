@@ -24,10 +24,6 @@ type StatusRes =
   | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null }
   | { ok: false; error: string };
 
-type CheckoutRes =
-  | { ok: true; url: string }
-  | { ok: false; error: string };
-
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -62,7 +58,7 @@ export default function ChatPage() {
   }, [messages, loading]);
 
   const remaining = Math.max(0, (limit ?? 0) - (used ?? 0));
-  const hasActivePlan = plan !== "free" && limit > 0;
+  const hasActivePlan = plan !== "free" && (limit ?? 0) > 0;
   const lowRemaining = hasActivePlan && remaining <= 3 && remaining > 0;
   const zeroRemaining = hasActivePlan && remaining === 0;
 
@@ -104,7 +100,7 @@ export default function ChatPage() {
     }
   }
 
-  // ✅ 決済：デバッグ版（レスポンス生表示）
+  // ✅ 決済（本番用）：raw表示なし／URLキー名ゆらぎ吸収
   async function startCheckout(nextPlan: "lite" | "standard" | "enterprise") {
     if (checkoutLoading) return;
 
@@ -120,11 +116,6 @@ export default function ChatPage() {
         return;
       }
 
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `AI: 決済リクエスト送信中（plan=${nextPlan}）` },
-      ]);
-
       const res = await fetch("/api/create-checkout", {
         method: "POST",
         headers: {
@@ -136,17 +127,6 @@ export default function ChatPage() {
 
       const raw = await res.text();
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            `AI: create-checkout response\n` +
-            `status=${res.status}\n` +
-            `raw=${raw.slice(0, 500)}${raw.length > 500 ? "..." : ""}`,
-        },
-      ]);
-
       let json: any = null;
       try {
         json = JSON.parse(raw);
@@ -154,23 +134,27 @@ export default function ChatPage() {
         json = null;
       }
 
-      // 実装差分に強い拾い方（urlキー名違い対策）
       const url =
         (json && (json.url || json.checkoutUrl || json.checkout_url)) ||
         (typeof json === "string" ? json : null);
 
-      if (url && typeof url === "string") {
+      if (!res.ok) {
+        const errMsg = json?.error || `create-checkout failed (status=${res.status})`;
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", content: `AI: Stripeへ遷移します → ${url}` },
+          { role: "assistant", content: `AI: 決済に進めません（${errMsg}）` },
         ]);
+        return;
+      }
+
+      if (url && typeof url === "string") {
         window.location.href = url;
         return;
       }
 
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "AI: URLがレスポンスから取得できませんでした。" },
+        { role: "assistant", content: "AI: 決済URLが取得できませんでした（レスポンス形式不一致）。" },
       ]);
     } catch (e: any) {
       setMessages((prev) => [
@@ -199,16 +183,14 @@ export default function ChatPage() {
     const text = input.trim();
     if (!text || loading) return;
 
-    // 0回なら送らせない
     if (zeroRemaining) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "AI: 今月の上限に到達しています。上のボタンからプラン更新できます。"},
+        { role: "assistant", content: "AI: 今月の上限に到達しています。上のボタンからプラン更新できます。" },
       ]);
       return;
     }
 
-    // 未契約なら送らせない
     if (!hasActivePlan) {
       setMessages((prev) => [
         ...prev,
@@ -223,7 +205,6 @@ export default function ChatPage() {
 
     try {
       const accessToken = await getAccessToken();
-
       if (!accessToken) {
         setMessages((prev) => [
           ...prev,
@@ -263,7 +244,6 @@ export default function ChatPage() {
 
       setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
 
-      // 送信後に残数更新
       await fetchStatus();
     } catch (e: any) {
       setMessages((prev) => [
@@ -325,7 +305,7 @@ export default function ChatPage() {
           </div>
           <div style={{ fontSize: 12, color: "#666" }}>{hintText}</div>
 
-          {/* ✅ 未契約 or 0回 のときだけ決済導線 */}
+          {/* 未契約 or 0回 のときだけ決済導線 */}
           {(!hasActivePlan || zeroRemaining) && (
             <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <button
@@ -478,7 +458,6 @@ export default function ChatPage() {
 
       <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
         ※ 未契約/上限到達のときは送信不可（無駄打ち防止）。決済ボタンから Stripe Checkout に直行します。
-        （いまはデバッグで create-checkout の生レスポも表示します）
       </div>
     </div>
   );
