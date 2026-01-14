@@ -6,8 +6,19 @@ import { createClient } from "@supabase/supabase-js";
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
 type ChatRes =
-  | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null; message: string }
-  | { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
+  | {
+      ok: true;
+      plan: string;
+      used_talks: number | null;
+      limit_talks: number | null;
+      message: string;
+    }
+  | {
+      ok: false;
+      error: string;
+      used_talks?: number | null;
+      limit_talks?: number | null;
+    };
 
 type StatusRes =
   | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null }
@@ -30,7 +41,9 @@ const PLAN_LABEL: Record<string, string> = {
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "AI: 相談内容をどうぞ。" }]);
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { role: "assistant", content: "AI: 相談内容をどうぞ。" },
+  ]);
   const [loading, setLoading] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
 
@@ -91,6 +104,7 @@ export default function ChatPage() {
     }
   }
 
+  // ✅ 決済：デバッグ版（レスポンス生表示）
   async function startCheckout(nextPlan: "lite" | "standard" | "enterprise") {
     if (checkoutLoading) return;
 
@@ -101,10 +115,15 @@ export default function ChatPage() {
       if (!accessToken) {
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", content: "AI: セッションが切れています。再ログインしてください。" },
+          { role: "assistant", content: "AI: セッション切れ。再ログインしてな。" },
         ]);
         return;
       }
+
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `AI: 決済リクエスト送信中（plan=${nextPlan}）` },
+      ]);
 
       const res = await fetch("/api/create-checkout", {
         method: "POST",
@@ -115,29 +134,48 @@ export default function ChatPage() {
         body: JSON.stringify({ plan: nextPlan }),
       });
 
-      let json: CheckoutRes | null = null;
+      const raw = await res.text();
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content:
+            `AI: create-checkout response\n` +
+            `status=${res.status}\n` +
+            `raw=${raw.slice(0, 500)}${raw.length > 500 ? "..." : ""}`,
+        },
+      ]);
+
+      let json: any = null;
       try {
-        json = (await res.json()) as CheckoutRes;
+        json = JSON.parse(raw);
       } catch {
         json = null;
       }
 
-      if (!json) {
-        setMessages((prev) => [...prev, { role: "assistant", content: "AI: 決済URLの取得に失敗しました（JSONでない）。" }]);
+      // 実装差分に強い拾い方（urlキー名違い対策）
+      const url =
+        (json && (json.url || json.checkoutUrl || json.checkout_url)) ||
+        (typeof json === "string" ? json : null);
+
+      if (url && typeof url === "string") {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `AI: Stripeへ遷移します → ${url}` },
+        ]);
+        window.location.href = url;
         return;
       }
 
-      if (!json.ok) {
-        setMessages((prev) => [...prev, { role: "assistant", content: `AI: 決済に進めません（${json.error}）` }]);
-        return;
-      }
-
-      // ✅ Stripe Checkoutへ飛ぶ
-      window.location.href = json.url;
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "AI: URLがレスポンスから取得できませんでした。" },
+      ]);
     } catch (e: any) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `AI: 決済開始で通信エラー（${e?.message ?? "unknown"}）` },
+        { role: "assistant", content: `AI: 決済通信エラー（${e?.message ?? "unknown"}）` },
       ]);
     } finally {
       setCheckoutLoading(false);
@@ -165,7 +203,7 @@ export default function ChatPage() {
     if (zeroRemaining) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "AI: 今月の上限に到達しています。下のボタンからプラン更新できます。" },
+        { role: "assistant", content: "AI: 今月の上限に到達しています。上のボタンからプラン更新できます。"},
       ]);
       return;
     }
@@ -174,7 +212,7 @@ export default function ChatPage() {
     if (!hasActivePlan) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "AI: プラン未契約です。下のボタンから決済に進んでください。" },
+        { role: "assistant", content: "AI: プラン未契約です。上のボタンから決済に進んでください。" },
       ]);
       return;
     }
@@ -187,7 +225,10 @@ export default function ChatPage() {
       const accessToken = await getAccessToken();
 
       if (!accessToken) {
-        setMessages((prev) => [...prev, { role: "assistant", content: "AI: セッションが切れています。再ログインしてください。" }]);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "AI: セッションが切れています。再ログインしてください。" },
+        ]);
         setLoading(false);
         return;
       }
@@ -225,7 +266,10 @@ export default function ChatPage() {
       // 送信後に残数更新
       await fetchStatus();
     } catch (e: any) {
-      setMessages((prev) => [...prev, { role: "assistant", content: `AI: 通信エラー (${e?.message ?? "unknown"})` }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `AI: 通信エラー (${e?.message ?? "unknown"})` },
+      ]);
     } finally {
       setLoading(false);
     }
@@ -281,7 +325,7 @@ export default function ChatPage() {
           </div>
           <div style={{ fontSize: 12, color: "#666" }}>{hintText}</div>
 
-          {/* ✅ 未契約 or 0回 のときだけ決済導線を出す */}
+          {/* ✅ 未契約 or 0回 のときだけ決済導線 */}
           {(!hasActivePlan || zeroRemaining) && (
             <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <button
@@ -434,6 +478,7 @@ export default function ChatPage() {
 
       <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
         ※ 未契約/上限到達のときは送信不可（無駄打ち防止）。決済ボタンから Stripe Checkout に直行します。
+        （いまはデバッグで create-checkout の生レスポも表示します）
       </div>
     </div>
   );
