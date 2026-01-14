@@ -1,11 +1,7 @@
 "use client";
 
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { useMemo, useState } from "react";
+import { getSupabaseClient } from "./lib/supabaseClient";
 
 type Plan = "lite" | "standard" | "enterprise";
 
@@ -16,91 +12,116 @@ const PLANS: Array<{
   quotaLabel: string;
 }> = [
   { key: "lite", title: "Lite", priceLabel: "3,300円/月", quotaLabel: "月5回まで" },
-  {
-    key: "standard",
-    title: "Standard",
-    priceLabel: "16,500円/月",
-    quotaLabel: "月20回まで",
-  },
-  {
-    key: "enterprise",
-    title: "Enterprise",
-    priceLabel: "33,000円/月",
-    quotaLabel: "月100回まで",
-  },
+  { key: "standard", title: "Standard", priceLabel: "16,500円/月", quotaLabel: "月20回まで" },
+  { key: "enterprise", title: "Enterprise", priceLabel: "33,000円/月", quotaLabel: "月100回まで" },
 ];
 
-export default function Home() {
-  const goCheckout = async (plan: Plan) => {
-    try {
-      const {
-        data: { session },
-        error: sessionErr,
-      } = await supabase.auth.getSession();
+type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
 
-      if (sessionErr || !session?.access_token) {
+export default function Home() {
+  const [busy, setBusy] = useState<Plan | null>(null);
+  const [fatal, setFatal] = useState<string | null>(null);
+
+  const supabase = useMemo(() => {
+    try {
+      return getSupabaseClient();
+    } catch (e: any) {
+      setFatal(
+        `環境変数が足りません：${e?.message ?? String(e)}\n` +
+          `VercelのEnvironment Variablesに NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY を入れて、Redeployしてください。`
+      );
+      return null;
+    }
+  }, []);
+
+  const goCheckout = async (plan: Plan) => {
+    if (!supabase) return;
+
+    setBusy(plan);
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data.session?.access_token) {
         window.location.href = "/login";
         return;
       }
-
-      const accessToken = session.access_token;
 
       const res = await fetch("/api/create-checkout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${data.session.access_token}`,
         },
         body: JSON.stringify({ plan }),
       });
 
-      const data = await res.json();
+      const json = (await res.json().catch(() => null)) as CheckoutRes | null;
 
-      if (!res.ok) {
-        console.error("create-checkout error:", data);
-        alert(data?.error ?? "決済URLの取得に失敗しました");
-        return;
-      }
+      if (!json) throw new Error("create-checkout: empty response");
+      if (!json.ok) throw new Error(json.error || "create-checkout failed");
+      if (!json.url) throw new Error("create-checkout: url missing");
 
-      if (data?.url) {
-        window.location.href = data.url;
-      } else {
-        alert("決済URLが返ってきませんでした");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("予期せぬエラーが発生しました");
+      window.location.href = json.url;
+    } catch (e: any) {
+      alert(`決済に進めません：${e?.message ?? String(e)}`);
+    } finally {
+      setBusy(null);
     }
   };
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center bg-zinc-50 px-6">
-      <h1 className="text-4xl font-bold mb-3">税務相談AI（テスト版）</h1>
-
-      <p className="text-lg text-zinc-600 mb-6 text-center max-w-md">
-        月額プランで税務相談ができます（回数制限あり）。
-        <br />
-        プランを選んでお申し込みください。
+    <main style={{ maxWidth: 780, margin: "40px auto", padding: 16 }}>
+      <h1 style={{ textAlign: "center", marginBottom: 6 }}>税務相談AI（テスト版）</h1>
+      <p style={{ textAlign: "center", color: "#666", marginTop: 0 }}>
+        月額プランで税務相談ができます（回数制限あり）。プランを選んでお申し込みください。
       </p>
 
-      <div className="w-full max-w-md space-y-3">
+      {fatal && (
+        <div
+          style={{
+            border: "1px solid #f99",
+            background: "#fff5f5",
+            padding: 12,
+            borderRadius: 10,
+            whiteSpace: "pre-wrap",
+            marginTop: 12,
+          }}
+        >
+          {fatal}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gap: 12, marginTop: 18 }}>
         {PLANS.map((p) => (
           <button
             key={p.key}
             onClick={() => goCheckout(p.key)}
-            className="w-full bg-black text-white px-6 py-4 rounded-lg text-left"
+            disabled={!supabase || busy !== null}
+            style={{
+              textAlign: "left",
+              padding: 16,
+              borderRadius: 12,
+              border: "1px solid #ddd",
+              background: "#111",
+              color: "#fff",
+              opacity: !supabase || busy !== null ? 0.6 : 1,
+              cursor: !supabase || busy !== null ? "not-allowed" : "pointer",
+            }}
           >
-            <div className="flex items-baseline justify-between">
-              <span className="text-lg font-semibold">{p.title}</span>
-              <span className="text-base">{p.priceLabel}</span>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>{p.title}</div>
+                <div style={{ fontSize: 13, opacity: 0.85 }}>{p.quotaLabel}</div>
+              </div>
+              <div style={{ fontSize: 14, opacity: 0.9 }}>{p.priceLabel}</div>
             </div>
-            <div className="text-sm text-zinc-200 mt-1">{p.quotaLabel}</div>
+
+            {busy === p.key && <div style={{ marginTop: 10, opacity: 0.85 }}>決済ページを開いています…</div>}
           </button>
         ))}
       </div>
 
-      <p className="text-sm text-zinc-500 mt-6">
-        ※ログインしていない場合はログイン画面に移動します
+      <p style={{ textAlign: "center", color: "#666", marginTop: 14, fontSize: 12 }}>
+        ※ ログインしていない場合はログイン画面に移動します
       </p>
     </main>
   );

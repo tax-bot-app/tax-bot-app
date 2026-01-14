@@ -1,50 +1,31 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getSupabaseClient } from "../lib/supabaseClient";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
 type ChatRes =
-  | {
-      ok: true;
-      plan: string;
-      used_talks: number | null;
-      limit_talks: number | null;
-      message: string;
-    }
-  | {
-      ok: false;
-      error: string;
-      used_talks?: number | null;
-      limit_talks?: number | null;
-    };
+  | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null; message: string }
+  | { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
 
 type StatusRes =
   | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null }
   | { ok: false; error: string };
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
 
 const PLAN_LABEL: Record<string, string> = {
-  lite: "Lite",
-  standard: "Standard",
-  enterprise: "Enterprise",
+  free: "free（未契約）",
+  lite: "lite",
+  standard: "standard",
+  enterprise: "enterprise",
 };
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "assistant", content: "AI: 相談内容をどうぞ。" },
-  ]);
-
+  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "AI: 相談内容をどうぞ。" }]);
   const [loading, setLoading] = useState(false);
-
-  // ✅ ここがポイント：チェック完了/未ログイン/ログイン済を分ける
-  const [sessionChecked, setSessionChecked] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
 
   // status
@@ -57,65 +38,77 @@ export default function ChatPage() {
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
+  const supabase = useMemo(() => {
+    try {
+      return getSupabaseClient();
+    } catch (e: any) {
+      // env不足はここで止める
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content:
+            "AI: 環境変数が足りません（Vercelで NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY を入れてRedeployしてください）。",
+        },
+      ]);
+      return null;
+    }
+  }, []);
+
+  const scrollBottom = () => bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+
+  const refreshStatus = async () => {
+    if (!supabase) return;
+
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data.session?.access_token) {
+        setSessionReady(false);
+        setPlan("free");
+        setUsed(0);
+        setLimit(0);
+        return;
+      }
+      setSessionReady(true);
+
+      const res = await fetch("/api/status", {
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      const json = (await res.json().catch(() => null)) as StatusRes | null;
+
+      if (!json || !json.ok) {
+        setPlan("free");
+        setUsed(0);
+        setLimit(0);
+        return;
+      }
+
+      setPlan(json.plan ?? "free");
+      setUsed(Number(json.used_talks ?? 0));
+      setLimit(Number(json.limit_talks ?? 0));
+    } catch {
+      // 何もしない（表示崩し防止）
+    }
+  };
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    refreshStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    scrollBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, loading]);
 
-  const remaining = Math.max(0, (limit ?? 0) - (used ?? 0));
-  const hasActivePlan = plan !== "free" && (limit ?? 0) > 0;
-  const lowRemaining = hasActivePlan && remaining <= 3 && remaining > 0;
-  const zeroRemaining = hasActivePlan && remaining === 0;
-
-  function statusTheme() {
-    if (!hasActivePlan) return { border: "#ddd", text: "#333", badge: "未契約" };
-    if (zeroRemaining) return { border: "#dc2626", text: "#991b1b", badge: "上限到達" };
-    if (lowRemaining) return { border: "#f59e0b", text: "#92400e", badge: "残りわずか" };
-    return { border: "#16a34a", text: "#166534", badge: "利用可能" };
-  }
-
-  const theme = statusTheme();
-
-  async function getAccessToken(): Promise<string | null> {
-    const { data } = await supabase.auth.getSession();
-    return data.session?.access_token ?? null;
-  }
-
-  async function fetchStatus() {
-    const accessToken = await getAccessToken();
-    if (!accessToken) return;
-
-    const res = await fetch("/api/chat/status", {
-      method: "GET",
-      headers: { Authorization: `Bearer ${accessToken}` },
-      cache: "no-store",
-    });
-
-    let json: StatusRes | null = null;
-    try {
-      json = (await res.json()) as StatusRes;
-    } catch {
-      json = null;
-    }
-
-    if (json && json.ok) {
-      setPlan(json.plan);
-      setUsed(json.used_talks ?? 0);
-      setLimit(json.limit_talks ?? 0);
-    }
-  }
-
-  async function startCheckout(nextPlan: "lite" | "standard" | "enterprise") {
-    if (checkoutLoading) return;
+  const startCheckout = async (targetPlan: "lite" | "standard" | "enterprise") => {
+    if (!supabase) return;
 
     setCheckoutLoading(true);
-
     try {
-      const accessToken = await getAccessToken();
-      if (!accessToken) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: "AI: セッション切れ。再ログインしてな。" },
-        ]);
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data.session?.access_token) {
+        window.location.href = "/login";
         return;
       }
 
@@ -123,103 +116,39 @@ export default function ChatPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${data.session.access_token}`,
         },
-        body: JSON.stringify({ plan: nextPlan }),
+        body: JSON.stringify({ plan: targetPlan }),
       });
 
-      const raw = await res.text();
+      const json = (await res.json().catch(() => null)) as CheckoutRes | null;
 
-      let json: any = null;
-      try {
-        json = JSON.parse(raw);
-      } catch {
-        json = null;
-      }
+      if (!json) throw new Error("create-checkout: empty response");
+      if (!json.ok) throw new Error(json.error || "create-checkout failed");
+      if (!json.url) throw new Error("create-checkout: url missing");
 
-      const url =
-        (json && (json.url || json.checkoutUrl || json.checkout_url)) ||
-        (typeof json === "string" ? json : null);
-
-      if (!res.ok) {
-        const errMsg = json?.error || `create-checkout failed (status=${res.status})`;
-        setMessages((prev) => [...prev, { role: "assistant", content: `AI: 決済に進めません（${errMsg}）` }]);
-        return;
-      }
-
-      if (url && typeof url === "string") {
-        window.location.href = url;
-        return;
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "AI: 決済URLが取得できませんでした（レスポンス形式不一致）。" },
-      ]);
+      window.location.href = json.url;
     } catch (e: any) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `AI: 決済通信エラー（${e?.message ?? "unknown"}）` },
-      ]);
+      setMessages((prev) => [...prev, { role: "assistant", content: `AI: 決済に進めません（${e?.message ?? String(e)}）` }]);
     } finally {
       setCheckoutLoading(false);
     }
-  }
+  };
 
-  // ✅ 起動時：セッション確認 → sessionChecked を必ず true にする
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (!data.session) {
-          setSessionReady(false);
-          setMessages((prev) => [...prev, { role: "assistant", content: "AI: ログインが必要です。" }]);
-          return;
-        }
-        setSessionReady(true);
-        await fetchStatus();
-      } finally {
-        setSessionChecked(true);
-      }
-    })();
-  }, []);
-
-  async function handleSend() {
+  const handleSend = async () => {
+    if (!supabase) return;
     const text = input.trim();
     if (!text || loading) return;
 
-    if (!sessionReady) {
-      setMessages((prev) => [...prev, { role: "assistant", content: "AI: ログインが必要です。" }]);
-      return;
-    }
-
-    if (zeroRemaining) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "AI: 今月の上限に到達しています。上のボタンからプラン更新できます。" },
-      ]);
-      return;
-    }
-
-    if (!hasActivePlan) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "AI: プラン未契約です。上のボタンから決済に進んでください。" },
-      ]);
-      return;
-    }
-
     setInput("");
     setLoading(true);
+
     setMessages((prev) => [...prev, { role: "user", content: text }]);
 
     try {
-      const accessToken = await getAccessToken();
-      if (!accessToken) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: "AI: セッションが切れています。再ログインしてください。" },
-        ]);
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data.session?.access_token) {
+        setMessages((prev) => [...prev, { role: "assistant", content: "AI: ログインが必要です。" }]);
         setLoading(false);
         return;
       }
@@ -228,173 +157,131 @@ export default function ChatPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${data.session.access_token}`,
         },
         body: JSON.stringify({ message: text }),
       });
 
-      let dataJson: ChatRes | null = null;
-      try {
-        dataJson = (await res.json()) as ChatRes;
-      } catch {
-        dataJson = null;
+      const json = (await res.json().catch(() => null)) as ChatRes | null;
+
+      if (!json) {
+        setMessages((prev) => [...prev, { role: "assistant", content: "AI: 返答の取得に失敗しました（空レスポンス）" }]);
+        return;
       }
 
-      let msg: string;
-      if (!dataJson) {
-        msg = "AI: 返答の解析に失敗しました（JSONではない応答）。";
-      } else if (!dataJson.ok) {
-        msg =
-          dataJson.error === "quota exceeded"
-            ? `AI: 回数上限です (${dataJson.used_talks ?? "?"}/${dataJson.limit_talks ?? "?"})`
-            : `AI: ${dataJson.error}`;
-      } else {
-        msg = dataJson.message;
+      if (!json.ok) {
+        // quota超え or no active plan の想定
+        const err = json.error || "error";
+        setMessages((prev) => [...prev, { role: "assistant", content: `AI: ${err}` }]);
+
+        // status再取得（表示更新）
+        await refreshStatus();
+        return;
       }
 
-      setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
-      await fetchStatus();
+      // 回数表示も更新
+      setPlan(json.plan ?? plan);
+      setUsed(Number(json.used_talks ?? used));
+      setLimit(Number(json.limit_talks ?? limit));
+
+      setMessages((prev) => [...prev, { role: "assistant", content: `AI: ${json.message}` }]);
     } catch (e: any) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `AI: 通信エラー (${e?.message ?? "unknown"})` },
-      ]);
+      setMessages((prev) => [...prev, { role: "assistant", content: `AI: 通信エラー（${e?.message ?? String(e)}）` }]);
     } finally {
       setLoading(false);
+      await refreshStatus();
     }
-  }
+  };
 
-  const badgeText = !hasActivePlan
-    ? "プラン: free（未契約）"
-    : `プラン: ${plan} / 残り ${remaining} 回（${used}/${limit}）`;
-
-  const hintText = !sessionChecked
-    ? "ログイン状態を確認中…"
-    : !sessionReady
-      ? "ログインが必要です（別ドメイン/別環境だと未ログイン扱いになります）"
-      : !hasActivePlan
-        ? "この画面で相談するにはプラン契約が必要です。"
-        : zeroRemaining
-          ? "今月の上限に到達。プラン更新（または上位プラン）で即回復できます。"
-          : lowRemaining
-            ? `残りわずか（あと ${remaining} 回）。必要なら早めにプラン調整を。`
-            : "利用可能です。";
-
-  const canSend =
-    sessionReady && sessionChecked && !loading && !!input.trim() && hasActivePlan && !zeroRemaining;
+  const remaining = Math.max(0, (limit || 0) - (used || 0));
+  const low = limit > 0 && remaining <= 2;
+  const zero = limit > 0 && remaining <= 0;
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
-      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 10 }}>税務顧問bot｜チャット</h1>
+    <main style={{ maxWidth: 900, margin: "28px auto", padding: 16 }}>
+      <h1 style={{ textAlign: "center", marginBottom: 14 }}>税務顧問bot｜チャット</h1>
 
       <div
         style={{
-          padding: "10px 12px",
-          border: `1px solid ${theme.border}`,
-          borderRadius: 12,
-          marginBottom: 12,
-          fontSize: 13,
-          color: theme.text,
+          border: `2px solid ${zero ? "#f55" : low ? "#f7a400" : "#ddd"}`,
+          background: zero ? "#fff5f5" : low ? "#fff7e6" : "#fafafa",
+          borderRadius: 14,
+          padding: 12,
           display: "flex",
-          justifyContent: "space-between",
           alignItems: "center",
-          gap: 10,
+          justifyContent: "space-between",
+          gap: 12,
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 800 }}>{badgeText}</span>
-            <span
-              style={{
-                fontSize: 12,
-                padding: "2px 8px",
-                borderRadius: 999,
-                border: `1px solid ${theme.border}`,
-                color: theme.text,
-              }}
-            >
-              {theme.badge}
-            </span>
-          </div>
-
-          <div style={{ fontSize: 12, color: "#666" }}>{hintText}</div>
-
-          {sessionChecked && sessionReady && (!hasActivePlan || zeroRemaining) && (
-            <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <button
-                onClick={() => startCheckout("lite")}
-                disabled={checkoutLoading}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 10,
-                  border: "1px solid #ddd",
-                  background: "#fff",
-                  cursor: checkoutLoading ? "not-allowed" : "pointer",
-                  fontWeight: 800,
-                }}
-              >
-                {PLAN_LABEL.lite}で開始
-              </button>
-
-              <button
-                onClick={() => startCheckout("standard")}
-                disabled={checkoutLoading}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 10,
-                  border: "1px solid #ddd",
-                  background: "#fff",
-                  cursor: checkoutLoading ? "not-allowed" : "pointer",
-                  fontWeight: 800,
-                }}
-              >
-                {PLAN_LABEL.standard}で開始
-              </button>
-
-              <button
-                onClick={() => startCheckout("enterprise")}
-                disabled={checkoutLoading}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 10,
-                  border: "1px solid #ddd",
-                  background: "#fff",
-                  cursor: checkoutLoading ? "not-allowed" : "pointer",
-                  fontWeight: 800,
-                }}
-              >
-                {PLAN_LABEL.enterprise}へ
-              </button>
-
-              {checkoutLoading && <span style={{ fontSize: 12, color: "#666" }}>決済ページを準備中…</span>}
-            </div>
-          )}
+        <div style={{ fontWeight: 800 }}>
+          プラン: {PLAN_LABEL[plan] ?? plan} / 残り {remaining} 回（{used}/{limit || 0}）
+          {low && !zero && <span style={{ marginLeft: 10, fontWeight: 900 }}>残りわずか</span>}
+          {zero && <span style={{ marginLeft: 10, fontWeight: 900 }}>上限到達</span>}
         </div>
 
         <button
-          onClick={() => fetchStatus()}
-          disabled={!sessionReady || loading}
-          style={{
-            padding: "8px 10px",
-            borderRadius: 10,
-            border: "1px solid #ddd",
-            background: !sessionReady || loading ? "#f3f4f6" : "#fff",
-            cursor: !sessionReady || loading ? "not-allowed" : "pointer",
-            fontWeight: 800,
-            whiteSpace: "nowrap",
-          }}
+          onClick={refreshStatus}
+          style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}
         >
           更新
         </button>
       </div>
 
+      {zero && (
+        <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            onClick={() => startCheckout("lite")}
+            disabled={checkoutLoading}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: "#fff",
+              cursor: checkoutLoading ? "not-allowed" : "pointer",
+              fontWeight: 800,
+            }}
+          >
+            Liteで開始
+          </button>
+          <button
+            onClick={() => startCheckout("standard")}
+            disabled={checkoutLoading}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: "#fff",
+              cursor: checkoutLoading ? "not-allowed" : "pointer",
+              fontWeight: 800,
+            }}
+          >
+            Standardで開始
+          </button>
+          <button
+            onClick={() => startCheckout("enterprise")}
+            disabled={checkoutLoading}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: "#fff",
+              cursor: checkoutLoading ? "not-allowed" : "pointer",
+              fontWeight: 800,
+            }}
+          >
+            Enterpriseへ
+          </button>
+          {checkoutLoading && <div style={{ alignSelf: "center", color: "#666" }}>決済ページへ移動中…</div>}
+        </div>
+      )}
+
       <div
         style={{
+          marginTop: 14,
           border: "1px solid #ddd",
-          borderRadius: 12,
+          borderRadius: 14,
           padding: 12,
-          height: "60vh",
-          overflowY: "auto",
+          minHeight: 420,
           background: "#fff",
         }}
       >
@@ -402,9 +289,9 @@ export default function ChatPage() {
           <div
             key={i}
             style={{
-              margin: "10px 0",
               display: "flex",
               justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+              margin: "10px 0",
             }}
           >
             <div
@@ -412,16 +299,16 @@ export default function ChatPage() {
                 maxWidth: "80%",
                 padding: "10px 12px",
                 borderRadius: 12,
+                background: m.role === "user" ? "#f1f5ff" : "#f6f6f6",
                 border: "1px solid #eee",
-                background: m.role === "user" ? "#f3f4f6" : "#fafafa",
                 whiteSpace: "pre-wrap",
-                lineHeight: 1.5,
               }}
             >
-              {m.content}
+              {m.role === "user" ? `あなた: ${m.content}` : m.content}
             </div>
           </div>
         ))}
+
         {loading && <div style={{ margin: "10px 0", color: "#666" }}>AI: うーん…（考え中）</div>}
         <div ref={bottomRef} />
       </div>
@@ -437,34 +324,28 @@ export default function ChatPage() {
             }
           }}
           placeholder="相談内容を入力（Enterで送信）"
-          style={{
-            flex: 1,
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid #ddd",
-          }}
-          disabled={!sessionChecked || !sessionReady || loading || !hasActivePlan || zeroRemaining}
+          style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd" }}
+          disabled={!sessionReady || loading || zero}
         />
         <button
           onClick={handleSend}
-          disabled={!canSend}
+          disabled={!sessionReady || loading || !input.trim() || zero}
           style={{
             padding: "10px 14px",
             borderRadius: 10,
             border: "1px solid #ddd",
-            background: !canSend ? "#f3f4f6" : "#fff",
-            cursor: !canSend ? "not-allowed" : "pointer",
+            background: !sessionReady || loading || !input.trim() || zero ? "#f3f4f6" : "#fff",
+            cursor: !sessionReady || loading || !input.trim() || zero ? "not-allowed" : "pointer",
             fontWeight: 800,
-            whiteSpace: "nowrap",
           }}
         >
           送信
         </button>
       </div>
 
-      <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-        ※ 決済後に別ドメインに戻ると未ログイン扱いになります。APP_URL固定で回避済み。
-      </div>
-    </div>
+      <p style={{ color: "#666", fontSize: 12, marginTop: 10 }}>
+        ※ 未契約/上限到達のときは送信不可（無駄打ち防止）。決済ボタンから Stripe Checkout に直行します。
+      </p>
+    </main>
   );
 }
