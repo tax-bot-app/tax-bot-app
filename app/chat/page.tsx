@@ -22,9 +22,19 @@ const PLAN_LABEL: Record<string, string> = {
   enterprise: "enterprise",
 };
 
+function nowTime() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
 export default function ChatPage() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "AI: 相談内容をどうぞ。" }]);
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { role: "assistant", content: "AI: 相談内容をどうぞ。" },
+  ]);
   const [loading, setLoading] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
 
@@ -33,10 +43,15 @@ export default function ChatPage() {
   const [used, setUsed] = useState<number>(0);
   const [limit, setLimit] = useState<number>(0);
 
+  // status UI feedback
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string>("");
+
   // checkout
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const statusMsgTimer = useRef<number | null>(null);
 
   const supabase = useMemo(() => {
     try {
@@ -57,9 +72,19 @@ export default function ChatPage() {
 
   const scrollBottom = () => bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 
-  const refreshStatus = async () => {
+  const showStatusMsg = (msg: string) => {
+    setStatusMsg(msg);
+    if (statusMsgTimer.current) window.clearTimeout(statusMsgTimer.current);
+    statusMsgTimer.current = window.setTimeout(() => {
+      setStatusMsg("");
+      statusMsgTimer.current = null;
+    }, 2500);
+  };
+
+  const refreshStatus = async (opts?: { silent?: boolean }) => {
     if (!supabase) return;
 
+    if (!opts?.silent) setStatusLoading(true);
     try {
       const { data, error } = await supabase.auth.getSession();
       if (error || !data.session?.access_token) {
@@ -67,32 +92,53 @@ export default function ChatPage() {
         setPlan("free");
         setUsed(0);
         setLimit(0);
+        if (!opts?.silent) showStatusMsg("未ログイン（free）に戻しました");
         return;
       }
       setSessionReady(true);
 
-      const res = await fetch("/api/chat/status", {
+      // ✅ キャッシュ疑い潰し：ts付与 + no-store
+      const res = await fetch(`/api/chat/status?ts=${Date.now()}`, {
         headers: { Authorization: `Bearer ${data.session.access_token}` },
+        cache: "no-store",
       });
+
+      if (!res.ok) {
+        setPlan("free");
+        setUsed(0);
+        setLimit(0);
+        if (!opts?.silent) showStatusMsg(`更新失敗（HTTP ${res.status}）`);
+        return;
+      }
+
       const json = (await res.json().catch(() => null)) as StatusRes | null;
 
       if (!json || !json.ok) {
         setPlan("free");
         setUsed(0);
         setLimit(0);
+        if (!opts?.silent) showStatusMsg(`更新失敗（${json?.error ?? "invalid response"}）`);
         return;
       }
 
-      setPlan(json.plan ?? "free");
-      setUsed(Number(json.used_talks ?? 0));
-      setLimit(Number(json.limit_talks ?? 0));
-    } catch {
-      // 何もしない（表示崩し防止）
+      const nextPlan = json.plan ?? "free";
+      const nextUsed = Number(json.used_talks ?? 0);
+      const nextLimit = Number(json.limit_talks ?? 0);
+
+      setPlan(nextPlan);
+      setUsed(nextUsed);
+      setLimit(nextLimit);
+
+      if (!opts?.silent) showStatusMsg(`更新しました（${nowTime()}）`);
+    } catch (e: any) {
+      if (!opts?.silent) showStatusMsg(`更新失敗（${e?.message ?? String(e)}）`);
+    } finally {
+      if (!opts?.silent) setStatusLoading(false);
     }
   };
 
   useEffect(() => {
-    refreshStatus();
+    refreshStatus({ silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -129,7 +175,10 @@ export default function ChatPage() {
 
       window.location.href = json.url;
     } catch (e: any) {
-      setMessages((prev) => [...prev, { role: "assistant", content: `AI: 決済に進めません（${e?.message ?? String(e)}）` }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `AI: 決済に進めません（${e?.message ?? String(e)}）` },
+      ]);
     } finally {
       setCheckoutLoading(false);
     }
@@ -165,31 +214,36 @@ export default function ChatPage() {
       const json = (await res.json().catch(() => null)) as ChatRes | null;
 
       if (!json) {
-        setMessages((prev) => [...prev, { role: "assistant", content: "AI: 返答の取得に失敗しました（空レスポンス）" }]);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "AI: 返答の取得に失敗しました（空レスポンス）" },
+        ]);
         return;
       }
 
       if (!json.ok) {
-        // quota超え or no active plan の想定
         const err = json.error || "error";
         setMessages((prev) => [...prev, { role: "assistant", content: `AI: ${err}` }]);
 
         // status再取得（表示更新）
-        await refreshStatus();
+        await refreshStatus({ silent: true });
         return;
       }
 
-      // 回数表示も更新
+      // 回数表示も更新（チャットAPIの返却値を優先）
       setPlan(json.plan ?? plan);
       setUsed(Number(json.used_talks ?? used));
       setLimit(Number(json.limit_talks ?? limit));
 
       setMessages((prev) => [...prev, { role: "assistant", content: `AI: ${json.message}` }]);
     } catch (e: any) {
-      setMessages((prev) => [...prev, { role: "assistant", content: `AI: 通信エラー（${e?.message ?? String(e)}）` }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `AI: 通信エラー（${e?.message ?? String(e)}）` },
+      ]);
     } finally {
       setLoading(false);
-      await refreshStatus();
+      await refreshStatus({ silent: true });
     }
   };
 
@@ -217,13 +271,26 @@ export default function ChatPage() {
           プラン: {PLAN_LABEL[plan] ?? plan} / 残り {remaining} 回（{used}/{limit || 0}）
           {low && !zero && <span style={{ marginLeft: 10, fontWeight: 900 }}>残りわずか</span>}
           {zero && <span style={{ marginLeft: 10, fontWeight: 900 }}>上限到達</span>}
+          {statusMsg && (
+            <span style={{ marginLeft: 12, fontWeight: 700, color: "#666" }}>
+              ・{statusMsg}
+            </span>
+          )}
         </div>
 
         <button
-          onClick={refreshStatus}
-          style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}
+          onClick={() => refreshStatus()}
+          disabled={statusLoading}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 10,
+            border: "1px solid #ddd",
+            background: "#fff",
+            cursor: statusLoading ? "not-allowed" : "pointer",
+            fontWeight: 800,
+          }}
         >
-          更新
+          {statusLoading ? "更新中…" : "更新"}
         </button>
       </div>
 
