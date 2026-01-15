@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useMemo, useState } from "react";
 import { getSupabaseClient } from "./lib/supabaseClient";
@@ -11,9 +11,9 @@ const PLANS: Array<{
   priceLabel: string;
   quotaLabel: string;
 }> = [
-  { key: "lite", title: "Lite", priceLabel: "3,300蜀・譛・, quotaLabel: "譛・蝗槭∪縺ｧ" },
-  { key: "standard", title: "Standard", priceLabel: "16,500蜀・譛・, quotaLabel: "譛・0蝗槭∪縺ｧ" },
-  { key: "enterprise", title: "Enterprise", priceLabel: "33,000蜀・譛・, quotaLabel: "譛・00蝗槭∪縺ｧ" },
+  { key: "lite", title: "Lite", priceLabel: "3,300円/月", quotaLabel: "月5回まで" },
+  { key: "standard", title: "Standard", priceLabel: "16,500円/月", quotaLabel: "月20回まで" },
+  { key: "enterprise", title: "Enterprise", priceLabel: "33,000円/月", quotaLabel: "月100回まで" },
 ];
 
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
@@ -27,8 +27,8 @@ export default function Home() {
       return getSupabaseClient();
     } catch (e: any) {
       setFatal(
-        `迺ｰ蠅・､画焚縺瑚ｶｳ繧翫∪縺帙ｓ・・{e?.message ?? String(e)}\n` +
-          `Vercel縺ｮEnvironment Variables縺ｫ NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY 繧貞・繧後※縲ヽedeploy縺励※縺上□縺輔＞縲Ａ
+        `環境変数が足りません：${e?.message ?? String(e)}\n` +
+          `VercelのEnvironment Variablesに NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY を入れて、Redeployしてください。`
       );
       return null;
     }
@@ -62,7 +62,7 @@ export default function Home() {
 
       window.location.href = json.url;
     } catch (e: any) {
-      alert(`豎ｺ貂医↓騾ｲ繧√∪縺帙ｓ・・{e?.message ?? String(e)}`);
+      alert(`決済に進めません：${e?.message ?? String(e)}`);
     } finally {
       setBusy(null);
     }
@@ -70,9 +70,10 @@ export default function Home() {
 
   return (
     <main style={{ maxWidth: 780, margin: "40px auto", padding: 16 }}>
-      <h1 style={{ textAlign: "center", marginBottom: 6 }}>遞主漁逶ｸ隲②I・医ユ繧ｹ繝育沿・・/h1>
+      <h1 style={{ textAlign: "center", marginBottom: 6 }}>税務相談AI（テスト版）</h1>
       <p style={{ textAlign: "center", color: "#666", marginTop: 0 }}>
-        譛磯｡阪・繝ｩ繝ｳ縺ｧ遞主漁逶ｸ隲・′縺ｧ縺阪∪縺呻ｼ亥屓謨ｰ蛻ｶ髯舌≠繧奇ｼ峨ゅ・繝ｩ繝ｳ繧帝∈繧薙〒縺顔筏縺苓ｾｼ縺ｿ縺上□縺輔＞縲・      </p>
+        月額プランで税務相談ができます（回数制限あり）。プランを選んでお申し込みください。
+      </p>
 
       {fatal && (
         <div
@@ -114,13 +115,14 @@ export default function Home() {
               <div style={{ fontSize: 14, opacity: 0.9 }}>{p.priceLabel}</div>
             </div>
 
-            {busy === p.key && <div style={{ marginTop: 10, opacity: 0.85 }}>豎ｺ貂医・繝ｼ繧ｸ繧帝幕縺・※縺・∪縺吮ｦ</div>}
+            {busy === p.key && <div style={{ marginTop: 10, opacity: 0.85 }}>決済ページを開いています…</div>}
           </button>
         ))}
       </div>
 
       <p style={{ textAlign: "center", color: "#666", marginTop: 14, fontSize: 12 }}>
-        窶ｻ 繝ｭ繧ｰ繧､繝ｳ縺励※縺・↑縺・ｴ蜷医・繝ｭ繧ｰ繧､繝ｳ逕ｻ髱｢縺ｫ遘ｻ蜍輔＠縺ｾ縺・      </p>
+        ※ ログインしていない場合はログイン画面に移動します
+      </p>
     </main>
   );
 }
