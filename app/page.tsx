@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useMemo, useState } from "react";
 import { getSupabaseClient } from "./lib/supabaseClient";
@@ -12,7 +12,7 @@ const PLANS: Array<{
   quotaLabel: string;
 }> = [
   { key: "lite", title: "Lite", priceLabel: "3,300円/月", quotaLabel: "月5回まで" },
-  { key: "standard", title: "Standard", priceLabel: "16,500円/月", quotaLabel: "月20回まで" },
+  { key: "standard", title: "Standard", priceLabel: "16,500円/月", quotaLabel: "月30回まで" },
   { key: "enterprise", title: "Enterprise", priceLabel: "33,000円/月", quotaLabel: "月100回まで" },
 ];
 
