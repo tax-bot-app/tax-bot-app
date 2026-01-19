@@ -56,6 +56,33 @@ export default function LoginPage() {
     }
   };
 
+  // ★追加：パスワード再設定メール送信（redirectTo を必ず reset-password にする）
+  const sendReset = async () => {
+    setMsg(null);
+    setBusy(true);
+    try {
+      if (!email) {
+        setMsg("メールアドレスを入力してから押して。");
+        return;
+      }
+
+      const redirectTo = `${window.location.origin}/reset-password`;
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo,
+      });
+
+      if (error) {
+        setMsg(error.message);
+        return;
+      }
+
+      setMsg("再設定メールを送信しました。受信箱（迷惑メールも）を確認してください。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <main className="min-h-screen flex flex-col items-center justify-center bg-zinc-50 px-6">
       <h1 className="text-3xl font-bold mb-6">ログイン</h1>
@@ -96,6 +123,15 @@ export default function LoginPage() {
             新規登録
           </button>
         </div>
+
+        {/* ★追加：再設定メール送信 */}
+        <button
+          onClick={sendReset}
+          disabled={busy}
+          className="w-full mt-3 bg-white text-black px-4 py-2 rounded-md border"
+        >
+          パスワードを忘れた（再設定メール送信）
+        </button>
       </div>
     </main>
   );
