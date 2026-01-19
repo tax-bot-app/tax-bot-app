@@ -2,12 +2,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+import { getPlan, normalizePlanKey, type PlanKey } from "../../../lib1/planMaster";
+
 type StatusRes =
   | {
       ok: true;
-      plan: string;
-      used_talks: number | null;
-      limit_talks: number | null;
+      plan: PlanKey;
+      used_talks: number;
+      limit_talks: number;
     }
   | {
       ok: false;
@@ -64,10 +66,10 @@ export async function GET(req: Request) {
       global: { headers: { Authorization: `Bearer ${accessToken}` } },
     });
 
-    // users から plan/quota
+    // users から plan だけ読む（monthly_quotaは使わない）
     const { data: urow, error: uerr } = await supabaseDb
       .from("users")
-      .select("plan, monthly_quota")
+      .select("plan")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -77,8 +79,8 @@ export async function GET(req: Request) {
       return NextResponse.json(body, { status: 500 });
     }
 
-    const plan = urow?.plan ?? "free";
-    const limit_talks = urow?.monthly_quota ?? 0;
+    const plan: PlanKey = normalizePlanKey(urow?.plan ?? "free");
+    const limit_talks = getPlan(plan).monthlyQuota;
 
     // usage から used（無ければ0）
     const month = new Date().toISOString().slice(0, 7); // "YYYY-MM"

@@ -3,6 +3,13 @@ import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
+import {
+  getPlan,
+  getPlanByPriceId,
+  normalizePlanKey,
+  type PlanKey,
+} from "../../../lib1/planMaster";
+
 export const runtime = "nodejs";
 
 function mustEnv(name: string): string {
@@ -17,55 +24,45 @@ const stripe = new Stripe(mustEnv("STRIPE_SECRET_KEY"), {
 
 const webhookSecret = mustEnv("STRIPE_WEBHOOK_SECRET");
 
-type Plan = "free" | "lite" | "standard" | "enterprise";
-
-function planRank(plan: Plan): number {
-  switch (plan) {
-    case "enterprise":
-      return 3;
-    case "standard":
-      return 2;
-    case "lite":
-      return 1;
-    default:
-      return 0;
-  }
-}
-
-function quotaByPlan(plan: Plan): number {
-  switch (plan) {
-    case "enterprise":
-      return 100;
-    case "standard":
-      return 30;
-    case "lite":
-      return 5;
-    default:
-      return 0;
-  }
-}
-
-function planFromPriceId(priceId: string | null | undefined): Plan {
-  const lite = mustEnv("STRIPE_PRICE_LITE");
-  const standard = mustEnv("STRIPE_PRICE_STANDARD");
-  const enterprise = mustEnv("STRIPE_PRICE_ENTERPRISE");
-
-  if (!priceId) return "free";
-  if (priceId === lite) return "lite";
-  if (priceId === standard) return "standard";
-  if (priceId === enterprise) return "enterprise";
-  return "free";
-}
-
 function adminSupabase() {
   const url = mustEnv("SUPABASE_URL");
   const serviceRole = mustEnv("SUPABASE_SERVICE_ROLE_KEY");
   return createClient(url, serviceRole, { auth: { persistSession: false } });
 }
 
+/**
+ * ✅ 冪等性チェック
+ * - stripe_webhook_events.event_id を primary key にして「先にinsert」
+ * - すでにあれば 23505(duplicate) で即return
+ */
+async function ensureIdempotency(event: Stripe.Event): Promise<{
+  isDuplicate: boolean;
+}> {
+  const supabase = adminSupabase();
+
+  const stripeCreatedAt =
+    typeof event.created === "number"
+      ? new Date(event.created * 1000).toISOString()
+      : null;
+
+  const { error } = await supabase.from("stripe_webhook_events").insert({
+    event_id: event.id,
+    event_type: event.type,
+    stripe_created_at: stripeCreatedAt,
+  });
+
+  if (!error) return { isDuplicate: false };
+
+  // Postgres unique violation
+  const code = (error as any)?.code;
+  if (code === "23505") return { isDuplicate: true };
+
+  throw error;
+}
+
 async function upsertUserByEmail(params: {
   email: string;
-  plan: Plan;
+  plan: PlanKey;
   monthly_quota: number;
   stripe_customer_id?: string | null;
   stripe_subscription_id?: string | null;
@@ -108,7 +105,7 @@ async function upsertUserByEmail(params: {
 
 async function updateUserByCustomerId(params: {
   stripe_customer_id: string;
-  plan: Plan;
+  plan: PlanKey;
   monthly_quota: number;
   stripe_subscription_id?: string | null;
 }) {
@@ -139,10 +136,9 @@ async function updateUserByCustomerId(params: {
 /**
  * ✅ 複数サブスク対応の“正”同期
  * - customer の全サブスクを見て「今有効な中で最強プラン」を決める
- * - active/trialing は有効（cancel_at_period_end=true でも期間中はstatus=activeなのでOK）
  */
 async function computeBestPlanForCustomer(customerId: string): Promise<{
-  plan: Plan;
+  plan: PlanKey;
   monthly_quota: number;
   subscription_id: string | null;
 }> {
@@ -152,43 +148,59 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
     limit: 100,
   });
 
-  const candidates = subs.data.filter((s) => ["active", "trialing"].includes(s.status));
+  const candidates = subs.data.filter((s) =>
+    ["active", "trialing"].includes(s.status)
+  );
 
   if (candidates.length === 0) {
-    return { plan: "free", monthly_quota: 0, subscription_id: null };
+    const free = getPlan("free");
+    return {
+      plan: "free",
+      monthly_quota: free.monthlyQuota,
+      subscription_id: null,
+    };
   }
 
   const scored = candidates.map((s) => {
-    let best: Plan = "free";
+    let bestKey: PlanKey = "free";
+
     for (const item of s.items.data ?? []) {
-      const p = planFromPriceId(item.price?.id ?? null);
-      if (planRank(p) > planRank(best)) best = p;
+      const planDef = getPlanByPriceId(item.price?.id ?? null);
+      const key = normalizePlanKey(planDef?.key);
+
+      const cur = getPlan(bestKey);
+      const next = getPlan(key);
+      if (next.sortOrder > cur.sortOrder) bestKey = key;
     }
 
-    // ✅ Stripeの型定義差を吸収（実データには普通に入ってる）
     const anyS = s as any;
     const periodEnd = Number(anyS.current_period_end ?? 0);
     const created = Number(anyS.created ?? 0);
 
     return {
       sub: s,
-      bestPlanInSub: best,
-      rank: planRank(best),
+      bestKey,
+      sortOrder: getPlan(bestKey).sortOrder,
       periodEnd,
       created,
     };
   });
 
   scored.sort((a, b) => {
-    if (b.rank !== a.rank) return b.rank - a.rank;
+    if (b.sortOrder !== a.sortOrder) return b.sortOrder - a.sortOrder;
     if (b.periodEnd !== a.periodEnd) return b.periodEnd - a.periodEnd;
     return b.created - a.created;
   });
 
   const best = scored[0];
-  const plan = best.bestPlanInSub;
+  const plan = best.bestKey;
+  const planDef = getPlan(plan);
 
-  return { plan, monthly_quota: quotaByPlan(plan), subscription_id: best.sub.id };
+  return {
+    plan,
+    monthly_quota: planDef.monthlyQuota,
+    subscription_id: best.sub.id,
+  };
 }
 
 async function syncUserPlanByCustomerId(customerId: string) {
@@ -203,7 +215,12 @@ async function syncUserPlanByCustomerId(customerId: string) {
 
 export async function POST(req: Request) {
   const sig = req.headers.get("stripe-signature");
-  if (!sig) return NextResponse.json({ ok: false, error: "Missing stripe-signature" }, { status: 400 });
+  if (!sig) {
+    return NextResponse.json(
+      { ok: false, error: "Missing stripe-signature" },
+      { status: 400 }
+    );
+  }
 
   const rawBody = await req.text();
 
@@ -212,8 +229,29 @@ export async function POST(req: Request) {
     event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: `Webhook signature verification failed: ${e?.message ?? e}` },
+      {
+        ok: false,
+        error: `Webhook signature verification failed: ${e?.message ?? e}`,
+      },
       { status: 400 }
+    );
+  }
+
+  // ✅ ここが肝：先に冪等性チェック
+  try {
+    const { isDuplicate } = await ensureIdempotency(event);
+    if (isDuplicate) {
+      // Stripe の再送・二重到達を “何もせず成功” にする
+      return NextResponse.json(
+        { received: true, deduped: true },
+        { status: 200 }
+      );
+    }
+  } catch (e: any) {
+    console.error("idempotency check failed", e);
+    return NextResponse.json(
+      { ok: false, error: e?.message ?? String(e) },
+      { status: 500 }
     );
   }
 
@@ -222,36 +260,50 @@ export async function POST(req: Request) {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
 
-      const customerId = typeof session.customer === "string" ? session.customer : null;
-      const subscriptionId = typeof session.subscription === "string" ? session.subscription : null;
+      const customerId =
+        typeof session.customer === "string" ? session.customer : null;
+      const subscriptionId =
+        typeof session.subscription === "string" ? session.subscription : null;
 
       let email =
         session.customer_details?.email ||
-        (typeof session.customer_email === "string" ? session.customer_email : null);
+        (typeof session.customer_email === "string"
+          ? session.customer_email
+          : null);
 
       if (!email && customerId) {
-        const cust = (await stripe.customers.retrieve(customerId)) as Stripe.Customer;
+        const cust = (await stripe.customers.retrieve(
+          customerId
+        )) as Stripe.Customer;
         email = cust.email ?? null;
       }
 
       if (!email) {
-        console.warn("checkout.session.completed but no email", { id: session.id, customerId, subscriptionId });
+        console.warn("checkout.session.completed but no email", {
+          id: session.id,
+          customerId,
+          subscriptionId,
+        });
         return NextResponse.json({ received: true }, { status: 200 });
       }
 
-      // まずは紐付けを確実に
+      // 一旦このsubscriptionのpriceIdから暫定プランを入れる（紐付け優先）
       let priceId: string | null = null;
       if (subscriptionId) {
-        const sub = (await stripe.subscriptions.retrieve(subscriptionId)) as Stripe.Subscription;
+        const sub = (await stripe.subscriptions.retrieve(
+          subscriptionId
+        )) as Stripe.Subscription;
         priceId = sub.items.data?.[0]?.price?.id ?? null;
       }
 
-      const tempPlan = planFromPriceId(priceId);
+      const planDef = getPlanByPriceId(priceId);
+      const tempPlanKey: PlanKey = normalizePlanKey(planDef?.key);
+      const tempPlan = getPlan(tempPlanKey);
 
       await upsertUserByEmail({
         email,
-        plan: tempPlan,
-        monthly_quota: quotaByPlan(tempPlan),
+        plan: tempPlanKey,
+        monthly_quota: tempPlan.monthlyQuota,
         stripe_customer_id: customerId,
         stripe_subscription_id: subscriptionId,
       });
@@ -265,7 +317,10 @@ export async function POST(req: Request) {
     }
 
     // 2) サブスク作成/更新 → customer全体を同期
-    if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated") {
+    if (
+      event.type === "customer.subscription.created" ||
+      event.type === "customer.subscription.updated"
+    ) {
       const sub = event.data.object as Stripe.Subscription;
       const customerId = typeof sub.customer === "string" ? sub.customer : null;
 
@@ -291,6 +346,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ received: true }, { status: 200 });
   } catch (e: any) {
     console.error("webhook handler error", e);
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e?.message ?? String(e) },
+      { status: 500 }
+    );
   }
 }
