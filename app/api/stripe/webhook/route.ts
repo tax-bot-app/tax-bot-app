@@ -31,8 +31,10 @@ function adminSupabase() {
 }
 
 function currentMonthKey(): string {
-  // "YYYY-MM"
-  return new Date().toISOString().slice(0, 7);
+  // JSTで "YYYY-MM" を作る（UTCズレ事故防止）
+  const d = new Date();
+  const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000); // +09:00
+  return jst.toISOString().slice(0, 7);
 }
 
 /**
