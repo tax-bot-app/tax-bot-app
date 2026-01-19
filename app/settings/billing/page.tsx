@@ -37,6 +37,18 @@ export default function BillingSettingsPage() {
     }
   };
 
+  const logout = async () => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      await supabase.auth.signOut();
+      window.location.href = "/login";
+    } catch (e: any) {
+      setMsg(e?.message ?? String(e));
+      setLoading(false);
+    }
+  };
+
   return (
     <div style={{ maxWidth: 720, margin: "24px auto", padding: "0 16px" }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>
@@ -48,21 +60,39 @@ export default function BillingSettingsPage() {
           プラン変更・解約・請求履歴の確認はStripeの公式画面で行います。
         </p>
 
-        <button
-          onClick={openPortal}
-          disabled={loading}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 10,
-            border: "1px solid #111827",
-            background: loading ? "#f3f4f6" : "#111827",
-            color: loading ? "#111827" : "#ffffff",
-            cursor: loading ? "not-allowed" : "pointer",
-            fontWeight: 700,
-          }}
-        >
-          {loading ? "開いてます…" : "プラン変更・解約を開く"}
-        </button>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            onClick={openPortal}
+            disabled={loading}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 10,
+              border: "1px solid #111827",
+              background: loading ? "#f3f4f6" : "#111827",
+              color: loading ? "#111827" : "#ffffff",
+              cursor: loading ? "not-allowed" : "pointer",
+              fontWeight: 700,
+            }}
+          >
+            {loading ? "開いてます…" : "プラン変更・解約を開く"}
+          </button>
+
+          <button
+            onClick={logout}
+            disabled={loading}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 10,
+              border: "1px solid #ef4444",
+              background: "#ffffff",
+              color: "#ef4444",
+              cursor: loading ? "not-allowed" : "pointer",
+              fontWeight: 700,
+            }}
+          >
+            ログアウト
+          </button>
+        </div>
 
         {msg && <p style={{ marginTop: 12, color: "#b91c1c" }}>{msg}</p>}
       </div>
