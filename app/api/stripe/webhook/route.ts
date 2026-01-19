@@ -30,6 +30,11 @@ function adminSupabase() {
   return createClient(url, serviceRole, { auth: { persistSession: false } });
 }
 
+function currentMonthKey(): string {
+  // "YYYY-MM"
+  return new Date().toISOString().slice(0, 7);
+}
+
 /**
  * ✅ 冪等性チェック
  * - stripe_webhook_events.event_id を primary key にして「先にinsert」
@@ -60,13 +65,40 @@ async function ensureIdempotency(event: Stripe.Event): Promise<{
   throw error;
 }
 
+/**
+ * ✅ users.monthly_quota に合わせて usage.limit_talks を当月分だけ同期
+ * - PK (user_id, month) があるので upsert が安全に使える
+ * - used_talks / used は絶対に触らない（上書き事故防止）
+ */
+async function syncUsageCurrentMonth(params: {
+  userId: string;
+  monthly_quota: number;
+}) {
+  const supabase = adminSupabase();
+  const month = currentMonthKey();
+
+  const { error } = await supabase
+    .from("usage")
+    .upsert(
+      {
+        user_id: params.userId,
+        month,
+        limit_talks: params.monthly_quota,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,month" }
+    );
+
+  if (error) throw error;
+}
+
 async function upsertUserByEmail(params: {
   email: string;
   plan: PlanKey;
   monthly_quota: number;
   stripe_customer_id?: string | null;
   stripe_subscription_id?: string | null;
-}) {
+}): Promise<{ userId: string }> {
   const supabase = adminSupabase();
 
   const { data: user, error: findErr } = await supabase
@@ -77,18 +109,26 @@ async function upsertUserByEmail(params: {
 
   if (findErr) throw findErr;
 
+  // insert
   if (!user?.id) {
-    const { error: insErr } = await supabase.from("users").insert({
-      email: params.email,
-      plan: params.plan,
-      monthly_quota: params.monthly_quota,
-      stripe_customer_id: params.stripe_customer_id ?? null,
-      stripe_subscription_id: params.stripe_subscription_id ?? null,
-    });
+    const { data: inserted, error: insErr } = await supabase
+      .from("users")
+      .insert({
+        email: params.email,
+        plan: params.plan,
+        monthly_quota: params.monthly_quota,
+        stripe_customer_id: params.stripe_customer_id ?? null,
+        stripe_subscription_id: params.stripe_subscription_id ?? null,
+      })
+      .select("id")
+      .single();
+
     if (insErr) throw insErr;
-    return;
+    if (!inserted?.id) throw new Error("failed to insert user (no id returned)");
+    return { userId: inserted.id };
   }
 
+  // update
   const { error: updErr } = await supabase
     .from("users")
     .update({
@@ -101,6 +141,8 @@ async function upsertUserByEmail(params: {
     .eq("id", user.id);
 
   if (updErr) throw updErr;
+
+  return { userId: user.id };
 }
 
 async function updateUserByCustomerId(params: {
@@ -108,7 +150,7 @@ async function updateUserByCustomerId(params: {
   plan: PlanKey;
   monthly_quota: number;
   stripe_subscription_id?: string | null;
-}) {
+}): Promise<{ userId: string } | null> {
   const supabase = adminSupabase();
 
   const { data: user, error: findErr } = await supabase
@@ -118,7 +160,7 @@ async function updateUserByCustomerId(params: {
     .maybeSingle();
 
   if (findErr) throw findErr;
-  if (!user?.id) return;
+  if (!user?.id) return null;
 
   const { error: updErr } = await supabase
     .from("users")
@@ -131,6 +173,8 @@ async function updateUserByCustomerId(params: {
     .eq("id", user.id);
 
   if (updErr) throw updErr;
+
+  return { userId: user.id };
 }
 
 /**
@@ -203,14 +247,28 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
   };
 }
 
-async function syncUserPlanByCustomerId(customerId: string) {
+async function syncUserPlanByCustomerId(customerId: string): Promise<{
+  userId: string;
+  monthly_quota: number;
+} | null> {
   const best = await computeBestPlanForCustomer(customerId);
-  await updateUserByCustomerId({
+
+  const updated = await updateUserByCustomerId({
     stripe_customer_id: customerId,
     plan: best.plan,
     monthly_quota: best.monthly_quota,
     stripe_subscription_id: best.subscription_id,
   });
+
+  if (!updated?.userId) return null;
+
+  // ✅ users が確定した直後に usage を当月分だけ同期
+  await syncUsageCurrentMonth({
+    userId: updated.userId,
+    monthly_quota: best.monthly_quota,
+  });
+
+  return { userId: updated.userId, monthly_quota: best.monthly_quota };
 }
 
 export async function POST(req: Request) {
@@ -300,7 +358,8 @@ export async function POST(req: Request) {
       const tempPlanKey: PlanKey = normalizePlanKey(planDef?.key);
       const tempPlan = getPlan(tempPlanKey);
 
-      await upsertUserByEmail({
+      // ✅ users を upsert（この時点で userId を確実に取得）
+      const { userId } = await upsertUserByEmail({
         email,
         plan: tempPlanKey,
         monthly_quota: tempPlan.monthlyQuota,
@@ -308,7 +367,13 @@ export async function POST(req: Request) {
         stripe_subscription_id: subscriptionId,
       });
 
-      // ✅ 最後に“正”同期（複数サブスクでも最強プランへ）
+      // ✅ まず暫定でも usage を当月同期（紐付け直後に事故らないように）
+      await syncUsageCurrentMonth({
+        userId,
+        monthly_quota: tempPlan.monthlyQuota,
+      });
+
+      // ✅ 最後に“正”同期（複数サブスクでも最強プランへ）→ ここでも usage 同期される
       if (customerId) {
         await syncUserPlanByCustomerId(customerId);
       }
@@ -316,7 +381,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    // 2) サブスク作成/更新 → customer全体を同期
+    // 2) サブスク作成/更新 → customer全体を同期（users更新→usage同期まで含む）
     if (
       event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated"
@@ -331,7 +396,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    // 3) 解約（deleted） → free固定にせず、残りサブスクで再計算
+    // 3) 解約（deleted） → free固定にせず、残りサブスクで再計算（users更新→usage同期まで含む）
     if (event.type === "customer.subscription.deleted") {
       const sub = event.data.object as Stripe.Subscription;
       const customerId = typeof sub.customer === "string" ? sub.customer : null;
