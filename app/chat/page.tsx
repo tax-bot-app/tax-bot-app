@@ -38,6 +38,9 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
 
+  // ✅ 送信中に同じ冪等キーを保持（再送・リトライで二重カウント防止）
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+
   // status
   const [plan, setPlan] = useState<string>("free");
   const [used, setUsed] = useState<number>(0);
@@ -189,6 +192,15 @@ export default function ChatPage() {
     const text = input.trim();
     if (!text || loading) return;
 
+    // ✅ 今回の送信に使う冪等キーを確定（送信中は同じキー）
+    const idempotencyKey =
+      pendingKey ??
+      (typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random()}`); // ほぼ来ない保険（uuidじゃないのでAPIが弾く可能性あり）
+
+    setPendingKey(idempotencyKey);
+
     setInput("");
     setLoading(true);
 
@@ -208,7 +220,7 @@ export default function ChatPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${data.session.access_token}`,
         },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, idempotencyKey }),
       });
 
       const json = (await res.json().catch(() => null)) as ChatRes | null;
@@ -243,6 +255,7 @@ export default function ChatPage() {
       ]);
     } finally {
       setLoading(false);
+      setPendingKey(null); // ✅ 送信完了/失敗でキー解放（次送信は新規キー）
       await refreshStatus({ silent: true });
     }
   };
