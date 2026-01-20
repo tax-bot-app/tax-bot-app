@@ -51,6 +51,7 @@ type ChatRes =
       used_talks: number | null;
       limit_talks: number | null;
       message: string;
+      conversationId?: string;
     }
   | {
       ok: false;
@@ -67,6 +68,38 @@ type ConsumeTalkV2Result = {
   already_counted: boolean;
 };
 
+async function ensureConversationId(params: {
+  db: any;
+  userId: string;
+  conversationId: string | null;
+}): Promise<string> {
+  const { db, userId, conversationId } = params;
+
+  if (conversationId) {
+    // 所有チェック（RLS + where）
+    const { data, error } = (await db
+  .from("conversations")
+  .select("id")
+  .eq("id", conversationId)
+  .eq("user_id", userId)
+  .maybeSingle()) as any;
+
+if (error) throw error;
+if (!data) throw new Error("Conversation not found");
+return conversationId;
+  }
+
+  // 新規作成
+  const { data, error } = (await db
+  .from("conversations")
+  .insert({ user_id: userId } as any)
+  .select("id")
+  .single()) as any;
+
+if (error) throw error;
+return data.id as string;
+}
+
 export async function POST(req: Request) {
   try {
     const token = bearer(req);
@@ -76,8 +109,14 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json().catch(() => null);
+
     const message = safeStr(body?.message).trim();
     const idempotencyKey = safeStr(body?.idempotencyKey).trim();
+
+    // B: 会話ID（任意）
+    const conversationIdRaw = safeStr(body?.conversationId).trim();
+    const conversationId =
+      conversationIdRaw && isUuid(conversationIdRaw) ? conversationIdRaw : null;
 
     if (!message) {
       const res: ChatRes = { ok: false, error: "message is required" };
@@ -140,7 +179,7 @@ export async function POST(req: Request) {
     const gr = judgeGuardrails(message);
 
     if (gr.action === "block") {
-      // Level1: AIにも渡さない / カウントもしない
+      // Level1: AIにも渡さない / カウントもしない / 履歴にも残さない
       const res: ChatRes = {
         ok: true,
         plan,
@@ -149,6 +188,22 @@ export async function POST(req: Request) {
         message: gr.userMessage,
       };
       return NextResponse.json(res, { status: 200 });
+    }
+
+    // =========================
+    // B: conversationId 確定（block以外は会話器を用意）
+    // =========================
+    let convId = "";
+    try {
+      convId = await ensureConversationId({
+        db,
+        userId: user.id,
+        conversationId,
+      });
+    } catch (e: any) {
+      // 会話ID周りが壊れてても、相談自体は止めたくないなら 500
+      const res: ChatRes = { ok: false, error: e?.message ?? "Conversation error" };
+      return NextResponse.json(res, { status: 500 });
     }
 
     // =========================
@@ -164,8 +219,7 @@ export async function POST(req: Request) {
         injectedRules: [],
 
         // A: ガードレール（今回）
-        guardrails:
-          gr.action === "inject" ? gr.guardrailLines : [],
+        guardrails: gr.action === "inject" ? gr.guardrailLines : [],
       };
 
       const result = await generateAnswer({
@@ -192,7 +246,7 @@ export async function POST(req: Request) {
     });
 
     if (error) {
-      // AIは成功したがDB更新失敗 → ここでAI回答を返すと「無料回答」になるので返さない
+      // AIは成功したがDB更新失敗 → 無料回答防止で返さない
       const res: ChatRes = {
         ok: false,
         error: `consume_talk_v2 failed: ${error.message}`,
@@ -224,6 +278,31 @@ export async function POST(req: Request) {
     }
 
     // =========================
+    // B: 履歴保存（ここで確定）
+    // ※ consume が通った後に保存することで「無料回答ログ」も防ぐ
+    // =========================
+    try {
+      // user message
+      await db.from("messages").insert({
+        conversation_id: convId,
+        user_id: user.id,
+        role: "user",
+        content: message,
+      }as any);
+
+      // assistant message
+      await db.from("messages").insert({
+        conversation_id: convId,
+        user_id: user.id,
+        role: "assistant",
+        content: answer,
+      }as any);
+    } catch {
+      // ログ保存失敗しても、課金（消費）と回答は成立してるので握りつぶす
+      // （ここで落とすとユーザー体験が最悪になる）
+    }
+
+    // =========================
     // ✅ 成功
     // =========================
     const res: ChatRes = {
@@ -232,6 +311,7 @@ export async function POST(req: Request) {
       used_talks: usage.used_talks,
       limit_talks: usage.limit_talks,
       message: answer,
+      conversationId: convId,
     };
     return NextResponse.json(res, { status: 200 });
   } catch (e: any) {
