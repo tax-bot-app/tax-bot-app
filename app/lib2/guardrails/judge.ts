@@ -1,190 +1,97 @@
-// app/lib2/guardrails/rules.ts
+// app/lib2/guardrails/judge.ts
 
-export type GuardrailLevel = 1 | 2 | 3;
+import { detectGuardrailHit, type GuardrailLevel } from "./rules";
 
-export type GuardrailHit = {
-  level: GuardrailLevel;
-  reason: string; // internal only
-};
-
-type Rule = {
-  level: GuardrailLevel;
-  reason: string;
-  patterns: (string | RegExp)[];
-};
-
-// NOTE:
-// - ここは「完全一致」より「匂い検知」重視
-// - ただし誤検知が致命的になるワードは入れすぎない（あなたの思想に合わせる）
-
-export const RULES: Rule[] = [
-  // =========================
-  // 🟥 Level 1: 即ブロック（不正の具体手順/証拠改ざん/所得隠し）
-  // =========================
-  {
-    level: 1,
-    reason: "fake_expense_or_receipt_forgery",
-    patterns: [
-      "架空経費",
-      "架空請求",
-      "架空の領収書",
-      "領収書作って",
-      "領収書つくって",
-      "領収書偽造",
-      "請求書偽造",
-      "改ざん",
-      "改竄",
-      "偽造",
-      "二重帳簿",
-      "裏帳簿",
-      /領収書.*(作|つく)/i,
-      /(請求書|領収書).*(偽造|改ざん|改竄)/i,
-    ],
-  },
-  {
-    level: 1,
-    reason: "income_hiding_or_sales_omission",
-    patterns: [
-      "売上抜く",
-      "売上を抜く",
-      "売上除外",
-      "売上計上しない",
-      "計上しない",
-      "現金売上を抜く",
-      "所得隠し",
-      "申告しない",
-      "税務署をごまかす",
-      "税務署を誤魔化す",
-      "バレない方法",
-      "ばれない方法",
-      /売上.*(抜|除外|計上しない)/i,
-      /(所得|売上).*(隠|抜)/i,
-      /(税務署).*(ごまか|誤魔化|だま)/i,
-      /(バレない|ばれない).*(方法|やり方)/i,
-    ],
-  },
-  {
-    level: 1,
-    reason: "audit_lie_guidance",
-    patterns: [
-      "税務調査で嘘",
-      "税務調査でうそ",
-      "口裏合わせ",
-      "どう言えば逃げれる",
-      "どう言えば逃げられる",
-      "追及されたら",
-      /調査.*(嘘|うそ|口裏|逃げ)/i,
-    ],
-  },
-
-  // =========================
-  // 🟧 Level 2: 注意喚起＋安全回答（脱法臭/偽装リスク）
-  // =========================
-  {
-    level: 2,
-    reason: "scheme_like_or_name_change",
-    patterns: [
-      "スキーム",
-      "名義変更",
-      "保険で抜く",
-      "生命保険で抜く",
-      "裏技",
-      "抜け道",
-      "うまく抜ける",
-      /名義.*(変|変更)/i,
-      /(保険|生命保険).*(抜|回収)/i,
-    ],
-  },
-  {
-    level: 2,
-    reason: "misclassification_outsourcing",
-    patterns: [
-      "外注にしたら",
-      "業務委託にしたら",
-      "業務委託で",
-      "社保払いたくない",
-      "社会保険払いたくない",
-      "源泉逃れ",
-      "給与じゃないことに",
-      /業務委託.*(社保|社会保険|源泉)/i,
-      /(外注|業務委託).*(逃|払いたくない)/i,
-    ],
-  },
-  {
-    level: 2,
-    reason: "private_mixture_risky",
-    patterns: [
-      "プライベートも経費",
-      "私用も経費",
-      "家族旅行を出張",
-      "出張にして落とす",
-      "飲み屋全部",
-      /旅行.*(出張|経費)/i,
-      /(私用|プライベート).*(経費)/i,
-    ],
-  },
-
-  // =========================
-  // 🟨 Level 3: ジャンル制御（断定禁止）
-  // =========================
-  {
-    level: 3,
-    reason: "medical",
-    patterns: [
-      "診断して",
-      "病名",
-      "治療",
-      "薬は",
-      "投薬",
-      "手術",
-      /この症状.*(何|なに)の病気/i,
-    ],
-  },
-  {
-    level: 3,
-    reason: "investment",
-    patterns: [
-      "買いですか",
-      "売りですか",
-      "この銘柄",
-      "利回り保証",
-      "必ず儲かる",
-      "勝てる",
-      /株.*(買|売)/i,
-      /(投資|株|仮想通貨).*(儲|勝て|必ず)/i,
-    ],
-  },
-  {
-    level: 3,
-    reason: "legal",
-    patterns: [
-      "訴えたら勝てる",
-      "違法ですか",
-      "合法ですか",
-      "裁判",
-      "刑事",
-      "逮捕",
-      /これ.*(違法|合法)/i,
-      /勝てる\?/i,
-    ],
-  },
-];
-
-export function detectGuardrailHit(text: string): GuardrailHit | null {
-  const t = (text || "").toLowerCase();
-
-  for (const rule of RULES) {
-    for (const p of rule.patterns) {
-      if (typeof p === "string") {
-        if (t.includes(p.toLowerCase())) {
-          return { level: rule.level, reason: rule.reason };
-        }
-      } else {
-        if (p.test(text)) {
-          return { level: rule.level, reason: rule.reason };
-        }
-      }
+export type GuardrailDecision =
+  | {
+      action: "block";
+      level: 1;
+      reason: string; // internal
+      userMessage: string; // fixed message to return
     }
-  }
-  return null;
+  | {
+      action: "inject";
+      level: 2 | 3;
+      reason: string; // internal
+      guardrailLines: string[]; // injected into promptParts.guardrails
+    }
+  | {
+      action: "none";
+    };
+
+function blockMessage(): string {
+  return [
+    "その内容は、不正行為（書類偽造・所得隠し等）につながる具体的手順の相談なので手伝えません。",
+    "ただ、合法的に税負担や資金繰りを整える方法なら一緒に設計できます。",
+    "目的（資金繰り／納税見込み／利益計画など）を教えてください。",
+  ].join("\n");
 }
+
+function level2Lines(): string[] {
+  return [
+    "【ガードレール】相談内容が“脱法・グレー節税”に寄りやすい。違法行為や脱法の助言はしない。",
+    "ユーザーが不正の具体手順を求めても応じず、必ず『正攻法の落とし所』のみを提示する。",
+    "回答は『注意喚起（リスク）→前提確認→安全な選択肢』の順で簡潔に。",
+    "反面調査・重加算税・関係悪化など“現場リスク”も短く触れる。",
+  ];
+}
+
+function level3Lines(reason: string): string[] {
+  const common = [
+    "【ガードレール】この話題は断定が危険。断定・保証・確約はしない。",
+    "一般論とチェック観点は述べてよいが、最終判断は専門家確認を促す。",
+  ];
+
+  if (reason === "medical") {
+    return [
+      ...common,
+      "医療（診断・治療・投薬）は断定しない。受診・医師相談を促す。",
+    ];
+  }
+  if (reason === "investment") {
+    return [
+      ...common,
+      "投資は個別銘柄の売買指示・利回り断定をしない。一般論（分散・長期など）に留める。",
+    ];
+  }
+  if (reason === "legal") {
+    return [
+      ...common,
+      "法律判断（適法性・勝訴見通し等）は断定しない。弁護士等へ確認を促す。",
+    ];
+  }
+
+  return common;
+}
+
+export function judgeGuardrails(message: string): GuardrailDecision {
+  const hit = detectGuardrailHit(message);
+  if (!hit) return { action: "none" };
+
+  if (hit.level === 1) {
+    return {
+      action: "block",
+      level: 1,
+      reason: hit.reason,
+      userMessage: blockMessage(),
+    };
+  }
+
+  if (hit.level === 2) {
+    return {
+      action: "inject",
+      level: 2,
+      reason: hit.reason,
+      guardrailLines: level2Lines(),
+    };
+  }
+
+  // level 3
+  return {
+    action: "inject",
+    level: 3,
+    reason: hit.reason,
+    guardrailLines: level3Lines(hit.reason),
+  };
+}
+// 互換用エイリアス（index.ts / 既存importが judgeGuardrails を期待してるため）
