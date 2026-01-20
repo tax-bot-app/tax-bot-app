@@ -15,6 +15,8 @@ type StatusRes =
 
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
 
+const BOT = "さじかげん";
+
 const PLAN_LABEL: Record<string, string> = {
   free: "free（未契約）",
   lite: "lite",
@@ -30,10 +32,21 @@ function nowTime() {
   return `${hh}:${mm}:${ss}`;
 }
 
+// ✅ UUID v4 生成（crypto.randomUUID が無い環境でも UUID 形式を保証）
+function uuidv4(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  // RFC4122 v4
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export default function ChatPage() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "assistant", content: "AI: 相談内容をどうぞ。" },
+    { role: "assistant", content: `${BOT}: 相談内容をどうぞ。` },
   ]);
   const [loading, setLoading] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
@@ -60,13 +73,11 @@ export default function ChatPage() {
     try {
       return getSupabaseClient();
     } catch (e: any) {
-      // env不足はここで止める
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content:
-            "AI: 環境変数が足りません（Vercelで NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY を入れてRedeployしてください）。",
+          content: `${BOT}: 環境変数が足りません（Vercelで NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY を入れてRedeployしてください）。`,
         },
       ]);
       return null;
@@ -100,7 +111,6 @@ export default function ChatPage() {
       }
       setSessionReady(true);
 
-      // ✅ キャッシュ疑い潰し：ts付与 + no-store
       const res = await fetch(`/api/chat/status?ts=${Date.now()}`, {
         headers: { Authorization: `Bearer ${data.session.access_token}` },
         cache: "no-store",
@@ -180,7 +190,7 @@ export default function ChatPage() {
     } catch (e: any) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `AI: 決済に進めません（${e?.message ?? String(e)}）` },
+        { role: "assistant", content: `${BOT}: 決済に進めません（${e?.message ?? String(e)}）` },
       ]);
     } finally {
       setCheckoutLoading(false);
@@ -192,24 +202,18 @@ export default function ChatPage() {
     const text = input.trim();
     if (!text || loading) return;
 
-    // ✅ 今回の送信に使う冪等キーを確定（送信中は同じキー）
-    const idempotencyKey =
-      pendingKey ??
-      (typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random()}`); // ほぼ来ない保険（uuidじゃないのでAPIが弾く可能性あり）
-
+    // ✅ 送信中は同じキー、次送信は新規キー
+    const idempotencyKey = pendingKey ?? uuidv4();
     setPendingKey(idempotencyKey);
 
     setInput("");
     setLoading(true);
-
     setMessages((prev) => [...prev, { role: "user", content: text }]);
 
     try {
       const { data, error } = await supabase.auth.getSession();
       if (error || !data.session?.access_token) {
-        setMessages((prev) => [...prev, { role: "assistant", content: "AI: ログインが必要です。" }]);
+        setMessages((prev) => [...prev, { role: "assistant", content: `${BOT}: ログインが必要です。` }]);
         setLoading(false);
         return;
       }
@@ -226,36 +230,30 @@ export default function ChatPage() {
       const json = (await res.json().catch(() => null)) as ChatRes | null;
 
       if (!json) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: "AI: 返答の取得に失敗しました（空レスポンス）" },
-        ]);
+        setMessages((prev) => [...prev, { role: "assistant", content: `${BOT}: 返答の取得に失敗しました（空レスポンス）` }]);
         return;
       }
 
       if (!json.ok) {
         const err = json.error || "error";
-        setMessages((prev) => [...prev, { role: "assistant", content: `AI: ${err}` }]);
-
-        // status再取得（表示更新）
+        setMessages((prev) => [...prev, { role: "assistant", content: `${BOT}: ${err}` }]);
         await refreshStatus({ silent: true });
         return;
       }
 
-      // 回数表示も更新（チャットAPIの返却値を優先）
       setPlan(json.plan ?? plan);
       setUsed(Number(json.used_talks ?? used));
       setLimit(Number(json.limit_talks ?? limit));
 
-      setMessages((prev) => [...prev, { role: "assistant", content: `AI: ${json.message}` }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: `${BOT}: ${json.message}` }]);
     } catch (e: any) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `AI: 通信エラー（${e?.message ?? String(e)}）` },
+        { role: "assistant", content: `${BOT}: 通信エラー（${e?.message ?? String(e)}）` },
       ]);
     } finally {
       setLoading(false);
-      setPendingKey(null); // ✅ 送信完了/失敗でキー解放（次送信は新規キー）
+      setPendingKey(null);
       await refreshStatus({ silent: true });
     }
   };
@@ -266,7 +264,7 @@ export default function ChatPage() {
 
   return (
     <main style={{ maxWidth: 900, margin: "28px auto", padding: 16 }}>
-      <h1 style={{ textAlign: "center", marginBottom: 14 }}>税務顧問bot｜チャット</h1>
+      <h1 style={{ textAlign: "center", marginBottom: 14 }}>さじかげん｜税務相談</h1>
 
       <div
         style={{
@@ -285,9 +283,7 @@ export default function ChatPage() {
           {low && !zero && <span style={{ marginLeft: 10, fontWeight: 900 }}>残りわずか</span>}
           {zero && <span style={{ marginLeft: 10, fontWeight: 900 }}>上限到達</span>}
           {statusMsg && (
-            <span style={{ marginLeft: 12, fontWeight: 700, color: "#666" }}>
-              ・{statusMsg}
-            </span>
+            <span style={{ marginLeft: 12, fontWeight: 700, color: "#666" }}>・{statusMsg}</span>
           )}
         </div>
 
@@ -309,87 +305,28 @@ export default function ChatPage() {
 
       {zero && (
         <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button
-            onClick={() => startCheckout("lite")}
-            disabled={checkoutLoading}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
-              cursor: checkoutLoading ? "not-allowed" : "pointer",
-              fontWeight: 800,
-            }}
-          >
+          <button onClick={() => startCheckout("lite")} disabled={checkoutLoading} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: checkoutLoading ? "not-allowed" : "pointer", fontWeight: 800 }}>
             Liteで開始
           </button>
-          <button
-            onClick={() => startCheckout("standard")}
-            disabled={checkoutLoading}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
-              cursor: checkoutLoading ? "not-allowed" : "pointer",
-              fontWeight: 800,
-            }}
-          >
+          <button onClick={() => startCheckout("standard")} disabled={checkoutLoading} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: checkoutLoading ? "not-allowed" : "pointer", fontWeight: 800 }}>
             Standardで開始
           </button>
-          <button
-            onClick={() => startCheckout("enterprise")}
-            disabled={checkoutLoading}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
-              cursor: checkoutLoading ? "not-allowed" : "pointer",
-              fontWeight: 800,
-            }}
-          >
+          <button onClick={() => startCheckout("enterprise")} disabled={checkoutLoading} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: checkoutLoading ? "not-allowed" : "pointer", fontWeight: 800 }}>
             Enterpriseへ
           </button>
           {checkoutLoading && <div style={{ alignSelf: "center", color: "#666" }}>決済ページへ移動中…</div>}
         </div>
       )}
 
-      <div
-        style={{
-          marginTop: 14,
-          border: "1px solid #ddd",
-          borderRadius: 14,
-          padding: 12,
-          minHeight: 420,
-          background: "#fff",
-        }}
-      >
+      <div style={{ marginTop: 14, border: "1px solid #ddd", borderRadius: 14, padding: 12, minHeight: 420, background: "#fff" }}>
         {messages.map((m, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              justifyContent: m.role === "user" ? "flex-end" : "flex-start",
-              margin: "10px 0",
-            }}
-          >
-            <div
-              style={{
-                maxWidth: "80%",
-                padding: "10px 12px",
-                borderRadius: 12,
-                background: m.role === "user" ? "#f1f5ff" : "#f6f6f6",
-                border: "1px solid #eee",
-                whiteSpace: "pre-wrap",
-              }}
-            >
+          <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", margin: "10px 0" }}>
+            <div style={{ maxWidth: "80%", padding: "10px 12px", borderRadius: 12, background: m.role === "user" ? "#f1f5ff" : "#f6f6f6", border: "1px solid #eee", whiteSpace: "pre-wrap" }}>
               {m.role === "user" ? `あなた: ${m.content}` : m.content}
             </div>
           </div>
         ))}
-
-        {loading && <div style={{ margin: "10px 0", color: "#666" }}>AI: うーん…（考え中）</div>}
+        {loading && <div style={{ margin: "10px 0", color: "#666" }}>{BOT}: （考え中）</div>}
         <div ref={bottomRef} />
       </div>
 
