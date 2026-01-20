@@ -2,146 +2,165 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-import { getPlan, normalizePlanKey, type PlanKey } from "../../lib1/planMaster";
+export const runtime = "nodejs";
 
-type ChatRes =
-  | {
-      ok: true;
-      plan: PlanKey;
-      used_talks: number | null;
-      limit_talks: number | null;
-      message: string;
-    }
-  | {
-      ok: false;
-      error: string;
-      used_talks?: number | null;
-      limit_talks?: number | null;
-    };
-
-function env(name: string): string | undefined {
-  return process.env[name];
+function mustEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
 }
+
 function getSupabaseUrl(): string {
-  return env("SUPABASE_URL") || env("NEXT_PUBLIC_SUPABASE_URL") || "";
+  return (
+    process.env.SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    ""
+  );
 }
+
 function getSupabaseAnonKey(): string {
-  return env("SUPABASE_ANON_KEY") || env("NEXT_PUBLIC_SUPABASE_ANON_KEY") || "";
+  return (
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    ""
+  );
 }
-function bearerFromReq(req: Request): string | null {
-  const auth = req.headers.get("authorization") || req.headers.get("Authorization");
-  if (!auth) return null;
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] : null;
-}
-function isUuid(v: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
-}
+
+type ConsumeTalkV2Result = {
+  month_key: string; // 'YYYY-MM'
+  used_talks: number;
+  limit_talks: number;
+  allowed: boolean;
+  already_counted: boolean;
+};
+
+type ChatOk = {
+  ok: true;
+  message: string; // 仮返答（後でAI回答に差し替え）
+  usage: ConsumeTalkV2Result;
+};
+
+type ChatNg = {
+  ok: false;
+  error: string;
+  code?:
+    | "UNAUTHORIZED"
+    | "BAD_REQUEST"
+    | "RATE_LIMIT"
+    | "SERVER_ERROR";
+  usage?: ConsumeTalkV2Result; // allowed=false の時に返せる
+};
 
 export async function POST(req: Request) {
   try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+
+    if (!token) {
+      const res: ChatNg = {
+        ok: false,
+        code: "UNAUTHORIZED",
+        error: "Missing Authorization Bearer token",
+      };
+      return NextResponse.json(res, { status: 401 });
+    }
+
+    const body = await req.json().catch(() => null);
+    const message = body?.message;
+    const idempotencyKey = body?.idempotencyKey;
+
+    if (typeof message !== "string" || !message.trim()) {
+      const res: ChatNg = {
+        ok: false,
+        code: "BAD_REQUEST",
+        error: "message is required",
+      };
+      return NextResponse.json(res, { status: 400 });
+    }
+
+    if (typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+      const res: ChatNg = {
+        ok: false,
+        code: "BAD_REQUEST",
+        error: "idempotencyKey is required",
+      };
+      return NextResponse.json(res, { status: 400 });
+    }
+
     const supabaseUrl = getSupabaseUrl();
     const supabaseAnonKey = getSupabaseAnonKey();
-
     if (!supabaseUrl || !supabaseAnonKey) {
-      const body: ChatRes = { ok: false, error: "server env missing (supabase)" };
-      return NextResponse.json(body, { status: 500 });
+      const res: ChatNg = {
+        ok: false,
+        code: "SERVER_ERROR",
+        error: "Supabase env is missing",
+      };
+      return NextResponse.json(res, { status: 500 });
     }
 
-    const accessToken = bearerFromReq(req);
-    if (!accessToken) {
-      const body: ChatRes = { ok: false, error: "missing bearer token" };
-      return NextResponse.json(body, { status: 401 });
-    }
-
-    // ✅ 認証チェック（anonでOK）
-    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
-    const { data: userData, error: userErr } = await supabaseAuth.auth.getUser(accessToken);
-    if (userErr || !userData?.user) {
-      const body: ChatRes = { ok: false, error: "unauthorized" };
-      return NextResponse.json(body, { status: 401 });
-    }
-    const user = userData.user;
-
-    // ✅ DBアクセス（RLS通す）
-    const supabaseDb = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    // JWT付きで呼ぶ（auth.uid() を成立させる本線）
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
     });
 
-    const { message, idempotencyKey } = (await req.json().catch(() => ({}))) as {
-      message?: string;
-      idempotencyKey?: string;
-    };
-
-    if (!message || typeof message !== "string" || !message.trim()) {
-      const body: ChatRes = { ok: false, error: "message required" };
-      return NextResponse.json(body, { status: 400 });
-    }
-    if (!idempotencyKey || typeof idempotencyKey !== "string" || !isUuid(idempotencyKey)) {
-      const body: ChatRes = { ok: false, error: "idempotencyKey (uuid) required" };
-      return NextResponse.json(body, { status: 400 });
-    }
-
-    // 1) users.plan → limit算出
-    const { data: urow, error: uerr } = await supabaseDb
-      .from("users")
-      .select("plan")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (uerr) {
-      console.error("users select error:", uerr);
-      const body: ChatRes = { ok: false, error: "db error (users)" };
-      return NextResponse.json(body, { status: 500 });
-    }
-
-    const plan: PlanKey = normalizePlanKey(urow?.plan ?? "free");
-    const limit = getPlan(plan).monthlyQuota;
-
-    if (!plan || plan === "free" || !limit || limit <= 0) {
-      const body: ChatRes = { ok: false, error: "no active plan" };
-      return NextResponse.json(body, { status: 402 });
-    }
-
-    // 2) ✅ consume_talk_v2（冪等 + JST月キー + ロック）
-    const { data: consume, error: cerr } = await supabaseDb.rpc("consume_talk_v2", {
-      p_user_id: user.id,
-      p_limit: limit,
+    // RPC 実行：関数の引数名はDB側に合わせてる想定（変えてたらここだけ直す）
+    const { data, error } = await supabase.rpc("consume_talk_v2", {
       p_idempotency_key: idempotencyKey,
     });
 
-    if (cerr) {
-      console.error("consume_talk_v2 error:", cerr);
-      const body: ChatRes = { ok: false, error: "db error (consume_talk_v2)" };
-      return NextResponse.json(body, { status: 500 });
+    if (error) {
+      // DB側の例外はここに来る
+      const res: ChatNg = {
+        ok: false,
+        code: "SERVER_ERROR",
+        error: `consume_talk_v2 failed: ${error.message}`,
+      };
+      return NextResponse.json(res, { status: 500 });
     }
 
-    // Supabase RPCは配列で返ることがあるので吸収
-    const row = Array.isArray(consume) ? consume[0] : consume;
+    const usage = (Array.isArray(data) ? data[0] : data) as ConsumeTalkV2Result;
 
-    const allowed = Boolean(row?.allowed);
-    const used_talks: number | null = row?.used_talks ?? null;
-    const limit_talks: number | null = row?.limit_talks ?? limit;
-
-    if (!allowed) {
-      const body: ChatRes = { ok: false, error: "quota exceeded", used_talks, limit_talks };
-      return NextResponse.json(body, { status: 402 });
+    if (!usage || typeof usage.allowed !== "boolean") {
+      const res: ChatNg = {
+        ok: false,
+        code: "SERVER_ERROR",
+        error: "consume_talk_v2 returned unexpected shape",
+      };
+      return NextResponse.json(res, { status: 500 });
     }
 
-    // 3) ここでAI応答（いまはダミー）
-    const reply = `受け付けました（plan=${plan} / ${used_talks ?? "?"}/${limit_talks ?? "?"}）\n\nあなた: ${message.trim()}`;
+    if (!usage.allowed) {
+      // ここが “回数上限” のハンドリング起点
+      const res: ChatNg = {
+        ok: false,
+        code: "RATE_LIMIT",
+        error: "Monthly quota exceeded",
+        usage,
+      };
+      return NextResponse.json(res, { status: 429 });
+    }
 
-    const body: ChatRes = {
+    // まだAI呼び出しは未実装の方針なので仮返答
+    const res: ChatOk = {
       ok: true,
-      plan,
-      used_talks,
-      limit_talks,
-      message: reply,
+      message: "受付けました。回答生成は順次対応予定です。",
+      usage,
     };
-    return NextResponse.json(body, { status: 200 });
+    return NextResponse.json(res, { status: 200 });
   } catch (e: any) {
-    console.error("chat route fatal:", e);
-    const body: ChatRes = { ok: false, error: `server error: ${e?.message ?? "unknown"}` };
-    return NextResponse.json(body, { status: 500 });
+    const res: ChatNg = {
+      ok: false,
+      code: "SERVER_ERROR",
+      error: e?.message || "Unknown error",
+    };
+    return NextResponse.json(res, { status: 500 });
   }
 }
