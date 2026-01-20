@@ -38,7 +38,7 @@ function limitFromPlan(plan: string): number {
     case "lite":
       return 5;
     default:
-      return 0; // free は 0（=許可しない）想定。DB側で別扱いならここ調整
+      return 0; // free は 0（=許可しない）
   }
 }
 
@@ -85,7 +85,6 @@ export async function POST(req: Request) {
       const res: ChatRes = { ok: false, error: "idempotencyKey is required" };
       return NextResponse.json(res, { status: 400 });
     }
-    // DB関数が uuid を要求してるのでここで弾く（フロントがuuid出してる前提）
     if (!isUuid(idempotencyKey)) {
       const res: ChatRes = { ok: false, error: "idempotencyKey must be uuid" };
       return NextResponse.json(res, { status: 400 });
@@ -123,7 +122,6 @@ export async function POST(req: Request) {
     const plan = (urow?.plan as string) ?? "free";
     const limit = limitFromPlan(plan);
 
-    // free の扱い（freeでも動かしたいならここを変える）
     if (limit <= 0) {
       const res: ChatRes = {
         ok: false,
@@ -134,7 +132,48 @@ export async function POST(req: Request) {
       return NextResponse.json(res, { status: 403 });
     }
 
-    // ③ カウント（冪等）: DB関数の引数名に合わせる
+    // =========================
+    // ③ AI回答（先に呼ぶ：失敗なら消費しない）
+    // =========================
+    const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
+    const model = process.env.OPENAI_MODEL || "gpt-5.2";
+
+    const instructions = [
+      "あなたは税務顧問bot『さじかげん』。",
+      "日本の税務・会計の一般的な相談に、実務的にわかりやすく答える。",
+      "断定できない点は確認事項を短く列挙し、仮説と分岐で提示する。",
+      "危ない節税スキームや違法・脱法の依頼は断る。",
+      "口調は丁寧だが回りくどくしない。",
+    ].join("\n");
+
+    let answer = "";
+    try {
+      const ai = await openai.responses.create({
+        model,
+        instructions,
+        input: message,
+      });
+
+      answer = (ai.output_text && ai.output_text.trim()) || "";
+    } catch (e: any) {
+      // OpenAI例外 → 消費しない
+      const res: ChatRes = { ok: false, error: "AI failed. Please retry." };
+      return NextResponse.json(res, { status: 502 });
+    }
+
+    // 回答ゼロ（=エラー表示想定） → 消費しない
+    if (!answer) {
+      const res: ChatRes = { ok: false, error: "AI returned empty response. Please retry." };
+      return NextResponse.json(res, { status: 502 });
+    }
+
+    // ※「（回答生成に失敗しました）」みたいな固定文を成功扱いにしない
+    // ここでは「空じゃない＝成功」ルールにしてるので、固定文は返さない方針。
+    // もし固定文にしたいなら “失敗扱いの文言” をここで弾く。
+
+    // =========================
+    // ④ カウント（冪等）: 成功したら消費
+    // =========================
     const { data, error } = await db.rpc("consume_talk_v2", {
       p_user_id: user.id,
       p_limit: limit,
@@ -142,6 +181,7 @@ export async function POST(req: Request) {
     });
 
     if (error) {
+      // AIは成功したがDB更新失敗 → ここでAI回答を返すと「無料回答」になるので返さない
       const res: ChatRes = { ok: false, error: `consume_talk_v2 failed: ${error.message}` };
       return NextResponse.json(res, { status: 500 });
     }
@@ -156,6 +196,7 @@ export async function POST(req: Request) {
     }
 
     if (!usage.allowed) {
+      // 上限超過 → AI回答は返さない（無料で出さない）
       const res: ChatRes = {
         ok: false,
         error: "Monthly quota exceeded",
@@ -165,28 +206,9 @@ export async function POST(req: Request) {
       return NextResponse.json(res, { status: 429 });
     }
 
-    // ④ AI回答
-    const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
-    const model = process.env.OPENAI_MODEL || "gpt-5.2";
-
-    const instructions = [
-      "あなたは税務顧問bot『さじかげん』。",
-      "日本の税務・会計の一般的な相談に、実務的にわかりやすく答える。",
-      "断定できない点は確認事項を短く列挙し、仮説と分岐で提示する。",
-      "危ない節税スキームや違法・脱法の依頼は断る。",
-      "口調は丁寧だが回りくどくしない。",
-    ].join("\n");
-
-    const ai = await openai.responses.create({
-      model,
-      instructions,
-      input: message,
-    });
-
-    const answer =
-      (ai.output_text && ai.output_text.trim()) ||
-      "（回答生成に失敗しました）";
-
+    // =========================
+    // ✅ 成功
+    // =========================
     const res: ChatRes = {
       ok: true,
       plan,
