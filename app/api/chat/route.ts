@@ -1,9 +1,36 @@
 // app/api/chat/route.ts
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
+
+function mustEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
+
+function bearer(req: Request): string | null {
+  const h = req.headers.get("authorization") || req.headers.get("Authorization");
+  if (!h) return null;
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1] : null;
+}
+
+type ChatRes =
+  | {
+      ok: true;
+      plan: string;
+      used_talks: number | null;
+      limit_talks: number | null;
+      message: string;
+    }
+  | {
+      ok: false;
+      error: string;
+      used_talks?: number | null;
+      limit_talks?: number | null;
+    };
 
 type ConsumeTalkV2Result = {
   month_key: string;
@@ -13,126 +40,91 @@ type ConsumeTalkV2Result = {
   already_counted: boolean;
 };
 
-type ChatOk = {
-  ok: true;
-  message: string;
-  usage: ConsumeTalkV2Result;
-};
-
-type ChatNg = {
-  ok: false;
-  error: string;
-  code: "UNAUTHORIZED" | "BAD_REQUEST" | "RATE_LIMIT" | "SERVER_ERROR";
-  usage?: ConsumeTalkV2Result;
-};
-
-async function getSupabase() {
-  // ✅ Next.js 16: cookies() は Promise
-  const cookieStore = await cookies();
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-  return createServerClient(url, anon, {
-    cookies: {
-      // ✅ 読むだけ（更新は middleware が担当）
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll() {
-        // no-op
-      },
-    },
-  });
-}
-
 export async function POST(req: Request) {
   try {
+    const token = bearer(req);
+    if (!token) {
+      const res: ChatRes = { ok: false, error: "Missing bearer token" };
+      return NextResponse.json(res, { status: 401 });
+    }
+
     const body = await req.json().catch(() => null);
     const message = body?.message;
     const idempotencyKey = body?.idempotencyKey;
 
     if (typeof message !== "string" || !message.trim()) {
-      const res: ChatNg = {
-        ok: false,
-        code: "BAD_REQUEST",
-        error: "message is required",
-      };
+      const res: ChatRes = { ok: false, error: "message is required" };
       return NextResponse.json(res, { status: 400 });
     }
-
     if (typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
-      const res: ChatNg = {
-        ok: false,
-        code: "BAD_REQUEST",
-        error: "idempotencyKey is required",
-      };
+      const res: ChatRes = { ok: false, error: "idempotencyKey is required" };
       return NextResponse.json(res, { status: 400 });
     }
 
-    const supabase = await getSupabase();
+    const url = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
+    const anon = mustEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
-    // ✅ Cookieセッションからユーザー取得
-    const { data: authData, error: authErr } = await supabase.auth.getUser();
-    if (authErr || !authData?.user) {
-      const res: ChatNg = {
-        ok: false,
-        code: "UNAUTHORIZED",
-        error: "Not logged in",
-      };
+    // ① user取得（token指定で確実）
+    const authClient = createClient(url, anon, { auth: { persistSession: false } });
+    const { data: userRes, error: userErr } = await authClient.auth.getUser(token);
+    if (userErr || !userRes?.user) {
+      const res: ChatRes = { ok: false, error: "Invalid session" };
       return NextResponse.json(res, { status: 401 });
     }
+    const user = userRes.user;
 
-    // ✅ ここで月次カウント（冪等キー込み）
-    // ※ RPCの引数名はあなたのDB定義に合わせている前提：
-    //   p_idempotency_key という引数名で作っているはず。
-    const { data, error } = await supabase.rpc("consume_talk_v2", {
+    // ② DBアクセスは Authorization header 付き（RLS効かせる）
+    const db = createClient(url, anon, {
+      auth: { persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    // plan も返したいので users 参照
+    const { data: urow } = await db
+      .from("users")
+      .select("plan")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const plan = (urow?.plan as string) ?? "free";
+
+    // ③ カウント（冪等）
+    const { data, error } = await db.rpc("consume_talk_v2", {
       p_idempotency_key: idempotencyKey,
     });
 
     if (error) {
-      const res: ChatNg = {
-        ok: false,
-        code: "SERVER_ERROR",
-        error: `consume_talk_v2 failed: ${error.message}`,
-      };
+      const res: ChatRes = { ok: false, error: `consume_talk_v2 failed: ${error.message}` };
       return NextResponse.json(res, { status: 500 });
     }
 
-    const usage = (Array.isArray(data) ? data[0] : data) as ConsumeTalkV2Result;
-
-    if (!usage || typeof usage.allowed !== "boolean") {
-      const res: ChatNg = {
-        ok: false,
-        code: "SERVER_ERROR",
-        error: "Unexpected RPC result shape",
-      };
+    const usage = (Array.isArray(data) ? data[0] : data) as ConsumeTalkV2Result | null;
+    if (!usage) {
+      const res: ChatRes = { ok: false, error: "consume_talk_v2: empty result" };
       return NextResponse.json(res, { status: 500 });
     }
 
     if (!usage.allowed) {
-      const res: ChatNg = {
+      const res: ChatRes = {
         ok: false,
-        code: "RATE_LIMIT",
         error: "Monthly quota exceeded",
-        usage,
+        used_talks: usage.used_talks,
+        limit_talks: usage.limit_talks,
       };
       return NextResponse.json(res, { status: 429 });
     }
 
-    // ✅ いったんAI回答は後回し（現状仕様）
-    const res: ChatOk = {
+    // ✅ AI回答は後回し：今は受付メッセージ
+    const res: ChatRes = {
       ok: true,
+      plan,
+      used_talks: usage.used_talks,
+      limit_talks: usage.limit_talks,
       message: "受付けました。回答生成は順次対応予定です。",
-      usage,
     };
     return NextResponse.json(res, { status: 200 });
   } catch (e: any) {
-    const res: ChatNg = {
-      ok: false,
-      code: "SERVER_ERROR",
-      error: e?.message || "Unknown error",
-    };
+    const res: ChatRes = { ok: false, error: e?.message ?? "Unknown error" };
     return NextResponse.json(res, { status: 500 });
   }
 }
