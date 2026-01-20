@@ -1,4 +1,7 @@
 // app/api/chat/route.ts
+import { generateAnswer } from "../../lib2/ai/generateAnswer";
+import { buildInstructions } from "../../lib2/ai/prompt";
+import type { PromptParts } from "../../lib2/ai/prompt";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
@@ -135,37 +138,33 @@ export async function POST(req: Request) {
     // =========================
     // ③ AI回答（先に呼ぶ：失敗なら消費しない）
     // =========================
-    const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
-    const model = process.env.OPENAI_MODEL || "gpt-5.2";
-
-    const instructions = [
-      "あなたは税務顧問bot『さじかげん』。",
-      "日本の税務・会計の一般的な相談に、実務的にわかりやすく答える。",
-      "断定できない点は確認事項を短く列挙し、仮説と分岐で提示する。",
-      "危ない節税スキームや違法・脱法の依頼は断る。",
-      "口調は丁寧だが回りくどくしない。",
-    ].join("\n");
-
     let answer = "";
-    try {
-      const ai = await openai.responses.create({
-        model,
-        instructions,
-        input: message,
-      });
+try {
+  const promptParts: PromptParts = {
+  // 将来ここに B: 会話履歴
+  context: [],
 
-      answer = (ai.output_text && ai.output_text.trim()) || "";
-    } catch (e: any) {
-      // OpenAI例外 → 消費しない
-      const res: ChatRes = { ok: false, error: "AI failed. Please retry." };
-      return NextResponse.json(res, { status: 502 });
-    }
+  // 将来ここに C: ルール注入
+  injectedRules: [],
 
-    // 回答ゼロ（=エラー表示想定） → 消費しない
-    if (!answer) {
-      const res: ChatRes = { ok: false, error: "AI returned empty response. Please retry." };
-      return NextResponse.json(res, { status: 502 });
-    }
+  // 将来ここに A: ガードレール追加
+  guardrails: [],
+};
+
+const result = await generateAnswer({
+  message,
+  promptParts,
+});
+
+  answer = result.answer;
+} catch (e: any) {
+  const res: ChatRes = {
+    ok: false,
+    error: e?.message || "AI failed. Please retry.",
+  };
+  return NextResponse.json(res, { status: 502 });
+}
+
 
     // ※「（回答生成に失敗しました）」みたいな固定文を成功扱いにしない
     // ここでは「空じゃない＝成功」ルールにしてるので、固定文は返さない方針。
