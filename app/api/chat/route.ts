@@ -17,6 +17,27 @@ function bearer(req: Request): string | null {
   return m ? m[1] : null;
 }
 
+// ざっくり UUID 形式チェック（DB uuid キャスト失敗を早めに弾く）
+function looksUuid(v: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v
+  );
+}
+
+// users.monthly_quota が取れない/無い場合の保険
+function fallbackLimitFromPlan(plan: string): number {
+  switch (plan) {
+    case "lite":
+      return 5;
+    case "standard":
+      return 30;
+    case "enterprise":
+      return 100;
+    default:
+      return 0;
+  }
+}
+
 type ChatRes =
   | {
       ok: true;
@@ -60,6 +81,10 @@ export async function POST(req: Request) {
       const res: ChatRes = { ok: false, error: "idempotencyKey is required" };
       return NextResponse.json(res, { status: 400 });
     }
+    if (!looksUuid(idempotencyKey)) {
+      const res: ChatRes = { ok: false, error: "idempotencyKey must be UUID" };
+      return NextResponse.json(res, { status: 400 });
+    }
 
     const url = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
     const anon = mustEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
@@ -79,17 +104,36 @@ export async function POST(req: Request) {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
 
-    // plan も返したいので users 参照
-    const { data: urow } = await db
+    // plan / monthly_quota を参照（monthly_quota 列が無い環境でも動くように try）
+    let plan = "free";
+    let limit = 0;
+
+    // まず monthly_quota あり想定で取得 → 失敗したら plan のみ取得へフォールバック
+    const { data: urowA, error: uerrA } = await db
       .from("users")
-      .select("plan")
+      .select("plan, monthly_quota")
       .eq("id", user.id)
       .maybeSingle();
 
-    const plan = (urow?.plan as string) ?? "free";
+    if (!uerrA && urowA) {
+      plan = (urowA.plan as string) ?? "free";
+      const q = (urowA as any).monthly_quota;
+      limit = Number.isFinite(Number(q)) ? Number(q) : fallbackLimitFromPlan(plan);
+    } else {
+      const { data: urowB } = await db
+        .from("users")
+        .select("plan")
+        .eq("id", user.id)
+        .maybeSingle();
+      plan = (urowB?.plan as string) ?? "free";
+      limit = fallbackLimitFromPlan(plan);
+    }
 
+    // free は 0（送信不可）でOK。契約後は 5/30/100 等になる想定
     // ③ カウント（冪等）
     const { data, error } = await db.rpc("consume_talk_v2", {
+      p_user_id: user.id,
+      p_limit: limit,
       p_idempotency_key: idempotencyKey,
     });
 
