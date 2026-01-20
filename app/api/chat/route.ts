@@ -1,10 +1,9 @@
 // app/api/chat/route.ts
 import { generateAnswer } from "../../lib2/ai/generateAnswer";
-import { buildInstructions } from "../../lib2/ai/prompt";
 import type { PromptParts } from "../../lib2/ai/prompt";
+import { judgeGuardrails } from "../../lib2/guardrails";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import OpenAI from "openai";
 
 export const runtime = "nodejs";
 
@@ -136,39 +135,52 @@ export async function POST(req: Request) {
     }
 
     // =========================
+    // 🛡 ガードレール判定（AI呼び出しより先）
+    // =========================
+    const gr = judgeGuardrails(message);
+
+    if (gr.action === "block") {
+      // Level1: AIにも渡さない / カウントもしない
+      const res: ChatRes = {
+        ok: true,
+        plan,
+        used_talks: null,
+        limit_talks: null,
+        message: gr.userMessage,
+      };
+      return NextResponse.json(res, { status: 200 });
+    }
+
+    // =========================
     // ③ AI回答（先に呼ぶ：失敗なら消費しない）
     // =========================
     let answer = "";
-try {
-  const promptParts: PromptParts = {
-  // 将来ここに B: 会話履歴
-  context: [],
+    try {
+      const promptParts: PromptParts = {
+        // 将来ここに B: 会話履歴
+        context: [],
 
-  // 将来ここに C: ルール注入
-  injectedRules: [],
+        // 将来ここに C: ルール注入
+        injectedRules: [],
 
-  // 将来ここに A: ガードレール追加
-  guardrails: [],
-};
+        // A: ガードレール（今回）
+        guardrails:
+          gr.action === "inject" ? gr.guardrailLines : [],
+      };
 
-const result = await generateAnswer({
-  message,
-  promptParts,
-});
+      const result = await generateAnswer({
+        message,
+        promptParts,
+      });
 
-  answer = result.answer;
-} catch (e: any) {
-  const res: ChatRes = {
-    ok: false,
-    error: e?.message || "AI failed. Please retry.",
-  };
-  return NextResponse.json(res, { status: 502 });
-}
-
-
-    // ※「（回答生成に失敗しました）」みたいな固定文を成功扱いにしない
-    // ここでは「空じゃない＝成功」ルールにしてるので、固定文は返さない方針。
-    // もし固定文にしたいなら “失敗扱いの文言” をここで弾く。
+      answer = result.answer;
+    } catch (e: any) {
+      const res: ChatRes = {
+        ok: false,
+        error: e?.message || "AI failed. Please retry.",
+      };
+      return NextResponse.json(res, { status: 502 });
+    }
 
     // =========================
     // ④ カウント（冪等）: 成功したら消費
@@ -181,7 +193,10 @@ const result = await generateAnswer({
 
     if (error) {
       // AIは成功したがDB更新失敗 → ここでAI回答を返すと「無料回答」になるので返さない
-      const res: ChatRes = { ok: false, error: `consume_talk_v2 failed: ${error.message}` };
+      const res: ChatRes = {
+        ok: false,
+        error: `consume_talk_v2 failed: ${error.message}`,
+      };
       return NextResponse.json(res, { status: 500 });
     }
 
@@ -190,7 +205,10 @@ const result = await generateAnswer({
       | null;
 
     if (!usage) {
-      const res: ChatRes = { ok: false, error: "consume_talk_v2: empty result" };
+      const res: ChatRes = {
+        ok: false,
+        error: "consume_talk_v2: empty result",
+      };
       return NextResponse.json(res, { status: 500 });
     }
 
