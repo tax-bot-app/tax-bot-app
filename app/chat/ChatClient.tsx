@@ -1,286 +1,347 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { getSupabaseClient } from "../lib/supabaseClient";
+import { getSupabaseClient } from "@/app/lib/supabaseClient";
 
-type Dialect = "kansai" | "standard";
-type Stance = "zubatto" | "sanbo";
+type Role = "user" | "assistant";
+
+type MessageRow = {
+  id: string;
+  conversation_id: string;
+  role: Role;
+  content: string;
+  created_at: string;
+};
 
 type ConversationRow = {
   id: string;
   summary: string | null;
   created_at: string;
-  summary_updated_at: string | null;
+  summary_updated_at?: string | null;
 };
-
-type MessageRow = {
-  id?: string;
-  conversation_id: string;
-  user_id: string;
-  role: "user" | "assistant";
-  content: string;
-  created_at: string;
-};
-
-type StatusRes =
-  | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null }
-  | { ok: false; error: string };
-
-type ChatRes =
-  | {
-      ok: true;
-      plan: string;
-      used_talks: number | null;
-      limit_talks: number | null;
-      conversation_id: string | null;
-      message: string;
-    }
-  | {
-      ok: false;
-      error: string;
-      used_talks?: number | null;
-      limit_talks?: number | null;
-    };
 
 type ThreadItem = {
   id: string;
-  title: string;
-  created_at: string;
-  preview: string;
+  title: string; // 表示名（summary）
+  createdAt: string;
+  preview: string; // 最新メッセの頭20文字（なければ空）
 };
 
-function fmtYmd(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}/${m}/${day}`;
-}
+type StatusOk = {
+  ok: true;
+  plan: string;
+  used_talks: number | null;
+  limit_talks: number | null;
+};
 
-function fmtHm(iso: string): string {
-  const d = new Date(iso);
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
-  return `${h}:${m}`;
-}
+type StatusNg = {
+  ok: false;
+  error: string;
+  used_talks?: number | null;
+  limit_talks?: number | null;
+};
 
-function toJstLabel(iso: string): string {
-  // 表示は端末ローカルTZでOK（日本想定）。必要ならUTC→JST固定にしてもええ。
-  return fmtYmd(iso);
-}
+type StatusRes = StatusOk | StatusNg;
 
-function short(s: string, n: number): string {
-  const t = (s || "").replace(/\s+/g, " ").trim();
-  if (!t) return "";
+type ChatOk = {
+  ok: true;
+  plan: string;
+  used_talks: number | null;
+  limit_talks: number | null;
+  conversation_id: string | null;
+  message: string;
+};
+
+type ChatNg = {
+  ok: false;
+  error: string;
+  used_talks?: number | null;
+  limit_talks?: number | null;
+};
+
+type ChatRes = ChatOk | ChatNg;
+
+type Dialect = "kansai" | "standard";
+type Stance = "zubatto" | "sanbo";
+
+function clamp(s: string, n: number) {
+  const t = (s ?? "").replace(/\s+/g, " ").trim();
   return t.length <= n ? t : t.slice(0, n) + "…";
 }
 
-function getContactUrl(): string {
-  // どっちでも運用できるように「環境変数があればそれ」「なければ mailto」
-  // Vercel: NEXT_PUBLIC_CONTACT_URL = GoogleフォームURL など
-  // 例) https://forms.gle/xxxxx
-  return process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:info@gladplan.com?subject=さじかげん%20お問い合わせ";
+function toJstLabel(iso: string) {
+  // 例: 2026/01/22
+  try {
+    const d = new Date(iso);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}/${m}/${day}`;
+  } catch {
+    return "";
+  }
+}
+
+function toHm(iso: string) {
+  // 例: 12:34
+  try {
+    const d = new Date(iso);
+    const h = String(d.getHours()).padStart(2, "0");
+    const m = String(d.getMinutes()).padStart(2, "0");
+    return `${h}:${m}`;
+  } catch {
+    return "";
+  }
+}
+
+function isUuid(s: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    s
+  );
+}
+
+function loadLocal(key: string) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function saveLocal(key: string, val: string) {
+  try {
+    localStorage.setItem(key, val);
+  } catch {}
 }
 
 export default function ChatClient() {
   const supabase = useMemo(() => getSupabaseClient(), []);
 
-  // ---- UI state ----
+  const [loading, setLoading] = useState(false);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
   const [plan, setPlan] = useState<string>("(loading)");
   const [usedTalks, setUsedTalks] = useState<number | null>(null);
   const [limitTalks, setLimitTalks] = useState<number | null>(null);
 
-  const [dialect, setDialect] = useState<Dialect>("kansai");
-  const [stance, setStance] = useState<Stance>("zubatto");
+  const [dialect, setDialect] = useState<Dialect>(() => {
+    const v = loadLocal("chat:dialect");
+    return v === "standard" ? "standard" : "kansai";
+  });
+  const [stance, setStance] = useState<Stance>(() => {
+    const v = loadLocal("chat:stance");
+    return v === "sanbo" ? "sanbo" : "zubatto";
+  });
 
   const [threads, setThreads] = useState<ThreadItem[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [activeTitle, setActiveTitle] = useState<string>("(新規)");
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(() => {
+    const v = loadLocal("chat:activeConversationId");
+    return v && isUuid(v) ? v : null;
+  });
 
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
 
-  const [errMsg, setErrMsg] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const msgsRef = useRef<HTMLDivElement | null>(null);
 
-  // ---- refs for scroll ----
-  const msgScrollRef = useRef<HTMLDivElement | null>(null);
+  const CONTACT_URL =
+    process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
 
-  // ---- helpers ----
   const scrollMessagesBottom = () => {
-    const el = msgScrollRef.current;
+    const el = msgsRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   };
 
-  // localStorage: dialect/stance
-  useEffect(() => {
-    try {
-      const d = (localStorage.getItem("chat_dialect") as Dialect | null) || null;
-      const s = (localStorage.getItem("chat_stance") as Stance | null) || null;
-      if (d === "kansai" || d === "standard") setDialect(d);
-      if (s === "zubatto" || s === "sanbo") setStance(s);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("chat_dialect", dialect);
-      localStorage.setItem("chat_stance", stance);
-    } catch {}
-  }, [dialect, stance]);
-
-  async function fetchStatus() {
+  const refreshStatus = async () => {
     setErrMsg(null);
-    const { data, error } = await supabase.auth.getSession();
-    if (error) {
-      setErrMsg(error.message);
-      return;
-    }
-    const token = data.session?.access_token;
-    if (!token) {
-      setErrMsg("Not logged in");
-      return;
-    }
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
 
-    const res = await fetch("/api/chat/status", {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
+      const token = data.session?.access_token;
+      if (!token) {
+        setPlan("(not logged in)");
+        setUsedTalks(null);
+        setLimitTalks(null);
+        return;
+      }
 
-    const json = (await res.json().catch(() => null)) as StatusRes | null;
-    if (!res.ok || !json || (json as any).ok === false) {
-      setErrMsg((json as any)?.error || `status failed: ${res.status}`);
-      return;
-    }
-
-    setPlan(json.plan);
-    setUsedTalks(json.used_talks);
-    setLimitTalks(json.limit_talks);
-  }
-
-  async function fetchThreads() {
-    setErrMsg(null);
-
-    const { data: s, error: sErr } = await supabase.auth.getSession();
-    if (sErr) {
-      setErrMsg(sErr.message);
-      return;
-    }
-    const token = s.session?.access_token;
-    if (!token) {
-      setErrMsg("Not logged in");
-      return;
-    }
-
-    // conversations: 直近30
-    const { data: convs, error: convErr } = await supabase
-      .from("conversations")
-      .select("id, summary, created_at, summary_updated_at")
-      .order("created_at", { ascending: false })
-      .limit(30);
-
-    if (convErr) {
-      setErrMsg(convErr.message);
-      return;
-    }
-
-    const base = (convs || []) as ConversationRow[];
-
-    // preview（N+1だけど30件までなら許容。後でView/RPCにして最適化でOK）
-    const items: ThreadItem[] = [];
-    for (const c of base) {
-      const { data: lastMsgs } = await supabase
-        .from("messages")
-        .select("content, role, created_at")
-        .eq("conversation_id", c.id)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      const last = (lastMsgs?.[0] as any) || null;
-      const preview = last?.content ? short(String(last.content), 20) : "";
-
-      items.push({
-        id: c.id,
-        title: (c.summary && c.summary.trim()) || "(無題)",
-        created_at: c.created_at,
-        preview,
+      const res = await fetch("/api/chat/status", {
+        headers: { Authorization: `Bearer ${token}` },
       });
+
+      const json = (await res.json().catch(() => null)) as StatusRes | null;
+
+      if (!json) {
+        setErrMsg(`status failed: ${res.status}`);
+        return;
+      }
+      if (json.ok !== true) {
+        setErrMsg(json.error || `status failed: ${res.status}`);
+        return;
+      }
+
+      // ✅ TSを100%納得させる
+      const okJson: Extract<StatusRes, { ok: true }> = json;
+
+      setPlan(okJson.plan);
+      setUsedTalks(okJson.used_talks);
+      setLimitTalks(okJson.limit_talks);
+    } catch (e: any) {
+      setErrMsg(e?.message || "status failed");
     }
+  };
 
-    setThreads(items);
-
-    // active未選択なら先頭を選ぶ（ただし「新規状態」優先したいならここ消す）
-    if (!activeConversationId && items.length > 0) {
-      setActiveConversationId(items[0].id);
-      setActiveTitle(items[0].title);
-    }
-  }
-
-  async function fetchMessages(conversationId: string) {
+  const loadThreads = async () => {
     setErrMsg(null);
+    try {
+      const { data: sess, error: sessErr } = await supabase.auth.getSession();
+      if (sessErr) throw sessErr;
 
-    const { data, error } = await supabase
-      .from("messages")
-      .select("id, conversation_id, user_id, role, content, created_at")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true })
-      .limit(200);
+      const token = sess.session?.access_token;
+      if (!token) return;
 
-    if (error) {
-      setErrMsg(error.message);
-      return;
+      // conversations（RLS前提）
+      const { data: convs, error: convErr } = await supabase
+        .from("conversations")
+        .select("id, summary, created_at, summary_updated_at")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (convErr) throw convErr;
+
+      const base: ThreadItem[] = (convs ?? []).map((c: ConversationRow) => ({
+        id: c.id,
+        title: c.summary?.trim() ? c.summary!.trim() : "(無題)",
+        createdAt: c.created_at,
+        preview: "",
+      }));
+
+      // 最新メッセの頭20文字（N+1になるけど、最大50件＆各1件だけで軽め）
+      const previews = await Promise.all(
+        base.map(async (t) => {
+          const { data: lastMsg } = await supabase
+            .from("messages")
+            .select("content, created_at")
+            .eq("conversation_id", t.id)
+            .order("created_at", { ascending: false })
+            .limit(1);
+
+          const head = lastMsg?.[0]?.content ? clamp(lastMsg[0].content, 20) : "";
+          return { ...t, preview: head };
+        })
+      );
+
+      // summary_updated_at があればそれ優先で並び替え（無ければ createdAt）
+      previews.sort((a, b) => {
+        // ここは“概ね最近順”でOK。厳密にやるなら conversations に updated_at を持たせる。
+        return b.createdAt.localeCompare(a.createdAt);
+      });
+
+      setThreads(previews);
+
+      // activeConversationId が無効なら先頭を選ぶ（ただし空ならnull）
+      if (previews.length > 0) {
+        if (!activeConversationId || !previews.some((t) => t.id === activeConversationId)) {
+          setActiveConversationId(previews[0].id);
+          saveLocal("chat:activeConversationId", previews[0].id);
+        }
+      } else {
+        setActiveConversationId(null);
+        saveLocal("chat:activeConversationId", "");
+      }
+    } catch (e: any) {
+      setErrMsg(e?.message || "load threads failed");
     }
+  };
 
-    setMessages((data || []) as MessageRow[]);
-    // 描画後に一番下へ
-    setTimeout(scrollMessagesBottom, 0);
-  }
-
-  async function selectThread(id: string) {
-    const t = threads.find((x) => x.id === id);
-    setActiveConversationId(id);
-    setActiveTitle(t?.title || "(無題)");
-    setMessages([]);
-    await fetchMessages(id);
-  }
-
-  function newThreadLocalOnly() {
-    // ✅ “新規押下”ではDB作らない（最初の送信で route.ts が作る）
-    setActiveConversationId(null);
-    setActiveTitle("(新規)");
-    setMessages([]);
+  const loadMessages = async (conversationId: string) => {
     setErrMsg(null);
-    // 入力欄にフォーカスしたいならここで focus
-  }
-
-  async function renameThread() {
-    if (!activeConversationId) return;
-    const current = activeTitle === "(無題)" ? "" : activeTitle;
-    const name = prompt("スレッド名を入力（空ならキャンセル）", current);
-    if (!name) return;
-
-    const { error } = await supabase
-      .from("conversations")
-      .update({ summary: name, summary_updated_at: new Date().toISOString() })
-      .eq("id", activeConversationId);
-
-    if (error) {
-      alert(`更新失敗: ${error.message}`);
-      return;
-    }
-
-    setActiveTitle(name);
-    await fetchThreads();
-  }
-
-  async function sendMessage() {
-    const msg = input.trim();
-    if (!msg) return;
-
     setLoading(true);
+    try {
+      const { data: sess, error: sessErr } = await supabase.auth.getSession();
+      if (sessErr) throw sessErr;
+      if (!sess.session?.access_token) throw new Error("Not logged in");
+
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id, conversation_id, role, content, created_at")
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: true })
+        .limit(500);
+
+      if (error) throw error;
+      setMessages((data ?? []) as MessageRow[]);
+      setTimeout(scrollMessagesBottom, 0);
+    } catch (e: any) {
+      setErrMsg(e?.message || "load messages failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const newThread = () => {
+    // ✅ ここではDB作らない。activeConversationIdをnullにして「未作成」状態へ
+    setActiveConversationId(null);
+    saveLocal("chat:activeConversationId", "");
+    setMessages([]);
     setErrMsg(null);
+    setInput("");
+    setTimeout(() => {
+      // 右側を上に戻す
+      const el = msgsRef.current;
+      if (el) el.scrollTop = 0;
+    }, 0);
+  };
+
+  const renameThread = async () => {
+    if (!activeConversationId) return;
+    const current = threads.find((t) => t.id === activeConversationId)?.title || "";
+    const next = window.prompt("スレッド名を入力", current);
+    if (next == null) return;
+    const title = next.trim();
+    if (!title) return;
+
+    try {
+      const { error } = await supabase
+        .from("conversations")
+        .update({
+          summary: title,
+          summary_updated_at: new Date().toISOString(),
+        })
+        .eq("id", activeConversationId);
+
+      if (error) throw error;
+
+      // ローカル反映
+      setThreads((prev) =>
+        prev.map((t) => (t.id === activeConversationId ? { ...t, title } : t))
+      );
+    } catch (e: any) {
+      setErrMsg(e?.message || "rename failed");
+    }
+  };
+
+  const sendMessage = async () => {
+    const text = input.trim();
+    if (!text) return;
+
+    setErrMsg(null);
+    setLoading(true);
+    setInput("");
+
+    // 先にUIへユーザー発言を出す（会話IDなしでもOK）
+    const tempUser: MessageRow = {
+      id: crypto.randomUUID(),
+      conversation_id: activeConversationId || "temp",
+      role: "user",
+      content: text,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, tempUser]);
+    setTimeout(scrollMessagesBottom, 0);
 
     try {
       const { data, error } = await supabase.auth.getSession();
@@ -289,149 +350,145 @@ export default function ChatClient() {
       const token = data.session?.access_token;
       if (!token) throw new Error("Not logged in");
 
-      const idempotencyKey =
-        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random()}`; // 念のため（本番はuuid推奨）
+      const idempotencyKey = crypto.randomUUID();
 
-      // optimistic push（UI先出し）
-      const tempConvId = activeConversationId || "pending";
-      const nowIso = new Date().toISOString();
-
-      const optimisticUser: MessageRow = {
-        conversation_id: tempConvId,
-        user_id: "me",
-        role: "user",
-        content: msg,
-        created_at: nowIso,
+      const body: any = {
+        message: text,
+        idempotencyKey,
+        dialect,
+        stance,
       };
 
-      setMessages((prev) => [...prev, optimisticUser]);
-      setInput("");
-      setTimeout(scrollMessagesBottom, 0);
+      // ✅ 既に会話IDがある場合だけ送る
+      if (activeConversationId) body.conversationId = activeConversationId;
 
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          message: msg,
-          idempotencyKey,
-          conversationId: activeConversationId, // nullなら route.ts が新規作成
-          dialect,
-          stance,
-        }),
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
       });
 
-      const json = (await res.json().catch(() => null)) as StatusRes | null;
+      const json = (await res.json().catch(() => null)) as ChatRes | null;
+      if (!json) throw new Error(`chat failed: ${res.status}`);
 
-if (!json) {
-  setErrMsg(`status failed: ${res.status}`);
-  return;
-}
+      if (json.ok !== true) {
+        // 失敗なら“AI返答なし”で表示する（ユーザーの発言は残ってる想定）
+        setErrMsg(json.error || `chat failed: ${res.status}`);
+        return;
+      }
 
-if (json.ok !== true) {
-  setErrMsg(json.error || `status failed: ${res.status}`);
-  return;
-}
+      // ✅ ok:true に確定
+      const okJson: Extract<ChatRes, { ok: true }> = json;
 
-// ✅ ここから先は json が { ok: true; ... } に確定する
-setPlan(json.plan);
-setUsedTalks(json.used_talks);
-setLimitTalks(json.limit_talks);
+      // ステータス反映
+      setPlan(okJson.plan);
+      setUsedTalks(okJson.used_talks);
+      setLimitTalks(okJson.limit_talks);
 
-      // 新規だった場合、ここで会話ID確定
-      const convId = json.conversation_id || activeConversationId;
+      // ✅ 初回送信で新規会話が作られた場合、activeConversationId を確定させる
+      const newConvId = okJson.conversation_id;
+      if (newConvId && isUuid(newConvId)) {
+        if (!activeConversationId) {
+          setActiveConversationId(newConvId);
+          saveLocal("chat:activeConversationId", newConvId);
 
-      // assistant reply追加
-      const assistant: MessageRow = {
-        conversation_id: convId || tempConvId,
-        user_id: "bot",
+          // temp の conversation_id を新IDへ置換
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.conversation_id === "temp" ? { ...m, conversation_id: newConvId } : m
+            )
+          );
+
+          // スレッド一覧を更新（新規が増える）
+          await loadThreads();
+        } else {
+          // 既存なら preview 更新のために threads を軽く更新
+          setThreads((prev) =>
+            prev.map((t) =>
+              t.id === activeConversationId ? { ...t, preview: clamp(text, 20) } : t
+            )
+          );
+        }
+      }
+
+      // AI返答を追加（DB保存済み想定）
+      const tempAsst: MessageRow = {
+        id: crypto.randomUUID(),
+        conversation_id: newConvId || activeConversationId || "temp",
         role: "assistant",
-        content: json.message,
+        content: okJson.message,
         created_at: new Date().toISOString(),
       };
 
-      // pending置換（楽にいく：pendingでも表示は問題ないが、後で整える）
-      setMessages((prev) => {
-        const fixed = prev.map((m) => {
-          if (m.conversation_id === "pending") return { ...m, conversation_id: convId || "pending" };
-          return m;
-        });
-        return [...fixed, assistant];
-      });
-
-      // active確定＆一覧更新
-      if (convId && convId !== activeConversationId) {
-        setActiveConversationId(convId);
-      }
-      await fetchThreads();
-      if (convId) await fetchMessages(convId);
-
+      setMessages((prev) => [...prev, tempAsst]);
       setTimeout(scrollMessagesBottom, 0);
     } catch (e: any) {
       setErrMsg(e?.message || "send failed");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   // 初期ロード
   useEffect(() => {
-    (async () => {
-      await fetchStatus();
-      await fetchThreads();
-    })();
+    refreshStatus();
+    loadThreads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // メッセージ増えたら最下部へ（送信・返信）
+  // activeConversationId が変わったら読み込み
   useEffect(() => {
-    setTimeout(scrollMessagesBottom, 0);
+    if (!activeConversationId) return;
+    loadMessages(activeConversationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length, loading]);
+  }, [activeConversationId]);
 
-  // 日付区切り付きレンダ
-  const renderedMessages = useMemo(() => {
+  // dialect/stance 永続化
+  useEffect(() => {
+    saveLocal("chat:dialect", dialect);
+  }, [dialect]);
+  useEffect(() => {
+    saveLocal("chat:stance", stance);
+  }, [stance]);
+
+  // --- render helpers ---
+  const renderMessages = () => {
     let lastDate = "";
-    const out: React.ReactNode[] = [];
+    const out: ReactNode[] = [];
 
     messages.forEach((m, i) => {
       const date = toJstLabel(m.created_at);
       if (date && date !== lastDate) {
         lastDate = date;
         out.push(
-          <div key={`d-${i}`} style={{ display: "flex", justifyContent: "center", margin: "10px 0" }}>
+          <div
+            key={`d-${i}`}
+            style={{ display: "flex", justifyContent: "center", margin: "10px 0" }}
+          >
             <div
               style={{
                 fontSize: 12,
                 padding: "4px 10px",
                 borderRadius: 999,
                 border: "1px solid #ddd",
-                background: "#fafafa",
+                background: "#f7f7f7",
+                color: "#444",
               }}
             >
-              {date.replaceAll("/", "") /* 20260122 みたいにしたいならここ調整 */ &&
-              date.length === 10
-                ? date.replace(/\//g, "")
-                : date}
+              {date}
             </div>
           </div>
         );
       }
 
-      const isMe = m.role === "user";
-      const time = fmtHm(m.created_at);
-
+      const isUser = m.role === "user";
       out.push(
         <div
-          key={`${m.role}-${i}-${m.created_at}`}
+          key={m.id}
           style={{
             display: "flex",
-            justifyContent: isMe ? "flex-end" : "flex-start",
-            margin: "6px 0",
+            justifyContent: isUser ? "flex-end" : "flex-start",
+            margin: "8px 0",
           }}
         >
           <div
@@ -440,330 +497,368 @@ setLimitTalks(json.limit_talks);
               padding: "10px 12px",
               borderRadius: 12,
               border: "1px solid #e5e5e5",
-              background: isMe ? "#eef3ff" : "#fff",
+              background: isUser ? "#eef5ff" : "#fff",
               whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
+              overflowWrap: "anywhere",
               lineHeight: 1.5,
             }}
           >
-            <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 6 }}>
-              {isMe ? "あなた" : "さじかげん"}・{time}
+            <div style={{ fontSize: 14 }}>{m.content}</div>
+            <div style={{ fontSize: 11, color: "#777", marginTop: 6, textAlign: "right" }}>
+              {toHm(m.created_at)}
             </div>
-            <div>{m.content}</div>
           </div>
         </div>
       );
     });
 
     return out;
-  }, [messages]);
+  };
 
-  const contactUrl = useMemo(() => getContactUrl(), []);
+  const activeTitle =
+    (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) ||
+    "(新規)";
+
+  const activePreview =
+    (activeConversationId && threads.find((t) => t.id === activeConversationId)?.preview) ||
+    "";
+
+  const badge = (() => {
+    if (!limitTalks) return "";
+    const used = usedTalks ?? 0;
+    const left = Math.max(0, limitTalks - used);
+    return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）`;
+  })();
 
   return (
-    <div style={{ padding: 18 }}>
-      <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-        <div style={{ fontWeight: 700 }}>さじかげん｜税務相談</div>
-      </div>
+    <div
+      style={{
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "#fff",
+      }}
+    >
+      {/* top header */}
+      <div style={{ padding: "18px 16px 10px", textAlign: "center" }}>
+        <div style={{ fontSize: 18, fontWeight: 700 }}>さじかげん｜税務相談</div>
 
-      {/* Header actions */}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginBottom: 8 }}>
-        <Link
-          href="/settings/billing"
-          style={{
-            border: "1px solid #ddd",
-            padding: "8px 12px",
-            borderRadius: 10,
-            textDecoration: "none",
-            color: "#111",
-            background: "#fff",
-          }}
-        >
-          プラン変更
-        </Link>
-
-        <a
-          href={contactUrl}
-          target="_blank"
-          rel="noreferrer"
-          style={{
-            border: "1px solid #ddd",
-            padding: "8px 12px",
-            borderRadius: 10,
-            textDecoration: "none",
-            color: "#111",
-            background: "#fff",
-          }}
-        >
-          お問い合わせ
-        </a>
-      </div>
-
-      {/* Plan box */}
-      <div
-        style={{
-          border: "1px solid #ddd",
-          borderRadius: 14,
-          padding: 14,
-          marginBottom: 10,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          background: "#fff",
-        }}
-      >
-        <div style={{ fontWeight: 700 }}>
-          プラン: {plan} / 残り{" "}
-          {limitTalks != null && usedTalks != null ? Math.max(limitTalks - usedTalks, 0) : "?"} 回（
-          {usedTalks ?? "?"}/{limitTalks ?? "?"}）
-        </div>
-
-        <button
-          onClick={fetchStatus}
-          style={{
-            border: "1px solid #ddd",
-            padding: "8px 12px",
-            borderRadius: 10,
-            background: "#fff",
-            cursor: "pointer",
-          }}
-        >
-          更新
-        </button>
-      </div>
-
-      {errMsg ? (
-        <div style={{ margin: "8px 0", color: "#b00020", fontSize: 13 }}>{errMsg}</div>
-      ) : null}
-
-      {/* Main layout */}
-      <div
-        style={{
-          display: "flex",
-          gap: 14,
-          border: "1px solid #ddd",
-          borderRadius: 14,
-          padding: 12,
-          background: "#fff",
-          height: "calc(100vh - 220px)", // ここがスクロール体験の肝。ヘッダー分を引いた高さに固定。
-          minHeight: 520,
-        }}
-      >
-        {/* Left: threads */}
-        <div
-          style={{
-            width: 300,
-            minWidth: 260,
-            border: "1px solid #eee",
-            borderRadius: 12,
-            padding: 10,
-            display: "flex",
-            flexDirection: "column",
-            minHeight: 0, // scrollの必須
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontWeight: 700 }}>スレッド</div>
-            <button
-              onClick={newThreadLocalOnly}
-              style={{
-                border: "1px solid #ddd",
-                padding: "6px 10px",
-                borderRadius: 10,
-                background: "#fff",
-                cursor: "pointer",
-              }}
-            >
-              新規
+        <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <Link href="/settings/billing">
+            <button style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd" }}>
+              プラン変更
             </button>
-          </div>
+          </Link>
 
-          <div style={{ height: 10 }} />
-
-          <div
-            style={{
-              overflowY: "auto",
-              paddingRight: 6,
-              minHeight: 0,
-              flex: 1,
-            }}
+          <a
+            href={CONTACT_URL}
+            target={CONTACT_URL.startsWith("http") ? "_blank" : undefined}
+            rel="noreferrer"
           >
-            {threads.map((t) => {
-              const active = t.id === activeConversationId;
-              return (
-                <div
-                  key={t.id}
-                  onClick={() => selectThread(t.id)}
-                  style={{
-                    border: active ? "2px solid #9bb7ff" : "1px solid #e9e9e9",
-                    borderRadius: 12,
-                    padding: 10,
-                    marginBottom: 10,
-                    cursor: "pointer",
-                    background: active ? "#f3f7ff" : "#fff",
-                  }}
-                >
-                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{t.title}</div>
-                  <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>{fmtYmd(t.created_at)}</div>
-                  <div style={{ fontSize: 12, opacity: 0.8 }}>{t.preview || " "}</div>
-                </div>
-              );
-            })}
-          </div>
+            <button style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd" }}>
+              お問い合わせ
+            </button>
+          </a>
         </div>
 
-        {/* Right: chat */}
         <div
           style={{
-            flex: 1,
-            border: "1px solid #eee",
-            borderRadius: 12,
-            padding: 10,
+            marginTop: 10,
             display: "flex",
-            flexDirection: "column",
-            minHeight: 0, // scrollの必須
+            justifyContent: "center",
           }}
         >
-          {/* Top bar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ fontWeight: 700 }}>{activeTitle}</div>
-
-            <button
-              onClick={renameThread}
-              disabled={!activeConversationId}
-              style={{
-                border: "1px solid #ddd",
-                padding: "6px 10px",
-                borderRadius: 10,
-                background: activeConversationId ? "#fff" : "#f4f4f4",
-                cursor: activeConversationId ? "pointer" : "not-allowed",
-              }}
-            >
-              名前変更
-            </button>
-
-            <div style={{ flex: 1 }} />
-
-            {/* dialect */}
-            <button
-              onClick={() => setDialect("kansai")}
-              style={{
-                border: "1px solid #ddd",
-                padding: "6px 10px",
-                borderRadius: 10,
-                background: dialect === "kansai" ? "#111" : "#fff",
-                color: dialect === "kansai" ? "#fff" : "#111",
-                cursor: "pointer",
-              }}
-            >
-              関西弁
-            </button>
-            <button
-              onClick={() => setDialect("standard")}
-              style={{
-                border: "1px solid #ddd",
-                padding: "6px 10px",
-                borderRadius: 10,
-                background: dialect === "standard" ? "#111" : "#fff",
-                color: dialect === "standard" ? "#fff" : "#111",
-                cursor: "pointer",
-              }}
-            >
-              標準語
-            </button>
-
-            {/* stance */}
-            <button
-              onClick={() => setStance("zubatto")}
-              style={{
-                border: "1px solid #ddd",
-                padding: "6px 10px",
-                borderRadius: 10,
-                background: stance === "zubatto" ? "#111" : "#fff",
-                color: stance === "zubatto" ? "#fff" : "#111",
-                cursor: "pointer",
-              }}
-            >
-              ズバっと
-            </button>
-            <button
-              onClick={() => setStance("sanbo")}
-              style={{
-                border: "1px solid #ddd",
-                padding: "6px 10px",
-                borderRadius: 10,
-                background: stance === "sanbo" ? "#111" : "#fff",
-                color: stance === "sanbo" ? "#fff" : "#111",
-                cursor: "pointer",
-              }}
-            >
-              参謀
-            </button>
-          </div>
-
-          <div style={{ height: 10 }} />
-
-          {/* Messages scroll area */}
           <div
-            ref={msgScrollRef}
             style={{
-              flex: 1,
-              overflowY: "auto",
-              border: "1px solid #f0f0f0",
+              width: "min(980px, 100%)",
+              border: "1px solid #ddd",
               borderRadius: 12,
-              padding: 12,
-              background: "#fff",
+              padding: "12px 14px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <div style={{ fontWeight: 700 }}>{badge || "プラン: (loading)"}</div>
+            <button
+              onClick={refreshStatus}
+              style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd" }}
+            >
+              更新
+            </button>
+          </div>
+        </div>
+
+        {errMsg && (
+          <div style={{ marginTop: 10, color: "#b00020", fontSize: 13 }}>{errMsg}</div>
+        )}
+      </div>
+
+      {/* main */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          justifyContent: "center",
+          padding: "0 16px 16px",
+        }}
+      >
+        <div
+          style={{
+            width: "min(980px, 100%)",
+            border: "1px solid #ddd",
+            borderRadius: 12,
+            display: "flex",
+            overflow: "hidden",
+            minHeight: 0,
+          }}
+        >
+          {/* left threads */}
+          <div
+            style={{
+              width: 280,
+              borderRight: "1px solid #eee",
+              display: "flex",
+              flexDirection: "column",
               minHeight: 0,
             }}
           >
-            {renderedMessages.length > 0 ? (
-              renderedMessages
-            ) : (
-              <div style={{ opacity: 0.7, fontSize: 13 }}>さじかげん：相談内容をどうぞ。</div>
-            )}
-          </div>
-
-          <div style={{ height: 10 }} />
-
-          {/* Input */}
-          <div style={{ display: "flex", gap: 10 }}>
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  if (!loading) sendMessage();
-                }
+            <div
+              style={{
+                padding: 12,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                borderBottom: "1px solid #eee",
               }}
-              placeholder="相談内容を入力（Enterで送信）"
+            >
+              <div style={{ fontWeight: 700 }}>スレッド</div>
+              <button
+                onClick={newThread}
+                style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd" }}
+              >
+                新規
+              </button>
+            </div>
+
+            <div
+              ref={listRef}
               style={{
                 flex: 1,
-                border: "1px solid #ddd",
-                borderRadius: 12,
-                padding: "12px 12px",
-                outline: "none",
-              }}
-              disabled={loading}
-            />
-            <button
-              onClick={sendMessage}
-              disabled={loading}
-              style={{
-                border: "1px solid #ddd",
-                borderRadius: 12,
-                padding: "0 18px",
-                background: loading ? "#f4f4f4" : "#fff",
-                cursor: loading ? "not-allowed" : "pointer",
-                fontWeight: 700,
+                overflowY: "auto",
+                padding: 10,
+                background: "#fafafa",
               }}
             >
-              送信
-            </button>
+              {threads.length === 0 && (
+                <div style={{ color: "#666", fontSize: 13, padding: 8 }}>
+                  まだスレッドがありません（最初の送信で作成されます）
+                </div>
+              )}
+
+              {threads.map((t) => {
+                const active = t.id === activeConversationId;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      setActiveConversationId(t.id);
+                      saveLocal("chat:activeConversationId", t.id);
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: 10,
+                      marginBottom: 8,
+                      borderRadius: 10,
+                      border: active ? "2px solid #9dbbff" : "1px solid #e5e5e5",
+                      background: active ? "#eef5ff" : "#fff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>{t.title}</div>
+                    <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
+                      {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
+                    </div>
+                    {t.preview ? (
+                      <div style={{ fontSize: 12, color: "#333" }}>{t.preview}</div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: "#999" }}>(プレビューなし)</div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
-            ※ 未契約/上限到達のときは送信不可（無駄打ち防止）。口調/モード切替は送信しない限りトークは消費しません。
+          {/* right chat */}
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
+            }}
+          >
+            {/* chat header row */}
+            <div
+              style={{
+                padding: 12,
+                borderBottom: "1px solid #eee",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <div style={{ fontWeight: 700, overflow: "hidden" }}>
+                <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {activeTitle}
+                </div>
+                {activePreview ? (
+                  <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                    {activePreview}
+                  </div>
+                ) : null}
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button
+                  onClick={renameThread}
+                  disabled={!activeConversationId}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    opacity: activeConversationId ? 1 : 0.5,
+                    cursor: activeConversationId ? "pointer" : "not-allowed",
+                  }}
+                >
+                  名前変更
+                </button>
+
+                <button
+                  onClick={() => setDialect("kansai")}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: dialect === "kansai" ? "#111" : "#fff",
+                    color: dialect === "kansai" ? "#fff" : "#111",
+                  }}
+                >
+                  関西弁
+                </button>
+                <button
+                  onClick={() => setDialect("standard")}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: dialect === "standard" ? "#111" : "#fff",
+                    color: dialect === "standard" ? "#fff" : "#111",
+                  }}
+                >
+                  標準語
+                </button>
+
+                <button
+                  onClick={() => setStance("zubatto")}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: stance === "zubatto" ? "#111" : "#fff",
+                    color: stance === "zubatto" ? "#fff" : "#111",
+                  }}
+                >
+                  ズバっと
+                </button>
+                <button
+                  onClick={() => setStance("sanbo")}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: stance === "sanbo" ? "#111" : "#fff",
+                    color: stance === "sanbo" ? "#fff" : "#111",
+                  }}
+                >
+                  参謀
+                </button>
+              </div>
+            </div>
+
+            {/* message list */}
+            <div
+              ref={msgsRef}
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: "12px 14px",
+                background: "#fff",
+                minHeight: 0,
+              }}
+            >
+              {messages.length === 0 ? (
+                <div style={{ color: "#666", fontSize: 14 }}>
+                  さじかげん：相談内容をどうぞ。
+                  <div style={{ marginTop: 8, fontSize: 12, color: "#999" }}>
+                    ※「新規」を押しただけではスレッドは作られません。最初の送信で作成されます。
+                  </div>
+                </div>
+              ) : (
+                renderMessages()
+              )}
+            </div>
+
+            {/* input */}
+            <div
+              style={{
+                padding: 12,
+                borderTop: "1px solid #eee",
+                display: "flex",
+                gap: 10,
+                alignItems: "center",
+              }}
+            >
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if (!loading) sendMessage();
+                  }
+                }}
+                placeholder="相談内容を入力（Enterで送信）"
+                style={{
+                  flex: 1,
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                }}
+                disabled={loading}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={loading}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  cursor: loading ? "not-allowed" : "pointer",
+                }}
+              >
+                送信
+              </button>
+            </div>
+
+            <div style={{ padding: "0 12px 12px", fontSize: 12, color: "#777" }}>
+              ※ 未契約/上限到達のときは送信不可（無駄打ち防止）。口調/モード切替は送信しない限りトークに影響しません。
+            </div>
           </div>
         </div>
       </div>
