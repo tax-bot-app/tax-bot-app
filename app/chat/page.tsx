@@ -1,9 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseClient } from "../lib/supabaseClient";
 
-type ChatMessage = { role: "user" | "assistant"; content: string };
+type ChatMessage = { role: "user" | "assistant"; content: string; created_at?: string };
+type ConversationRow = {
+  id: string;
+  summary: string | null;
+  created_at: string;
+  summary_updated_at: string | null;
+};
 
 type ChatRes =
   | {
@@ -20,16 +27,8 @@ type StatusRes =
   | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null }
   | { ok: false; error: string };
 
-type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
-
 type Dialect = "kansai" | "standard";
 type Stance = "zubatto" | "sanbo";
-
-type ThreadItem = {
-  id: string;
-  title: string | null;
-  created_at: string;
-};
 
 const BOT = "さじかげん";
 
@@ -40,6 +39,9 @@ const PLAN_LABEL: Record<string, string> = {
   enterprise: "enterprise",
 };
 
+const CONTACT_URL = "https://forms.gle/REPLACE_WITH_YOUR_FORM"; // ←GoogleフォームURLに差し替え推奨
+// const CONTACT_MAILTO = "mailto:support@example.com?subject=%E3%81%95%E3%81%98%E3%81%8B%E3%81%92%E3%82%93%20%E3%81%8A%E5%95%8F%E3%81%84%E5%90%88%E3%82%8F%E3%81%9B";
+
 function nowTime() {
   const d = new Date();
   const hh = String(d.getHours()).padStart(2, "0");
@@ -48,7 +50,7 @@ function nowTime() {
   return `${hh}:${mm}:${ss}`;
 }
 
-// UUID v4（crypto.randomUUID が無い環境でも UUID 形式を保証）
+// UUID v4
 function uuidv4(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -58,8 +60,7 @@ function uuidv4(): string {
   });
 }
 
-function fmtMMDDHHmm(iso: string): string {
-  // supabaseのcreated_atはUTCが多い。表示はローカルでOK（厳密は後で）
+function formatMmddHm(iso: string) {
   const d = new Date(iso);
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
@@ -70,6 +71,10 @@ function fmtMMDDHHmm(iso: string): string {
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
+
+  // ✅ activeConversationId方式
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: "assistant", content: `${BOT}: 相談内容をどうぞ。` },
   ]);
@@ -89,20 +94,17 @@ export default function ChatPage() {
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string>("");
 
-  // checkout
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-
-  // threads
-  const [threads, setThreads] = useState<ThreadItem[]>([]);
-  const [threadsLoading, setThreadsLoading] = useState(false);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [activeTitle, setActiveTitle] = useState<string>("（無題）");
-
-  // style toggles（送信しない限り消費しない）
+  // mode toggles（送信しない限りトーク消費ゼロ）
   const [dialect, setDialect] = useState<Dialect>("kansai");
   const [stance, setStance] = useState<Stance>("zubatto");
 
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  // rename
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameText, setRenameText] = useState("");
+
+  // UI refs
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const statusMsgTimer = useRef<number | null>(null);
 
   const supabase = useMemo(() => {
@@ -119,8 +121,6 @@ export default function ChatPage() {
       return null;
     }
   }, []);
-
-  const scrollBottom = () => bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 
   const showStatusMsg = (msg: string) => {
     setStatusMsg(msg);
@@ -161,6 +161,7 @@ export default function ChatPage() {
       }
 
       const json = (await res.json().catch(() => null)) as StatusRes | null;
+
       if (!json || !json.ok) {
         setPlan("free");
         setUsed(0);
@@ -185,144 +186,130 @@ export default function ChatPage() {
     }
   };
 
-  const startCheckout = async (targetPlan: "lite" | "standard" | "enterprise") => {
+  // ✅ スレッド一覧
+  const loadConversations = async () => {
     if (!supabase) return;
 
-    setCheckoutLoading(true);
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error || !data.session?.access_token) {
-        window.location.href = "/login";
-        return;
-      }
+    const { data: sess } = await supabase.auth.getSession();
+    if (!sess.session?.access_token) {
+      setConversations([]);
+      setActiveConversationId(null);
+      setMessages([{ role: "assistant", content: `${BOT}: 相談内容をどうぞ。` }]);
+      return;
+    }
 
-      const res = await fetch("/api/create-checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${data.session.access_token}`,
-        },
-        body: JSON.stringify({ plan: targetPlan }),
-      });
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("id,summary,created_at,summary_updated_at")
+      .order("created_at", { ascending: false })
+      .limit(50);
 
-      const json = (await res.json().catch(() => null)) as CheckoutRes | null;
+    if (error) return;
 
-      if (!json) throw new Error("create-checkout: empty response");
-      if (!json.ok) throw new Error(json.error || "create-checkout failed");
-      if (!json.url) throw new Error("create-checkout: url missing");
+    const rows = (data ?? []) as ConversationRow[];
+    setConversations(rows);
 
-      window.location.href = json.url;
-    } catch (e: any) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `${BOT}: 決済に進めません（${e?.message ?? String(e)}）` },
-      ]);
-    } finally {
-      setCheckoutLoading(false);
+    // 初回：一番上を開く（ただし、今が新規状態なら触らない）
+    if (!activeConversationId && rows.length > 0) {
+      // ここは「新規で始めたい」より「前回の続き」を優先
+      setActiveConversationId(rows[0].id);
     }
   };
 
-  // threads: 一覧取得
-  const refreshThreads = async (opts?: { silent?: boolean }) => {
+  // ✅ activeConversationId のメッセージ読込
+  const loadMessages = async (conversationId: string) => {
     if (!supabase) return;
-    if (!opts?.silent) setThreadsLoading(true);
 
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error || !data.session?.access_token) {
-        setThreads([]);
-        return;
-      }
+    const { data: sess } = await supabase.auth.getSession();
+    if (!sess.session?.access_token) return;
 
-      // RLS前提で「自分の conversations」だけ見える
-      const { data: rows, error: e2 } = await supabase
-        .from("conversations")
-        .select("id,title,created_at")
-        .order("created_at", { ascending: false })
-        .limit(50);
+    const { data, error } = await supabase
+      .from("messages")
+      .select("role,content,created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true })
+      .limit(300);
 
-      if (e2) throw e2;
+    if (error) return;
 
-      setThreads((rows as any as ThreadItem[]) ?? []);
-    } catch {
-      // 一覧が取れない＝致命ではない。画面はそのまま。
-    } finally {
-      if (!opts?.silent) setThreadsLoading(false);
+    const rows = (data ?? []) as any[];
+    const msgs: ChatMessage[] = rows.map((r) => ({
+      role: r.role,
+      content: r.content,
+      created_at: r.created_at,
+    }));
+
+    // 先頭に案内メッセが無い場合だけ足す（古い会話向け）
+    if (msgs.length === 0) {
+      setMessages([{ role: "assistant", content: `${BOT}: 相談内容をどうぞ。` }]);
+    } else {
+      setMessages(msgs);
     }
   };
 
-  // messages: 選択スレッドの取得
-  const loadConversation = async (conversationId: string) => {
-    if (!supabase) return;
-    setLoading(true);
-
-    try {
-      const { data: rows, error } = await supabase
-        .from("messages")
-        .select("role,content,created_at")
-        .eq("conversation_id", conversationId)
-        .order("created_at", { ascending: true })
-        .limit(200);
-
-      if (error) throw error;
-
-      const mapped: ChatMessage[] =
-        (rows as any[])?.map((r) => ({ role: r.role, content: r.content })) ?? [];
-
-      if (mapped.length === 0) {
-        setMessages([{ role: "assistant", content: `${BOT}: 相談内容をどうぞ。` }]);
-      } else {
-        setMessages(mapped);
-      }
-    } catch (e: any) {
-      setMessages([
-        { role: "assistant", content: `${BOT}: 会話履歴の読み込みに失敗しました（${e?.message ?? String(e)}）` },
-      ]);
-    } finally {
-      setLoading(false);
-    }
+  // ✅ 右ペイン：最下部へ（スクロールは「右の枠内だけ」）
+  const scrollChatBottom = () => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
   };
 
-  const onNewThread = () => {
+  useEffect(() => {
+    refreshStatus({ silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 初回と、ログイン状態変化っぽいタイミングでスレッド再読込
+  useEffect(() => {
+    loadConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionReady]);
+
+  // activeConversationId が変わったらメッセージ読込
+  useEffect(() => {
+    if (!activeConversationId) return;
+    loadMessages(activeConversationId);
+    setRenameOpen(false);
+    setRenameText("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversationId]);
+
+  // メッセージ追加時に右だけ最下部へ
+  useEffect(() => {
+    scrollChatBottom();
+  }, [messages, loading]);
+
+  const startNewThread = () => {
     setActiveConversationId(null);
-    setActiveTitle("（無題）");
+    setRenameOpen(false);
+    setRenameText("");
     setMessages([{ role: "assistant", content: `${BOT}: 相談内容をどうぞ。` }]);
-    setInput("");
   };
 
-  const onSelectThread = async (t: ThreadItem) => {
-    setActiveConversationId(t.id);
-    setActiveTitle(t.title || "（無題）");
-    await loadConversation(t.id);
+  const openRename = () => {
+    const cur = conversations.find((c) => c.id === activeConversationId);
+    setRenameText(cur?.summary ?? "");
+    setRenameOpen(true);
   };
 
-  const updateActiveTitleInList = (id: string, title: string) => {
-    setThreads((prev) => prev.map((x) => (x.id === id ? { ...x, title } : x)));
-  };
-
-  const renameThread = async () => {
+  const saveRename = async () => {
     if (!supabase) return;
     if (!activeConversationId) return;
 
-    const next = window.prompt("スレッド名を入力", activeTitle === "（無題）" ? "" : activeTitle);
-    if (next === null) return;
+    const name = renameText.trim();
+    if (!name) {
+      setRenameOpen(false);
+      return;
+    }
 
-    const title = next.trim();
-    if (!title) return;
+    const { error } = await supabase
+      .from("conversations")
+      .update({ summary: name, summary_updated_at: new Date().toISOString() })
+      .eq("id", activeConversationId);
 
-    try {
-      const { error } = await supabase
-        .from("conversations")
-        .update({ title })
-        .eq("id", activeConversationId);
-
-      if (error) throw error;
-
-      setActiveTitle(title);
-      updateActiveTitleInList(activeConversationId, title);
-    } catch {
-      // rename失敗は無視（あとで強化）
-      showStatusMsg("スレッド名の更新に失敗");
+    if (!error) {
+      await loadConversations();
+      setRenameOpen(false);
     }
   };
 
@@ -337,6 +324,8 @@ export default function ChatPage() {
 
     setInput("");
     setLoading(true);
+
+    // 表示は先に追加
     setMessages((prev) => [...prev, { role: "user", content: text }]);
 
     try {
@@ -356,7 +345,7 @@ export default function ChatPage() {
         body: JSON.stringify({
           message: text,
           idempotencyKey,
-          conversationId: activeConversationId,
+          conversationId: activeConversationId, // ✅ activeConversationId
           dialect,
           stance,
         }),
@@ -379,27 +368,18 @@ export default function ChatPage() {
         return;
       }
 
-      // usage update
       setPlan(json.plan ?? plan);
       setUsed(Number(json.used_talks ?? used));
       setLimit(Number(json.limit_talks ?? limit));
 
-      // ✅ ここがactiveConversationId方式の肝
-      if (json.conversation_id && json.conversation_id !== activeConversationId) {
+      // ✅ 新規スレッドだった場合：返ってきた conversation_id を採用
+      if (!activeConversationId && json.conversation_id) {
         setActiveConversationId(json.conversation_id);
-
-        // 送信直後は「スレ一覧にまだ居ない」ことがあるので即リフレッシュ
-        await refreshThreads({ silent: true });
-
-        // titleが未設定なら、最初の送信内容を仮タイトルにする（サーバ側もseed入れてるので基本いらんけど保険）
-        const seed = text.length <= 24 ? text : text.slice(0, 24) + "…";
-        setActiveTitle(seed);
+        // 一覧を更新（summary seed が反映される）
+        await loadConversations();
       }
 
       setMessages((prev) => [...prev, { role: "assistant", content: `${BOT}: ${json.message}` }]);
-
-      // スレ一覧の先頭に来るようにリフレッシュ（軽めに）
-      await refreshThreads({ silent: true });
     } catch (e: any) {
       setMessages((prev) => [
         ...prev,
@@ -416,47 +396,73 @@ export default function ChatPage() {
   const low = limit > 0 && remaining <= 2;
   const zero = limit > 0 && remaining <= 0;
 
-  // 初回：ステータス/スレ一覧/トグル復元
-  useEffect(() => {
-    refreshStatus({ silent: true });
-    refreshThreads({ silent: true });
+  const activeConv = conversations.find((c) => c.id === activeConversationId);
+  const title = activeConversationId ? activeConv?.summary || "（無題）" : "（新規）";
 
-    try {
-      const d = localStorage.getItem("sjk_dialect");
-      if (d === "kansai" || d === "standard") setDialect(d);
-
-      const s = localStorage.getItem("sjk_stance");
-      if (s === "zubatto" || s === "sanbo") setStance(s);
-    } catch {
-      // ignore
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    scrollBottom();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, loading]);
-
-  // トグル保存（切替は無料：送信しない限り消費しない）
-  useEffect(() => {
-    try {
-      localStorage.setItem("sjk_dialect", dialect);
-    } catch {}
-  }, [dialect]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("sjk_stance", stance);
-    } catch {}
-  }, [stance]);
-
-  // 初回に「最新スレを自動で開く」：やりたければON（今回は控えめにOFF相当）
-  // useEffect(() => { if (!activeConversationId && threads[0]) onSelectThread(threads[0]); }, [threads]);
+  const ModeButton = (props: {
+    active: boolean;
+    label: string;
+    onClick: () => void;
+  }) => (
+    <button
+      onClick={props.onClick}
+      style={{
+        padding: "6px 10px",
+        borderRadius: 10,
+        border: "1px solid #ddd",
+        background: props.active ? "#111" : "#fff",
+        color: props.active ? "#fff" : "#111",
+        cursor: "pointer",
+        fontWeight: 800,
+      }}
+    >
+      {props.label}
+    </button>
+  );
 
   return (
-    <main style={{ maxWidth: 1100, margin: "28px auto", padding: 16 }}>
-      <h1 style={{ textAlign: "center", marginBottom: 14 }}>さじかげん｜税務相談</h1>
+    <main style={{ maxWidth: 1080, margin: "24px auto", padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <h1 style={{ textAlign: "center", margin: "0 auto 10px", fontWeight: 900 }}>
+          さじかげん｜税務相談
+        </h1>
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <Link
+            href="/settings/billing"
+            style={{
+              textDecoration: "none",
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: "#fff",
+              fontWeight: 800,
+              color: "#111",
+              whiteSpace: "nowrap",
+            }}
+          >
+            プラン変更
+          </Link>
+
+          <a
+            href={CONTACT_URL}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              textDecoration: "none",
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: "#fff",
+              fontWeight: 800,
+              color: "#111",
+              whiteSpace: "nowrap",
+            }}
+          >
+            お問い合わせ
+          </a>
+        </div>
+      </div>
 
       {/* status bar */}
       <div
@@ -475,9 +481,7 @@ export default function ChatPage() {
           プラン: {PLAN_LABEL[plan] ?? plan} / 残り {remaining} 回（{used}/{limit || 0}）
           {low && !zero && <span style={{ marginLeft: 10, fontWeight: 900 }}>残りわずか</span>}
           {zero && <span style={{ marginLeft: 10, fontWeight: 900 }}>上限到達</span>}
-          {statusMsg && (
-            <span style={{ marginLeft: 12, fontWeight: 700, color: "#666" }}>・{statusMsg}</span>
-          )}
+          {statusMsg && <span style={{ marginLeft: 12, fontWeight: 700, color: "#666" }}>・{statusMsg}</span>}
         </div>
 
         <button
@@ -496,308 +500,265 @@ export default function ChatPage() {
         </button>
       </div>
 
-      {zero && (
-        <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button
-            onClick={() => startCheckout("lite")}
-            disabled={checkoutLoading}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
-              cursor: checkoutLoading ? "not-allowed" : "pointer",
-              fontWeight: 800,
-            }}
-          >
-            Liteで開始
-          </button>
-          <button
-            onClick={() => startCheckout("standard")}
-            disabled={checkoutLoading}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
-              cursor: checkoutLoading ? "not-allowed" : "pointer",
-              fontWeight: 800,
-            }}
-          >
-            Standardで開始
-          </button>
-          <button
-            onClick={() => startCheckout("enterprise")}
-            disabled={checkoutLoading}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
-              cursor: checkoutLoading ? "not-allowed" : "pointer",
-              fontWeight: 800,
-            }}
-          >
-            Enterpriseへ
-          </button>
-          {checkoutLoading && <div style={{ alignSelf: "center", color: "#666" }}>決済ページへ移動中…</div>}
-        </div>
-      )}
-
-      {/* main layout */}
-      <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
+      {/* body */}
+      <div
+        style={{
+          marginTop: 14,
+          display: "grid",
+          gridTemplateColumns: "280px 1fr",
+          gap: 12,
+          alignItems: "stretch",
+        }}
+      >
         {/* left: thread list */}
-        <aside
+        <div
           style={{
-            width: 300,
-            minWidth: 260,
             border: "1px solid #ddd",
             borderRadius: 14,
             background: "#fff",
-            overflow: "hidden",
+            padding: 12,
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 520,
           }}
         >
-          <div
-            style={{
-              padding: 12,
-              borderBottom: "1px solid #eee",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <div style={{ fontWeight: 900 }}>スレッド</div>
             <button
-              onClick={onNewThread}
+              onClick={startNewThread}
               style={{
-                padding: "6px 10px",
+                padding: "8px 10px",
                 borderRadius: 10,
                 border: "1px solid #ddd",
                 background: "#fff",
-                cursor: "pointer",
                 fontWeight: 800,
+                cursor: "pointer",
               }}
             >
               新規
             </button>
           </div>
 
-          <div style={{ maxHeight: 520, overflowY: "auto" }}>
-            {threadsLoading && (
-              <div style={{ padding: 12, color: "#666" }}>読み込み中…</div>
+          <div
+            ref={listRef}
+            style={{
+              marginTop: 10,
+              overflowY: "auto",
+              borderTop: "1px solid #eee",
+              paddingTop: 10,
+              flex: 1,
+            }}
+          >
+            {conversations.length === 0 && (
+              <div style={{ color: "#666", fontSize: 13, padding: "8px 4px" }}>
+                スレッドがありません。<br />
+                「新規」→送信で作成されます。
+              </div>
             )}
 
-            {!threadsLoading && threads.length === 0 && (
-              <div style={{ padding: 12, color: "#666" }}>まだスレッドがありません</div>
-            )}
+            {conversations.map((c) => {
+              const active = c.id === activeConversationId;
+              const label = c.summary?.trim() ? c.summary.trim() : "（無題）";
+              const timeLabel = c.summary_updated_at ? formatMmddHm(c.summary_updated_at) : formatMmddHm(c.created_at);
 
-            {threads.map((t) => {
-              const active = t.id === activeConversationId;
               return (
-                <div
-                  key={t.id}
-                  onClick={() => onSelectThread(t)}
+                <button
+                  key={c.id}
+                  onClick={() => setActiveConversationId(c.id)}
                   style={{
-                    padding: 12,
-                    borderBottom: "1px solid #f2f2f2",
+                    width: "100%",
+                    textAlign: "left",
+                    border: "1px solid " + (active ? "#c7d2fe" : "#eee"),
+                    background: active ? "#eef2ff" : "#fff",
+                    borderRadius: 12,
+                    padding: "10px 10px",
+                    marginBottom: 10,
                     cursor: "pointer",
-                    background: active ? "#f1f5ff" : "#fff",
                   }}
+                  title={label}
                 >
-                  <div style={{ fontWeight: 900, marginBottom: 4 }}>
-                    {t.title || "（無題）"}
+                  <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {label}
                   </div>
-                  <div style={{ fontSize: 12, color: "#666" }}>{fmtMMDDHHmm(t.created_at)}</div>
-                </div>
+                  <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{timeLabel}</div>
+                </button>
               );
             })}
           </div>
-        </aside>
+        </div>
 
         {/* right: chat */}
-        <section style={{ flex: 1 }}>
+        <div
+          style={{
+            border: "1px solid #ddd",
+            borderRadius: 14,
+            background: "#fff",
+            padding: 12,
+            minHeight: 520,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {/* header row */}
           <div
             style={{
-              border: "1px solid #ddd",
-              borderRadius: 14,
-              padding: 12,
-              background: "#fff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              paddingBottom: 10,
+              borderBottom: "1px solid #eee",
             }}
           >
-            {/* header row */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 10,
-                marginBottom: 10,
-              }}
-            >
-              <div style={{ fontWeight: 900 }}>
-                {activeConversationId ? activeTitle : "（無題）"}
-                {activeConversationId && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+              <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {title}
+              </div>
+
+              {activeConversationId && (
+                <>
                   <button
-                    onClick={renameThread}
+                    onClick={openRename}
                     style={{
-                      marginLeft: 10,
-                      padding: "4px 8px",
+                      padding: "6px 10px",
                       borderRadius: 10,
                       border: "1px solid #ddd",
                       background: "#fff",
-                      cursor: "pointer",
                       fontWeight: 800,
-                      fontSize: 12,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
                     }}
-                    title="スレッド名を変更"
                   >
                     名前変更
                   </button>
-                )}
-              </div>
 
-              {/* toggles */}
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <button
-                  onClick={() => setDialect("kansai")}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 10,
-                    border: "1px solid #ddd",
-                    background: dialect === "kansai" ? "#111" : "#fff",
-                    color: dialect === "kansai" ? "#fff" : "#111",
-                    cursor: "pointer",
-                    fontWeight: 900,
-                  }}
-                  title="関西弁"
-                >
-                  関西弁
-                </button>
-
-                <button
-                  onClick={() => setDialect("standard")}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 10,
-                    border: "1px solid #ddd",
-                    background: dialect === "standard" ? "#111" : "#fff",
-                    color: dialect === "standard" ? "#fff" : "#111",
-                    cursor: "pointer",
-                    fontWeight: 900,
-                  }}
-                  title="標準語"
-                >
-                  標準語
-                </button>
-
-                <button
-                  onClick={() => setStance("zubatto")}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 10,
-                    border: "1px solid #ddd",
-                    background: stance === "zubatto" ? "#111" : "#fff",
-                    color: stance === "zubatto" ? "#fff" : "#111",
-                    cursor: "pointer",
-                    fontWeight: 900,
-                  }}
-                  title="ズバっと"
-                >
-                  ズバっと
-                </button>
-
-                <button
-                  onClick={() => setStance("sanbo")}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 10,
-                    border: "1px solid #ddd",
-                    background: stance === "sanbo" ? "#111" : "#fff",
-                    color: stance === "sanbo" ? "#fff" : "#111",
-                    cursor: "pointer",
-                    fontWeight: 900,
-                  }}
-                  title="参謀"
-                >
-                  参謀
-                </button>
-              </div>
+                  {renameOpen && (
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input
+                        value={renameText}
+                        onChange={(e) => setRenameText(e.target.value)}
+                        placeholder="スレッド名"
+                        style={{
+                          width: 220,
+                          padding: "7px 10px",
+                          borderRadius: 10,
+                          border: "1px solid #ddd",
+                        }}
+                      />
+                      <button
+                        onClick={saveRename}
+                        style={{
+                          padding: "7px 10px",
+                          borderRadius: 10,
+                          border: "1px solid #ddd",
+                          background: "#111",
+                          color: "#fff",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                        }}
+                      >
+                        保存
+                      </button>
+                      <button
+                        onClick={() => setRenameOpen(false)}
+                        style={{
+                          padding: "7px 10px",
+                          borderRadius: 10,
+                          border: "1px solid #ddd",
+                          background: "#fff",
+                          fontWeight: 800,
+                          cursor: "pointer",
+                        }}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
-            {/* messages */}
-            <div
-              style={{
-                border: "1px solid #eee",
-                borderRadius: 14,
-                padding: 12,
-                minHeight: 420,
-                background: "#fff",
-              }}
-            >
-              {messages.map((m, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "flex",
-                    justifyContent: m.role === "user" ? "flex-end" : "flex-start",
-                    margin: "10px 0",
-                  }}
-                >
-                  <div
-                    style={{
-                      maxWidth: "80%",
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      background: m.role === "user" ? "#f1f5ff" : "#f6f6f6",
-                      border: "1px solid #eee",
-                      whiteSpace: "pre-wrap",
-                    }}
-                  >
-                    {m.role === "user" ? `あなた: ${m.content}` : m.content}
-                  </div>
-                </div>
-              ))}
-              {loading && <div style={{ margin: "10px 0", color: "#666" }}>{BOT}: （考え中）</div>}
-              <div ref={bottomRef} />
-            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {/* 口調 */}
+              <ModeButton active={dialect === "kansai"} label="関西弁" onClick={() => setDialect("kansai")} />
+              <ModeButton active={dialect === "standard"} label="標準語" onClick={() => setDialect("standard")} />
 
-            {/* input */}
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                placeholder="相談内容を入力（Enterで送信）"
-                style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd" }}
-                disabled={!sessionReady || loading || zero}
-              />
-              <button
-                onClick={handleSend}
-                disabled={!sessionReady || loading || !input.trim() || zero}
+              {/* スタイル */}
+              <ModeButton active={stance === "zubatto"} label="ズバっと" onClick={() => setStance("zubatto")} />
+              <ModeButton active={stance === "sanbo"} label="参謀" onClick={() => setStance("sanbo")} />
+            </div>
+          </div>
+
+          {/* messages area (scroll inside) */}
+          <div
+            ref={chatScrollRef}
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: "12px 6px",
+            }}
+          >
+            {messages.map((m, i) => (
+              <div
+                key={i}
                 style={{
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "1px solid #ddd",
-                  background: !sessionReady || loading || !input.trim() || zero ? "#f3f4f6" : "#fff",
-                  cursor: !sessionReady || loading || !input.trim() || zero ? "not-allowed" : "pointer",
-                  fontWeight: 800,
+                  display: "flex",
+                  justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+                  margin: "10px 0",
                 }}
               >
-                送信
-              </button>
-            </div>
-
-            <p style={{ color: "#666", fontSize: 12, marginTop: 10 }}>
-              ※ 未契約/上限到達のときは送信不可（無駄打ち防止）。口調/モード切替は送信しない限りトーク消費しません。
-            </p>
+                <div
+                  style={{
+                    maxWidth: "80%",
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    background: m.role === "user" ? "#f1f5ff" : "#f6f6f6",
+                    border: "1px solid #eee",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {m.role === "user" ? `あなた: ${m.content}` : m.content}
+                </div>
+              </div>
+            ))}
+            {loading && <div style={{ margin: "10px 0", color: "#666" }}>{BOT}: （考え中）</div>}
           </div>
-        </section>
+
+          {/* input row */}
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder="相談内容を入力（Enterで送信）"
+              style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd" }}
+              disabled={!sessionReady || loading || zero}
+            />
+            <button
+              onClick={handleSend}
+              disabled={!sessionReady || loading || !input.trim() || zero}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                background: !sessionReady || loading || !input.trim() || zero ? "#f3f4f6" : "#fff",
+                cursor: !sessionReady || loading || !input.trim() || zero ? "not-allowed" : "pointer",
+                fontWeight: 800,
+              }}
+            >
+              送信
+            </button>
+          </div>
+
+          <p style={{ color: "#666", fontSize: 12, marginTop: 10 }}>
+            ※ 未契約/上限到達のときは送信不可（無駄打ち防止）。口調/モード切替は送信しない限りトーク消費しません。
+          </p>
+        </div>
       </div>
     </main>
   );
