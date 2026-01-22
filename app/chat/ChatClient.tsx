@@ -113,32 +113,88 @@ function saveLocal(key: string, val: string) {
   } catch {}
 }
 
-function nearBottom(el: HTMLElement, threshold = 100) {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+function pickBlockStyle(line: string) {
+  const t = line.trim();
+  if (t.startsWith("✅")) return { bg: "#eef7ee", bd: "#cfe7cf" };
+  if (t.startsWith("⚠️")) return { bg: "#fff6e8", bd: "#f2d6a6" };
+  if (t.startsWith("🔎")) return { bg: "#fff2f2", bd: "#f0c9c9" };
+  if (t.startsWith("🧂") || t.startsWith("🍚")) return { bg: "#eef5ff", bd: "#cfe0ff" };
+  return null;
 }
 
-// UI側で「（最大3つ）」等を消す（AI側のルール変更は route.ts でもやるのが理想）
-function stripMaxHints(text: string) {
-  return (text ?? "")
-    .replace(/\（最大\d+つ\）/g, "")
-    .replace(/\(最大\d+つ\)/g, "")
-    .replace(/\（原則\d+つ、\s*最大\d+つ\）/g, "")
-    .replace(/\(原則\d+つ、\s*最大\d+つ\)/g, "")
-    .replace(/\s+$/g, "");
-}
-
-// **bold** を簡易的に表示（Markdown全部対応は不要なのでここだけ）
-function renderBoldInline(text: string): ReactNode {
-  if (!text.includes("**")) return text;
-  const parts = text.split("**");
-  const out: ReactNode[] = [];
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    if (!p) continue;
-    if (i % 2 === 1) out.push(<strong key={i}>{p}</strong>);
-    else out.push(<span key={i}>{p}</span>);
+function renderWithInlineBold(text: string): ReactNode {
+  // **bold** だけ対応（安全で軽い）
+  const parts: ReactNode[] = [];
+  const re = /\*\*(.+?)\*\*/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    parts.push(<strong key={`${m.index}-${m[1]}`}>{m[1]}</strong>);
+    last = m.index + m[0].length;
   }
-  return <>{out}</>;
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+function renderAssistantContent(content: string): ReactNode {
+  // ブロック：アイコン行から次のアイコン行までをまとめて装飾
+  const lines = (content ?? "").split("\n");
+  const blocks: { kind: "block" | "plain"; lines: string[] }[] = [];
+
+  const isHeaderLine = (l: string) => {
+    const t = l.trim();
+    return (
+      t.startsWith("🧂") ||
+      t.startsWith("🍚") ||
+      t.startsWith("✅") ||
+      t.startsWith("⚠️") ||
+      t.startsWith("🔎")
+    );
+  };
+
+  for (const line of lines) {
+    if (isHeaderLine(line)) {
+      blocks.push({ kind: "block", lines: [line] });
+    } else {
+      if (blocks.length === 0) blocks.push({ kind: "plain", lines: [line] });
+      else blocks[blocks.length - 1].lines.push(line);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {blocks.map((b, i) => {
+        const head = b.lines.find((x) => x.trim().length > 0) ?? "";
+        const style = pickBlockStyle(head);
+        const body = b.lines.join("\n").trimEnd();
+
+        // 「🧂 ちょうど良いライン」行は強調（表示側でも補強）
+        const isChodo = head.trim().startsWith("🧂");
+        const boxStyle = style
+          ? {
+              background: style.bg,
+              border: `1px solid ${style.bd}`,
+              borderRadius: 10,
+              padding: "10px 12px",
+            }
+          : undefined;
+
+        return (
+          <div key={i} style={boxStyle}>
+            <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 }}>
+              <div style={{ fontWeight: isChodo ? 800 : 600, marginBottom: style ? 6 : 0 }}>
+                {renderWithInlineBold(head)}
+              </div>
+              {body === head ? null : (
+                <div style={{ marginTop: 6 }}>{renderWithInlineBold(body.slice(head.length).trimStart())}</div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function ChatClient() {
@@ -170,11 +226,7 @@ export default function ChatClient() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [input, setInput] = useState("");
 
-  const listRef = useRef<HTMLDivElement | null>(null);
   const msgsRef = useRef<HTMLDivElement | null>(null);
-
-  // 下にいる時だけ自動スクロール
-  const [autoScroll, setAutoScroll] = useState(true);
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
 
@@ -189,16 +241,14 @@ export default function ChatClient() {
     if (!error && data.session?.access_token) return data.session.access_token;
 
     const refreshed = await supabase.auth.refreshSession().catch(() => null);
-    const token = refreshed?.data?.session?.access_token ?? null;
-    return token;
+    return refreshed?.data?.session?.access_token ?? null;
   };
 
   const handleAuthishError = (raw: unknown) => {
     const msg = String((raw as any)?.message || raw || "");
     const low = msg.toLowerCase();
-
     if (low.includes("jwt expired") || low.includes("invalid jwt") || low.includes("not logged in")) {
-      setErrMsg("セッションが切れてるわ。ログインし直してな。");
+      setErrMsg("セッションが切れています。ログインし直してください。");
       router.push("/login");
       return true;
     }
@@ -221,15 +271,8 @@ export default function ChatClient() {
       });
 
       const json = (await res.json().catch(() => null)) as StatusRes | null;
-
-      if (!json) {
-        setErrMsg(`status failed: ${res.status}`);
-        return;
-      }
-      if (json.ok !== true) {
-        setErrMsg(json.error || `status failed: ${res.status}`);
-        return;
-      }
+      if (!json) return setErrMsg(`status failed: ${res.status}`);
+      if (json.ok !== true) return setErrMsg(json.error || `status failed: ${res.status}`);
 
       setPlan(json.plan);
       setUsedTalks(json.used_talks);
@@ -250,7 +293,7 @@ export default function ChatClient() {
         .from("conversations")
         .select("id, summary, created_at, summary_updated_at")
         .order("created_at", { ascending: false })
-        .limit(50);
+        .limit(60);
 
       if (convErr) throw convErr;
 
@@ -261,7 +304,6 @@ export default function ChatClient() {
         preview: "",
       }));
 
-      // N+1 は後で最適化でOK（今は分かりやすさ優先）
       const previews = await Promise.all(
         base.map(async (t) => {
           const { data: lastMsg } = await supabase
@@ -271,7 +313,7 @@ export default function ChatClient() {
             .order("created_at", { ascending: false })
             .limit(1);
 
-          const head = lastMsg?.[0]?.content ? clamp(stripMaxHints(lastMsg[0].content), 22) : "";
+          const head = lastMsg?.[0]?.content ? clamp(lastMsg[0].content, 34) : "";
           return { ...t, preview: head };
         })
       );
@@ -309,11 +351,8 @@ export default function ChatClient() {
         .limit(700);
 
       if (error) throw error;
-
       setMessages((data ?? []) as MessageRow[]);
-      setTimeout(() => {
-        if (autoScroll) scrollMessagesBottom();
-      }, 0);
+      setTimeout(scrollMessagesBottom, 0);
     } catch (e: any) {
       if (handleAuthishError(e)) return;
       setErrMsg(e?.message || "load messages failed");
@@ -328,7 +367,6 @@ export default function ChatClient() {
     setMessages([]);
     setErrMsg(null);
     setInput("");
-    setAutoScroll(true);
     setTimeout(() => {
       const el = msgsRef.current;
       if (el) el.scrollTop = 0;
@@ -363,7 +401,7 @@ export default function ChatClient() {
 
   const canSend = (() => {
     if (loading) return false;
-    if (!limitTalks) return true; // 未取得時は一旦true（サーバで弾く）
+    if (!limitTalks) return true;
     const used = usedTalks ?? 0;
     return used < limitTalks;
   })();
@@ -376,12 +414,7 @@ export default function ChatClient() {
     setLoading(true);
     setInput("");
 
-    const beforeStickToBottom = (() => {
-      const el = msgsRef.current;
-      return el ? nearBottom(el) : true;
-    })();
-    setAutoScroll(beforeStickToBottom);
-
+    // ユーザー発言は即表示（体感軽く）
     const tempUser: MessageRow = {
       id: crypto.randomUUID(),
       conversation_id: activeConversationId || "temp",
@@ -389,11 +422,8 @@ export default function ChatClient() {
       content: text,
       created_at: new Date().toISOString(),
     };
-
     setMessages((prev) => [...prev, tempUser]);
-    setTimeout(() => {
-      if (beforeStickToBottom) scrollMessagesBottom();
-    }, 0);
+    setTimeout(scrollMessagesBottom, 0);
 
     try {
       const token = await getToken();
@@ -401,12 +431,7 @@ export default function ChatClient() {
 
       const idempotencyKey = crypto.randomUUID();
 
-      const body: any = {
-        message: text,
-        idempotencyKey,
-        dialect,
-        stance,
-      };
+      const body: any = { message: text, idempotencyKey, dialect, stance };
       if (activeConversationId) body.conversationId = activeConversationId;
 
       const res = await fetch("/api/chat", {
@@ -417,7 +442,6 @@ export default function ChatClient() {
 
       const json = (await res.json().catch(() => null)) as ChatRes | null;
       if (!json) throw new Error(`chat failed: ${res.status}`);
-
       if (json.ok !== true) {
         setErrMsg(json.error || `chat failed: ${res.status}`);
         return;
@@ -427,29 +451,23 @@ export default function ChatClient() {
       setUsedTalks(json.used_talks);
       setLimitTalks(json.limit_talks);
 
-      const newConvId = json.conversation_id;
+      const convId = json.conversation_id && isUuid(json.conversation_id) ? json.conversation_id : null;
 
-      // 新規スレッド確定
-      if (newConvId && isUuid(newConvId) && !activeConversationId) {
-        setActiveConversationId(newConvId);
-        saveLocal("chat:activeConversationId", newConvId);
+      // 新規だったらactive確定
+      if (convId && !activeConversationId) {
+        setActiveConversationId(convId);
+        saveLocal("chat:activeConversationId", convId);
         setMessages((prev) =>
-          prev.map((m) => (m.conversation_id === "temp" ? { ...m, conversation_id: newConvId } : m))
+          prev.map((m) => (m.conversation_id === "temp" ? { ...m, conversation_id: convId } : m))
         );
       }
 
-      // ✅ 25号店の本丸：DBを正として再読込（assistantの手動追加はしない）
-      const convIdToLoad = (newConvId && isUuid(newConvId) ? newConvId : activeConversationId) as
-        | string
-        | null;
-
-      await loadThreads();
-      if (convIdToLoad) {
-        await loadMessages(convIdToLoad);
+      // ✅ ここが二重返信防止：assistantは手動追加せず DB 正で再読込
+      const effectiveConvId = convId || activeConversationId;
+      if (effectiveConvId) {
+        await loadMessages(effectiveConvId);
+        await loadThreads();
       }
-
-      setAutoScroll(true);
-      setTimeout(scrollMessagesBottom, 0);
     } catch (e: any) {
       if (handleAuthishError(e)) return;
       setErrMsg(String(e?.message || "send failed"));
@@ -470,82 +488,11 @@ export default function ChatClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversationId]);
 
-  useEffect(() => {
-    saveLocal("chat:dialect", dialect);
-  }, [dialect]);
-  useEffect(() => {
-    saveLocal("chat:stance", stance);
-  }, [stance]);
-
-  const renderMessages = () => {
-    let lastDate = "";
-    const out: ReactNode[] = [];
-
-    messages.forEach((m, i) => {
-      const date = toJstLabel(m.created_at);
-      if (date && date !== lastDate) {
-        lastDate = date;
-        out.push(
-          <div key={`d-${i}`} style={{ display: "flex", justifyContent: "center", margin: "10px 0" }}>
-            <div
-              style={{
-                fontSize: 12,
-                padding: "4px 10px",
-                borderRadius: 999,
-                border: "1px solid #ddd",
-                background: "#f7f7f7",
-                color: "#444",
-              }}
-            >
-              {date}
-            </div>
-          </div>
-        );
-      }
-
-      const isUser = m.role === "user";
-
-      const contentRaw = String(m.content ?? "");
-      const content =
-        isUser ? contentRaw : stripMaxHints(contentRaw); // ✅（最大3つ）等を消す
-
-      out.push(
-        <div
-          key={m.id}
-          style={{
-            display: "flex",
-            justifyContent: isUser ? "flex-end" : "flex-start",
-            margin: "8px 0",
-          }}
-        >
-          <div
-            style={{
-              maxWidth: "82%",
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #e5e5e5",
-              background: isUser ? "#eef5ff" : "#fff",
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-              lineHeight: 1.55,
-            }}
-          >
-            <div style={{ fontSize: 14 }}>{renderBoldInline(content)}</div>
-            <div style={{ fontSize: 11, color: "#777", marginTop: 6, textAlign: "right" }}>
-              {toHm(m.created_at)}
-            </div>
-          </div>
-        </div>
-      );
-    });
-
-    return out;
-  };
+  useEffect(() => saveLocal("chat:dialect", dialect), [dialect]);
+  useEffect(() => saveLocal("chat:stance", stance), [stance]);
 
   const activeTitle =
     (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
-  const activePreview =
-    (activeConversationId && threads.find((t) => t.id === activeConversationId)?.preview) || "";
 
   const badge = (() => {
     if (!limitTalks) return "";
@@ -554,47 +501,36 @@ export default function ChatClient() {
     return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）`;
   })();
 
-  const ROOT_WIDTH = "min(1280px, 100%)"; // ✅ 横幅を広げる
-  const THREAD_W = 330; // ✅ スレッド幅
-
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#fff" }}>
       {/* top header */}
-      <div style={{ padding: "14px 16px 10px" }}>
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <div style={{ flex: 1 }} />
+      <div style={{ padding: "14px 16px 10px", textAlign: "center" }}>
+        <div style={{ fontSize: 18, fontWeight: 800 }}>
+          さじかげん 🍚🔪 ｜税務相談 <span style={{ fontSize: 12, fontWeight: 600, color: "#666" }}>〜あなたの欲しい ちょうどいい さじかげん〜</span>
+        </div>
 
-          {/* ✅ タイトル中央固定 */}
-          <div style={{ textAlign: "center", fontSize: 18, fontWeight: 800 }}>
-            さじかげん 🍚🥄｜税務相談{" "}
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#666" }}>
-              ～あなたの欲しい ちょうどいい さじかげん～
-            </span>
-          </div>
+        <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <Link href="/settings/billing">
+            <button style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd" }}>
+              プラン変更
+            </button>
+          </Link>
 
-          <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: 10 }}>
-            <Link href="/settings/billing">
-              <button style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd" }}>
-                プラン変更
-              </button>
-            </Link>
-
-            <a
-              href={CONTACT_URL}
-              target={CONTACT_URL.startsWith("http") ? "_blank" : undefined}
-              rel="noreferrer"
-            >
-              <button style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd" }}>
-                お問い合わせ
-              </button>
-            </a>
-          </div>
+          <a
+            href={CONTACT_URL}
+            target={CONTACT_URL.startsWith("http") ? "_blank" : undefined}
+            rel="noreferrer"
+          >
+            <button style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd" }}>
+              お問い合わせ
+            </button>
+          </a>
         </div>
 
         <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
           <div
             style={{
-              width: ROOT_WIDTH,
+              width: "min(1320px, 100%)",
               border: "1px solid #ddd",
               borderRadius: 12,
               padding: "12px 14px",
@@ -618,27 +554,25 @@ export default function ChatClient() {
       </div>
 
       {/* main */}
-      <div style={{ flex: 1, display: "flex", justifyContent: "center", padding: "0 16px 16px", minHeight: 0 }}>
+      <div style={{ flex: 1, display: "flex", justifyContent: "center", padding: "0 16px 16px" }}>
         <div
           style={{
-            width: ROOT_WIDTH,
+            width: "min(1320px, 100%)",
             border: "1px solid #ddd",
             borderRadius: 12,
             display: "flex",
             overflow: "hidden",
             minHeight: 0,
-            background: "#fff",
           }}
         >
           {/* left threads */}
           <div
             style={{
-              width: THREAD_W,
+              width: 330,
               borderRight: "1px solid #eee",
               display: "flex",
               flexDirection: "column",
               minHeight: 0,
-              background: "#fafafa",
             }}
           >
             <div
@@ -648,7 +582,6 @@ export default function ChatClient() {
                 justifyContent: "space-between",
                 alignItems: "center",
                 borderBottom: "1px solid #eee",
-                background: "#fff",
               }}
             >
               <div style={{ fontWeight: 800 }}>スレッド</div>
@@ -661,11 +594,11 @@ export default function ChatClient() {
             </div>
 
             <div
-              ref={listRef}
               style={{
                 flex: 1,
                 overflowY: "auto",
                 padding: 10,
+                background: "#fafafa",
                 minHeight: 0,
               }}
             >
@@ -680,10 +613,10 @@ export default function ChatClient() {
                 return (
                   <button
                     key={t.id}
+                    type="button"
                     onClick={() => {
                       setActiveConversationId(t.id);
                       saveLocal("chat:activeConversationId", t.id);
-                      setAutoScroll(true);
                     }}
                     style={{
                       width: "100%",
@@ -712,32 +645,27 @@ export default function ChatClient() {
           </div>
 
           {/* right chat */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" }}>
-            {/* ✅ chat header row (sticky) */}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+            {/* chat header row */}
             <div
               style={{
-                position: "sticky",
-                top: 0,
-                zIndex: 20, // ✅ クリック吸われない
                 padding: 12,
                 borderBottom: "1px solid #eee",
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
                 gap: 10,
-                background: "#fff",
-                pointerEvents: "auto",
               }}
             >
               <div style={{ fontWeight: 800, overflow: "hidden" }}>
                 <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {activeTitle}
                 </div>
-                {activePreview ? <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{activePreview}</div> : null}
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <button
+                  type="button"
                   onClick={renameThread}
                   disabled={!activeConversationId}
                   style={{
@@ -748,12 +676,13 @@ export default function ChatClient() {
                     cursor: activeConversationId ? "pointer" : "not-allowed",
                     background: "#fff",
                   }}
-                  title="スレッドのタイトルを変更"
+                  title="スレッドのタイトル変更"
                 >
-                  ✏ タイトル
+                  ✏️ タイトル
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setDialect("kansai")}
                   style={{
                     padding: "8px 10px",
@@ -761,12 +690,12 @@ export default function ChatClient() {
                     border: "1px solid #ddd",
                     background: dialect === "kansai" ? "#111" : "#fff",
                     color: dialect === "kansai" ? "#fff" : "#111",
-                    cursor: "pointer",
                   }}
                 >
                   関西弁
                 </button>
                 <button
+                  type="button"
                   onClick={() => setDialect("standard")}
                   style={{
                     padding: "8px 10px",
@@ -774,13 +703,13 @@ export default function ChatClient() {
                     border: "1px solid #ddd",
                     background: dialect === "standard" ? "#111" : "#fff",
                     color: dialect === "standard" ? "#fff" : "#111",
-                    cursor: "pointer",
                   }}
                 >
                   標準語
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setStance("zubatto")}
                   style={{
                     padding: "8px 10px",
@@ -788,12 +717,12 @@ export default function ChatClient() {
                     border: "1px solid #ddd",
                     background: stance === "zubatto" ? "#111" : "#fff",
                     color: stance === "zubatto" ? "#fff" : "#111",
-                    cursor: "pointer",
                   }}
                 >
                   ズバっと
                 </button>
                 <button
+                  type="button"
                   onClick={() => setStance("sanbo")}
                   style={{
                     padding: "8px 10px",
@@ -801,7 +730,6 @@ export default function ChatClient() {
                     border: "1px solid #ddd",
                     background: stance === "sanbo" ? "#111" : "#fff",
                     color: stance === "sanbo" ? "#fff" : "#111",
-                    cursor: "pointer",
                   }}
                 >
                   参謀
@@ -812,19 +740,12 @@ export default function ChatClient() {
             {/* message list */}
             <div
               ref={msgsRef}
-              onScroll={() => {
-                const el = msgsRef.current;
-                if (!el) return;
-                setAutoScroll(nearBottom(el));
-              }}
               style={{
                 flex: 1,
                 overflowY: "auto",
                 padding: "12px 14px",
                 background: "#fff",
                 minHeight: 0,
-                position: "relative",
-                zIndex: 1,
               }}
             >
               {messages.length === 0 ? (
@@ -835,60 +756,124 @@ export default function ChatClient() {
                   </div>
                 </div>
               ) : (
-                renderMessages()
+                (() => {
+                  let lastDate = "";
+                  const out: ReactNode[] = [];
+
+                  for (const m of messages) {
+                    const date = toJstLabel(m.created_at);
+                    if (date && date !== lastDate) {
+                      lastDate = date;
+                      out.push(
+                        <div
+                          key={`d-${date}`}
+                          style={{ display: "flex", justifyContent: "center", margin: "10px 0" }}
+                        >
+                          <div
+                            style={{
+                              fontSize: 12,
+                              padding: "4px 10px",
+                              borderRadius: 999,
+                              border: "1px solid #ddd",
+                              background: "#f7f7f7",
+                              color: "#444",
+                            }}
+                          >
+                            {date}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    const isUser = m.role === "user";
+                    out.push(
+                      <div
+                        key={m.id}
+                        style={{
+                          display: "flex",
+                          justifyContent: isUser ? "flex-end" : "flex-start",
+                          margin: "10px 0",
+                        }}
+                      >
+                        <div
+                          style={{
+                            maxWidth: "86%",
+                            padding: "12px 12px",
+                            borderRadius: 12,
+                            border: "1px solid #e5e5e5",
+                            background: isUser ? "#eef5ff" : "#fff",
+                            overflowWrap: "anywhere",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          <div style={{ fontSize: 14 }}>
+                            {isUser ? (
+                              <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
+                            ) : (
+                              renderAssistantContent(m.content)
+                            )}
+                          </div>
+                          <div style={{ fontSize: 11, color: "#777", marginTop: 8, textAlign: "right" }}>
+                            {toHm(m.created_at)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return out;
+                })()
               )}
             </div>
 
-            {/* ✅ input (sticky bottom) */}
+            {/* input (always bottom) */}
             <div
               style={{
-                position: "sticky",
-                bottom: 0,
-                zIndex: 20, // ✅ クリック吸われない
-                background: "#fff",
-                borderTop: "1px solid #eee",
                 padding: 12,
+                borderTop: "1px solid #eee",
+                display: "flex",
+                gap: 10,
+                alignItems: "center",
+                background: "#fff",
               }}
             >
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <input
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      if (canSend) sendMessage();
-                    }
-                  }}
-                  placeholder="相談内容を入力（Enterで送信）"
-                  style={{
-                    flex: 1,
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    border: "1px solid #ddd",
-                  }}
-                  disabled={!canSend}
-                />
-                <button
-                  onClick={sendMessage}
-                  disabled={!canSend}
-                  style={{
-                    padding: "10px 16px",
-                    borderRadius: 10,
-                    border: "1px solid #ddd",
-                    background: "#fff",
-                    cursor: !canSend ? "not-allowed" : "pointer",
-                    opacity: !canSend ? 0.6 : 1,
-                    minWidth: 64,
-                  }}
-                >
-                  送信
-                </button>
-              </div>
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if (canSend) sendMessage();
+                  }
+                }}
+                placeholder="相談内容を入力（Enterで送信）"
+                style={{
+                  flex: 1,
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                }}
+                disabled={!canSend}
+              />
+              <button
+                type="button"
+                onClick={sendMessage}
+                disabled={!canSend}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  cursor: !canSend ? "not-allowed" : "pointer",
+                  opacity: !canSend ? 0.6 : 1,
+                }}
+              >
+                送信
+              </button>
+            </div>
 
-              <div style={{ marginTop: 8, fontSize: 12, color: "#777" }}>
-                ※ 未契約/上限到達のときは送信不可。口調/モード切替は送信しない限りトークに影響しません。
-              </div>
+            <div style={{ padding: "0 12px 12px", fontSize: 12, color: "#777" }}>
+              ※ 未契約/上限到達のときは送信不可。口調/モード切替は次の送信から反映。
             </div>
           </div>
         </div>

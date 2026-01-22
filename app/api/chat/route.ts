@@ -78,19 +78,24 @@ function normalizeStance(x: string): Stance {
 }
 
 /**
- * ✅ 25号店：出力ルール（見やすさ + 質問は原則1つ）
+ * ✅ ちょうど良いライン運用ルール
  * - 見出し（##/###）禁止
  * - アイコンで構造化
- * - 確認質問は「原則1つ（最大1つ）」
- * - 「（最大◯つ）」みたいな注釈は書かない（UIで消してるけど、AI側でも出させない）
+ * - 「確認」は原則1つ（最大1つ）
+ * - ちょうど良いラインだけの時だけ決め台詞（攻め・守りを太字で誘導）
+ * - 攻め/守りを出した時は決め台詞は出さない（くどいから）
  */
 function buildOutputRules(): string[] {
   return [
     "Markdownの見出し（##、###など）は使わない。代わりにアイコンで構造化する。",
-    "回答の構成は必ずこの順：🥄ちょうど良いライン → ✅要点 → ⚠️注意（必要なら） → 🔎確認（原則1つのみ）。",
-    "各セクション名の横に『(最大◯つ)』などの注釈は一切書かない。",
-    "🔎確認は『結論が変わる可能性が高い』ものだけ。その他は注意や条件分岐に吸収する。",
+    "最初に必ず「🧂 ちょうど良いライン」を出す。『結論の1行』は必ず太字（** **）にする。",
+    "構成は必ずこの順：🧂ちょうど良いライン → ✅要点 → ⚠️注意（必要なら） → 🔎確認（原則1つ、最大1つ）。",
+    "✅/⚠️/🔎 の見出しに (最大〇つ) の文言は付けない（不要）。",
+    "🔎確認質問は『結論が変わる可能性が高い』ものだけに絞る。その他の不明点は『該当するなら〜』の注意に吸収する。",
     "文章は短め。箇条書き優先。冗長な前置きは禁止。",
+    "ユーザーが『攻め』『守り』『攻めライン』『守りライン』などを求めた場合のみ、追加で 🍚攻めライン と 🧂守りライン を出す。",
+    "🍚攻めライン/🧂守りライン を出した場合、最後の決め台詞は書かない（くどいから）。",
+    "ちょうど良いラインだけで終える場合、最後に決め台詞を1行だけ付ける：『とはいえども、税務の世界は答えはひとつちゃうからな。**攻め・守り**ラインの考え方も知りたかったら、遠慮なく言うてな！』",
   ];
 }
 
@@ -98,20 +103,20 @@ function buildStyleRules(dialect: Dialect, stance: Stance): string[] {
   const rules: string[] = [];
 
   if (dialect === "kansai") {
-    // 関西弁は“です/ます”を避けて、フランク寄り。ただし失礼・乱暴はNG。
-    rules.push("口調は関西弁。『です・ます』調は基本使わん（敬語禁止寄り）。");
-    rules.push("ただし乱暴・攻撃的・上から目線はNG。フランクやけど感じ良く。");
+    rules.push("口調は関西弁。読みやすさ優先。");
   } else {
-    rules.push("口調は標準語。丁寧で簡潔に。");
+    rules.push("口調は標準語。簡潔で丁寧。");
   }
 
-  if (stance === "zubatto") {
-    rules.push("スタイルは結論ファーストでズバっと。余計な前置きは削る。");
-    rules.push("言いにくいこともハッキリ言う。ただし断定できない所は断定しない。");
-    if (dialect === "kansai") {
-      rules.push("関西弁ズバっとのときは、丁寧語に逃げずに言い切りを多めにする。");
-      rules.push("例：『〜やで』『〜やな』『〜が無難』『〜はアウト寄り』みたいに短く。");
-    }
+  if (dialect === "kansai" && stance === "zubatto") {
+    rules.push("関西弁×ズバっとは敬語禁止。『です/ます/でした/ますね/ございます』などは使わない。");
+    rules.push("語尾は『や/で/やねん/やろ/ちゃう/せやな』などの自然な関西口語に寄せる。");
+    rules.push("結論ファーストでズバっと。余計な前置きは削る。");
+    rules.push("言いにくいこともハッキリ言う（断定できない所は断定しない）。");
+  } else if (stance === "zubatto") {
+    rules.push("結論ファーストでズバっと。余計な前置きは削る。");
+    rules.push("言いにくいことも、配慮しつつハッキリ言う（断定できない所は断定しない）。");
+    rules.push("標準語の時は丁寧語でもOK。");
   } else {
     rules.push("スタイルは参謀役。論点整理→選択肢→おすすめ→次のアクションの順で導く。");
     rules.push("敬語で、出過ぎた断定は避け、前提条件を明確化する。");
@@ -163,7 +168,7 @@ async function ensureConversationId(params: {
   return data.id as string;
 }
 
-// --- ここから：コンテクスト生成 ---
+// --- コンテクスト生成 ---
 
 function clampForContext(s: string, n: number) {
   const t = (s ?? "").replace(/\s+/g, " ").trim();
@@ -177,7 +182,6 @@ async function buildConversationContext(params: { db: any; convId: string }): Pr
 
   const lines: string[] = [];
 
-  // 1) 要約（conversations.summary）
   const { data: conv } = await db
     .from("conversations")
     .select("summary, summary_updated_at, created_at")
@@ -185,12 +189,9 @@ async function buildConversationContext(params: { db: any; convId: string }): Pr
     .maybeSingle();
 
   const summary = (conv?.summary ?? "").trim();
-  if (summary) {
-    lines.push(`【会話要約】${clampForContext(summary, 400)}`);
-  }
+  if (summary) lines.push(`【会話要約】${clampForContext(summary, 400)}`);
 
-  // 2) 直近ログ（最大N件）
-  const N = Number(process.env.CHAT_CONTEXT_TURNS || "16"); // 16メッセ（=8往復くらい）
+  const N = Number(process.env.CHAT_CONTEXT_TURNS || "16");
   const { data: rows } = await db
     .from("messages")
     .select("role, content, created_at")
@@ -201,14 +202,12 @@ async function buildConversationContext(params: { db: any; convId: string }): Pr
   const msgs = (rows ?? []) as MsgMini[];
   if (msgs.length > 0) {
     lines.push("【直近ログ】（古→新）");
-    const asc = [...msgs].reverse();
-    for (const m of asc) {
+    for (const m of [...msgs].reverse()) {
       const role = m.role === "user" ? "ユーザー" : "さじかげん";
       lines.push(`${role}: ${clampForContext(m.content, 600)}`);
     }
   }
 
-  // 3) “ここだけは守れ”
   lines.push(
     "【ルール】上の会話要約・直近ログと矛盾しない範囲で回答する。矛盾があるなら確認質問を先に出す（ただし確認は原則1つ）。"
   );
@@ -267,7 +266,6 @@ export async function POST(req: Request) {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
 
-    // plan
     const { data: urow } = await db.from("users").select("plan").eq("id", user.id).maybeSingle();
     const plan = (urow?.plan as string) ?? "free";
     const limit = limitFromPlan(plan);
@@ -309,13 +307,10 @@ export async function POST(req: Request) {
     try {
       const styleRules = buildStyleRules(dialect, stance);
       const outputRules = buildOutputRules();
-
-      // ✅ コンテクスト注入
       const contextLines = await buildConversationContext({ db, convId });
 
       const promptParts: PromptParts = {
         context: contextLines,
-        // ✅ 出力ルール → 口調/スタンス → ガードレール の順で強く効かせる
         injectedRules: [...outputRules, ...styleRules],
         guardrails: gr.action === "inject" ? gr.guardrailLines : [],
       };
@@ -327,7 +322,7 @@ export async function POST(req: Request) {
       return NextResponse.json(res, { status: 502 });
     }
 
-    // ④ カウント（冪等）: 成功したら消費
+    // ④ カウント（冪等）
     const { data, error } = await db.rpc("consume_talk_v2", {
       p_user_id: user.id,
       p_limit: limit,
@@ -355,14 +350,14 @@ export async function POST(req: Request) {
       return NextResponse.json(res, { status: 429 });
     }
 
-    // ⑤ DBに保存（課金OKになった後）
+    // ⑤ DBに保存
     try {
       await db.from("messages").insert([
         { conversation_id: convId, user_id: user.id, role: "user", content: message },
         { conversation_id: convId, user_id: user.id, role: "assistant", content: answer },
       ]);
     } catch {
-      // 保存失敗でも回答は返す（体験優先）
+      // 保存失敗でも回答は返す
     }
 
     const res: ChatRes = {
