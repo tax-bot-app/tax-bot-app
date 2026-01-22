@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
-export default function LoginPage() {
+function LoginInner() {
   const router = useRouter();
   const sp = useSearchParams();
 
@@ -20,13 +20,11 @@ export default function LoginPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // reason 表示（ChatClient→login のときに付ける）
   useEffect(() => {
     const reason = sp.get("reason");
     if (reason === "expired") setMsg("セッション切れてる。ログインし直してな。");
   }, [sp]);
 
-  // 初期判定：ログイン済みなら /chat へ（replaceで履歴に残さない）
   useEffect(() => {
     let mounted = true;
 
@@ -35,7 +33,6 @@ export default function LoginPage() {
       if (data.session) router.replace("/chat");
     });
 
-    // ログイン成功を確実に拾う（signIn後に即遷移）
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) router.replace("/chat");
     });
@@ -146,5 +143,13 @@ export default function LoginPage() {
         </button>
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div />}>
+      <LoginInner />
+    </Suspense>
   );
 }
