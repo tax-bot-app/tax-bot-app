@@ -313,7 +313,8 @@ async function generateAnswerStrict(params: {
 
     const promptParts: PromptParts = {
       ...promptPartsBase,
-      injectedRules: [...promptPartsBase.injectedRules, ...extra],
+      injectedRules: [...(promptPartsBase.injectedRules ?? []), ...extra],
+
     };
 
     const result = await generateAnswer({ message, promptParts });
