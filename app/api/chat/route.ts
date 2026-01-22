@@ -249,6 +249,29 @@ function catchphraseFor(dialect: Dialect, stance: Stance): string {
   return "とはいえ、税務の世界は答えが一つじゃない。**攻め・守り**ラインも知りたければ、遠慮なく言って。";
 }
 
+function forceCasual(text: string, dialect: Dialect): string {
+  // 最終手段：敬語を機械的に潰して“タメ口”へ寄せる
+  let s = (text ?? "").replace(/\r\n/g, "\n");
+
+  // 強制置換（よく出るやつから）
+  s = s
+    .replace(/ではありません/g, "ちゃう")
+    .replace(/ではない/g, "ちゃう")
+    .replace(/ありません/g, "ない")
+    .replace(/でした/g, dialect === "kansai" ? "やった" : "だった")
+    .replace(/です/g, dialect === "kansai" ? "や" : "だ")
+    .replace(/ます/g, "") // 「します」→「し」になり得るが、敬語混在よりマシ（ズバっと時のみ発動）
+    .replace(/ください/g, dialect === "kansai" ? "して" : "して")
+    .replace(/でしょう/g, dialect === "kansai" ? "やろ" : "だろ")
+    .replace(/かもしれません/g, dialect === "kansai" ? "かもな" : "かもな");
+
+  // 「します」等が崩れた時の最低限の整形（雑でOK、ズバっとは短い方が正義）
+  s = s.replace(/し。/g, "する。").replace(/し\n/g, "する\n");
+
+  return s;
+}
+
+
 function postProcessAnswer(raw: string, dialect: Dialect, stance: Stance): string {
   let a = String(raw ?? "").replace(/\r\n/g, "\n").trim();
 
@@ -285,6 +308,9 @@ function postProcessAnswer(raw: string, dialect: Dialect, stance: Stance): strin
   if (!already) {
     a = `${a}\n\n${catchphraseFor(dialect, stance)}`.trim();
   }
+
+  // ★最後の最後：ズバっとはタメ口を強制
+  if (stance === "zubatto") a = forceCasual(a, dialect);
 
   return a;
 }
@@ -326,7 +352,10 @@ async function generateAnswerStrict(params: {
     if (lastHits.length === 0) return last;
   }
 
-  // ここに落ちたら「できるだけマシな最終」を返す（現場止めない）
+  // ここに落ちたら「AIが直せなかった」のでサーバ側で強制フォーム矯正する
+  if (stance === "zubatto") {
+    return forceCasual(last, dialect);
+  }
   return last;
 }
 
