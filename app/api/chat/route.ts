@@ -80,14 +80,12 @@ function normalizeStance(x: string): Stance {
 function buildStyleRules(dialect: Dialect, stance: Stance): string[] {
   const rules: string[] = [];
 
-  // 口調
   if (dialect === "kansai") {
     rules.push("口調は関西弁で。ただし失礼にならず、読みやすさ優先。");
   } else {
     rules.push("口調は標準語で。丁寧で簡潔に。");
   }
 
-  // モード
   if (stance === "zubatto") {
     rules.push("スタイルは結論ファーストでズバっと。余計な前置きは削る。");
     rules.push("言いにくいことも、配慮しつつハッキリ言う（断定できない所は断定しない）。");
@@ -112,7 +110,6 @@ async function ensureConversationId(params: {
 }): Promise<string> {
   const { db, userId, conversationId, firstUserMessage } = params;
 
-  // 既存が来てたら「自分のやつか」を確認
   if (conversationId && isUuid(conversationId)) {
     const { data } = await db
       .from("conversations")
@@ -124,7 +121,6 @@ async function ensureConversationId(params: {
     if (data?.id) return data.id as string;
   }
 
-  // なければ新規作成（title/summary の初期値は “最初の一言”）
   const seed = summarizeSeed(firstUserMessage);
 
   const { data, error } = await db
@@ -142,6 +138,61 @@ async function ensureConversationId(params: {
   if (!data?.id) throw new Error("failed to create conversation");
 
   return data.id as string;
+}
+
+// --- ここから追加：コンテクスト生成 ---
+
+function clampForContext(s: string, n: number) {
+  const t = (s ?? "").replace(/\s+/g, " ").trim();
+  return t.length <= n ? t : t.slice(0, n) + "…";
+}
+
+type MsgMini = { role: "user" | "assistant"; content: string; created_at: string };
+
+async function buildConversationContext(params: {
+  db: any;
+  convId: string;
+}): Promise<string[]> {
+  const { db, convId } = params;
+
+  const lines: string[] = [];
+
+  // 1) 要約（conversations.summary）
+  const { data: conv } = await db
+    .from("conversations")
+    .select("summary, summary_updated_at, created_at")
+    .eq("id", convId)
+    .maybeSingle();
+
+  const summary = (conv?.summary ?? "").trim();
+  if (summary) {
+    lines.push(`【会話要約】${clampForContext(summary, 400)}`);
+  }
+
+  // 2) 直近ログ（最大N件）
+  const N = Number(process.env.CHAT_CONTEXT_TURNS || "16"); // 16メッセ（=8往復くらい）
+  const { data: rows } = await db
+    .from("messages")
+    .select("role, content, created_at")
+    .eq("conversation_id", convId)
+    .order("created_at", { ascending: false })
+    .limit(Math.max(0, Math.min(60, N)));
+
+  const msgs = (rows ?? []) as MsgMini[];
+  if (msgs.length > 0) {
+    lines.push("【直近ログ】（古→新）");
+    // DBはdescで取ってるのでひっくり返す
+    const asc = [...msgs].reverse();
+    for (const m of asc) {
+      const role = m.role === "user" ? "ユーザー" : "さじかげん";
+      lines.push(`${role}: ${clampForContext(m.content, 600)}`);
+    }
+  }
+
+  // 3) “ここだけは守れ” を軽く追加（プロンプトが迷子になりにくい）
+  lines.push("【ルール】上の会話要約・直近ログと矛盾しない範囲で回答する。矛盾があるなら確認質問を先に出す。");
+
+  return lines;
 }
 
 export async function POST(req: Request) {
@@ -213,7 +264,6 @@ export async function POST(req: Request) {
     // 🛡 ガードレール（AI前）
     const gr = judgeGuardrails(message);
     if (gr.action === "block") {
-      // Level1: AIにも渡さない / カウントもしない / DBにも残さない
       const res: ChatRes = {
         ok: true,
         plan,
@@ -238,8 +288,11 @@ export async function POST(req: Request) {
     try {
       const styleRules = buildStyleRules(dialect, stance);
 
+      // ✅ ここが今回のメイン：コンテクスト注入
+      const contextLines = await buildConversationContext({ db, convId });
+
       const promptParts: PromptParts = {
-        context: [], // A: 直近注入はまだ無し
+        context: contextLines,
         injectedRules: styleRules,
         guardrails: gr.action === "inject" ? gr.guardrailLines : [],
       };
