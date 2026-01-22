@@ -515,6 +515,22 @@ export default function ChatClient() {
           <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: 10 }}>
             <Link href="/settings/billing" style={LINK_BTN}>プラン変更</Link>
             <a href={CONTACT_URL} style={LINK_BTN} target={CONTACT_URL.startsWith("http") ? "_blank" : undefined} rel="noreferrer">お問い合わせ</a>
+            <button
+  type="button"
+  onPointerDown={async (e) => {
+    e.preventDefault();
+    await supabase.auth.signOut().catch(() => null);
+    router.replace("/login");
+  }}
+  onTouchStart={async (e) => {
+    e.preventDefault();
+    await supabase.auth.signOut().catch(() => null);
+    router.replace("/login");
+  }}
+  style={BTN}
+>
+  ログアウト
+</button>
           </div>
         </div>
 
