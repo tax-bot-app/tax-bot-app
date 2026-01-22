@@ -1,38 +1,61 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
 export default function LoginPage() {
+  const router = useRouter();
+  const sp = useSearchParams();
+
+  const supabase = useMemo(() => {
+    return createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+  }, []);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // reason 表示（ChatClient→login のときに付ける）
   useEffect(() => {
+    const reason = sp.get("reason");
+    if (reason === "expired") setMsg("セッション切れてる。ログインし直してな。");
+  }, [sp]);
+
+  // 初期判定：ログイン済みなら /chat へ（replaceで履歴に残さない）
+  useEffect(() => {
+    let mounted = true;
+
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) window.location.href = "/chat";
+      if (!mounted) return;
+      if (data.session) router.replace("/chat");
     });
-  }, []);
+
+    // ログイン成功を確実に拾う（signIn後に即遷移）
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) router.replace("/chat");
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [router, supabase]);
 
   const signIn = async () => {
     setMsg(null);
     setBusy(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
         setMsg(error.message);
         return;
       }
-      window.location.href = "/chat";
+      router.replace("/chat");
     } finally {
       setBusy(false);
     }
@@ -42,42 +65,32 @@ export default function LoginPage() {
     setMsg(null);
     setBusy(true);
     try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
+      const { error } = await supabase.auth.signUp({ email, password });
       if (error) {
         setMsg(error.message);
         return;
       }
-      setMsg("登録OK。メール確認が必要なら確認してからログインしてください。");
+      setMsg("登録OK。メール確認が必要なら確認してからログインしてな。");
     } finally {
       setBusy(false);
     }
   };
 
-  // ★追加：パスワード再設定メール送信（redirectTo を必ず reset-password にする）
   const sendReset = async () => {
     setMsg(null);
     setBusy(true);
     try {
       if (!email) {
-        setMsg("メールアドレスを入力してから押して。");
+        setMsg("メールアドレス入れてから押して。");
         return;
       }
-
       const redirectTo = `${window.location.origin}/reset-password`;
-
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo,
-      });
-
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
       if (error) {
         setMsg(error.message);
         return;
       }
-
-      setMsg("再設定メールを送信しました。受信箱（迷惑メールも）を確認してください。");
+      setMsg("再設定メール送った。受信箱（迷惑メールも）見て。");
     } finally {
       setBusy(false);
     }
@@ -124,7 +137,6 @@ export default function LoginPage() {
           </button>
         </div>
 
-        {/* ★追加：再設定メール送信 */}
         <button
           onClick={sendReset}
           disabled={busy}

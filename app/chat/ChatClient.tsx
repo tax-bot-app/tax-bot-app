@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-  type CSSProperties,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
@@ -36,18 +29,8 @@ type ThreadItem = {
   preview: string;
 };
 
-type StatusOk = {
-  ok: true;
-  plan: string;
-  used_talks: number | null;
-  limit_talks: number | null;
-};
-type StatusNg = {
-  ok: false;
-  error: string;
-  used_talks?: number | null;
-  limit_talks?: number | null;
-};
+type StatusOk = { ok: true; plan: string; used_talks: number | null; limit_talks: number | null };
+type StatusNg = { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
 type StatusRes = StatusOk | StatusNg;
 
 type ChatOk = {
@@ -58,12 +41,7 @@ type ChatOk = {
   conversation_id: string | null;
   message: string;
 };
-type ChatNg = {
-  ok: false;
-  error: string;
-  used_talks?: number | null;
-  limit_talks?: number | null;
-};
+type ChatNg = { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
 type ChatRes = ChatOk | ChatNg;
 
 type Dialect = "kansai" | "standard";
@@ -95,9 +73,7 @@ function toHm(iso: string) {
   }
 }
 function isUuid(s: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    s
-  );
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
 function loadLocal(key: string) {
   try {
@@ -125,36 +101,24 @@ function renderBoldInline(text: string): ReactNode {
   return <>{out}</>;
 }
 
-// 3パターン回答の時は決め台詞をUI側で消す（くどさ防止）
-// ※サーバでも抑止するが、UIは保険として残す
 function stripCatchphraseIfThreePatterns(content: string): string {
   const hasAttack = content.includes("🍚");
-  const hasDefense =
-    content.includes("🧂守り") ||
-    content.includes("🧂🥄") ||
-    content.includes("🧂 守り");
-
+  const hasDefense = content.includes("🧂守り") || content.includes("🧂🥄") || content.includes("🧂 守り");
   if (!(hasAttack && hasDefense)) return content;
 
   const lines = content.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const t = lines[i].trim();
     if (!t) continue;
-
-    // catchphraseっぽい最後の1行を落とす（方言差分があっても拾えるように）
-    if (t.includes("とはいえ") || (t.includes("税務の世界") && t.includes("答え"))) {
-      lines.splice(i, 1);
-    }
+    if (t.includes("とはいえ") || (t.includes("税務の世界") && t.includes("答え"))) lines.splice(i, 1);
     break;
   }
   return lines.join("\n").trimEnd();
 }
 
-// ✅ タイトル行だけ強調（色はここだけ）
-function lineStyle(line: string): CSSProperties {
+function lineStyle(line: string): React.CSSProperties {
   const t = line.trimStart();
-  const isTitle =
-    t.startsWith("🧂") || t.startsWith("🍚") || t.startsWith("🧂🥄") || t.startsWith("🍚🥄");
+  const isTitle = t.startsWith("🧂") || t.startsWith("🍚") || t.startsWith("🧂🥄") || t.startsWith("🍚🥄");
   if (!isTitle) return { whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 };
 
   return {
@@ -183,25 +147,24 @@ function normalizeMessages(rows: any[]): MessageRow[] {
   })) as MessageRow[];
 }
 
+function isNearBottom(el: HTMLDivElement, px = 180) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < px;
+}
+
 export default function ChatClient() {
   const supabase = useMemo(() => getSupabaseClient(), []);
   const router = useRouter();
 
   const [loading, setLoading] = useState(false);
+  const [thinking, setThinking] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const [plan, setPlan] = useState<string>("(loading)");
   const [usedTalks, setUsedTalks] = useState<number | null>(null);
   const [limitTalks, setLimitTalks] = useState<number | null>(null);
 
-  const [dialect, setDialect] = useState<Dialect>(() => {
-    const v = loadLocal("chat:dialect");
-    return v === "standard" ? "standard" : "kansai";
-  });
-  const [stance, setStance] = useState<Stance>(() => {
-    const v = loadLocal("chat:stance");
-    return v === "sanbo" ? "sanbo" : "zubatto";
-  });
+  const [dialect, setDialect] = useState<Dialect>(() => (loadLocal("chat:dialect") === "standard" ? "standard" : "kansai"));
+  const [stance, setStance] = useState<Stance>(() => (loadLocal("chat:stance") === "sanbo" ? "sanbo" : "zubatto"));
 
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(() => {
@@ -213,6 +176,12 @@ export default function ChatClient() {
   const [input, setInput] = useState("");
 
   const msgsRef = useRef<HTMLDivElement | null>(null);
+
+  // ループ防止：loginへ飛ぶのは1回だけ
+  const redirectingRef = useRef(false);
+
+  // 下にいる時だけ追従（送信時は強制 true）
+  const shouldAutoScrollRef = useRef(true);
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
 
@@ -247,7 +216,15 @@ export default function ChatClient() {
   const scrollBottom = () => {
     const el = msgsRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    });
+    setTimeout(() => {
+      el.scrollTop = el.scrollHeight;
+    }, 60);
   };
 
   const getToken = async (): Promise<string | null> => {
@@ -258,12 +235,27 @@ export default function ChatClient() {
     return refreshed?.data?.session?.access_token ?? null;
   };
 
-  const handleAuthishError = (raw: unknown) => {
+  const goLoginHard = async () => {
+    if (redirectingRef.current) return;
+    redirectingRef.current = true;
+    try {
+      await supabase.auth.signOut().catch(() => null);
+    } finally {
+      router.replace("/login?reason=expired");
+    }
+  };
+
+  const handleAuthishError = async (raw: unknown) => {
     const msg = String((raw as any)?.message || raw || "");
     const low = msg.toLowerCase();
-    if (low.includes("jwt expired") || low.includes("invalid jwt") || low.includes("not logged in")) {
+    if (
+      low.includes("jwt expired") ||
+      low.includes("invalid jwt") ||
+      low.includes("invalid session") ||
+      low.includes("not logged in")
+    ) {
       setErrMsg("セッション切れてる。ログインし直してな。");
-      router.push("/login");
+      await goLoginHard();
       return true;
     }
     return false;
@@ -273,7 +265,7 @@ export default function ChatClient() {
     setErrMsg(null);
     try {
       const token = await getToken();
-      if (!token) return;
+      if (!token) return await handleAuthishError("Not logged in");
 
       const res = await fetch("/api/chat/status", {
         headers: { Authorization: `Bearer ${token}` },
@@ -287,7 +279,7 @@ export default function ChatClient() {
       setUsedTalks(json.used_talks);
       setLimitTalks(json.limit_talks);
     } catch (e: any) {
-      if (handleAuthishError(e)) return;
+      if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "status failed");
     }
   };
@@ -296,7 +288,7 @@ export default function ChatClient() {
     setErrMsg(null);
     try {
       const token = await getToken();
-      if (!token) return;
+      if (!token) return await handleAuthishError("Not logged in");
 
       const { data: convs, error: convErr } = await supabase
         .from("conversations")
@@ -340,19 +332,18 @@ export default function ChatClient() {
         saveLocal("chat:activeConversationId", "");
       }
     } catch (e: any) {
-      if (handleAuthishError(e)) return;
+      if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "load threads failed");
     }
   };
 
-  // silent=true の時は loading を触らない（送信中にfalseへ戻る事故を防ぐ）
-  const loadMessages = async (conversationId: string, opts?: { silent?: boolean }): Promise<MessageRow[]> => {
+  const loadMessages = async (conversationId: string, opts?: { silent?: boolean }) => {
     setErrMsg(null);
     if (!opts?.silent) setLoading(true);
 
     try {
       const token = await getToken();
-      if (!token) throw new Error("Not logged in");
+      if (!token) return await handleAuthishError("Not logged in");
 
       const { data, error } = await supabase
         .from("messages")
@@ -365,14 +356,14 @@ export default function ChatClient() {
 
       const normalized = normalizeMessages(data as any[]);
       setMessages(normalized);
-      setTimeout(scrollBottom, 0);
-      return normalized;
+
+      if (shouldAutoScrollRef.current) scrollBottom();
     } catch (e: any) {
-      if (handleAuthishError(e)) return [];
+      if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "load messages failed");
-      return [];
     } finally {
       if (!opts?.silent) setLoading(false);
+      setThinking(false);
     }
   };
 
@@ -393,6 +384,9 @@ export default function ChatClient() {
     if (!title) return;
 
     try {
+      const token = await getToken();
+      if (!token) return await handleAuthishError("Not logged in");
+
       const { error } = await supabase
         .from("conversations")
         .update({ summary: title, summary_updated_at: new Date().toISOString() })
@@ -402,7 +396,7 @@ export default function ChatClient() {
 
       setThreads((prev) => prev.map((t) => (t.id === activeConversationId ? { ...t, title } : t)));
     } catch (e: any) {
-      if (handleAuthishError(e)) return;
+      if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "rename failed");
     }
   };
@@ -420,9 +414,12 @@ export default function ChatClient() {
 
     setErrMsg(null);
     setLoading(true);
+    setThinking(true);
     setInput("");
 
-    // tempUser 即表示（右側）
+    // 送信時は必ず“下にいる”扱い
+    shouldAutoScrollRef.current = true;
+
     const tempUser: MessageRow = {
       id: crypto.randomUUID(),
       conversation_id: activeConversationId || "temp",
@@ -431,11 +428,11 @@ export default function ChatClient() {
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, tempUser]);
-    setTimeout(scrollBottom, 0);
+    scrollBottom();
 
     try {
       const token = await getToken();
-      if (!token) throw new Error("Not logged in");
+      if (!token) return await handleAuthishError("Not logged in");
 
       const idempotencyKey = crypto.randomUUID();
       const body: any = { message: text, idempotencyKey, dialect, stance };
@@ -443,10 +440,7 @@ export default function ChatClient() {
 
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
 
@@ -461,76 +455,23 @@ export default function ChatClient() {
       setUsedTalks(json.used_talks);
       setLimitTalks(json.limit_talks);
 
-      const convId =
-        json.conversation_id && isUuid(json.conversation_id) ? json.conversation_id : null;
+      const convId = json.conversation_id && isUuid(json.conversation_id) ? json.conversation_id : null;
 
       if (convId && !activeConversationId) {
         setActiveConversationId(convId);
         saveLocal("chat:activeConversationId", convId);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.conversation_id === "temp" ? { ...m, conversation_id: convId } : m
-          )
-        );
+        setMessages((prev) => prev.map((m) => (m.conversation_id === "temp" ? { ...m, conversation_id: convId } : m)));
       }
 
       const effectiveConvId = convId || activeConversationId;
-
       await loadThreads();
-
-      // DBを正として再読込（原則）
-      let loaded: MessageRow[] = [];
-      if (effectiveConvId) loaded = await loadMessages(effectiveConvId, { silent: true });
-
-      // ただし、DB書き込みが何かで落ちた時に「運用テストが成立しない」を防ぐ保険
-      // ＝ loaded に今回の user/assistant が見当たらなければ、UI側で“欠けた分だけ”補完する
-      if (effectiveConvId) {
-        const wantUser = text.trim();
-        const wantAsst = String(json.message ?? "").trim();
-
-        const hasUser = loaded.some(
-          (m) => m.role === "user" && m.content.trim() === wantUser
-        );
-        const hasAsst = loaded.some(
-          (m) => m.role === "assistant" && m.content.trim() === wantAsst
-        );
-
-        if (!hasUser || !hasAsst) {
-          setMessages((prev) => {
-            // 直前の表示をベースに、重複しない範囲で足す
-            const base = [...(loaded.length ? loaded : prev)];
-
-            const next = [...base];
-            if (!hasUser) {
-              next.push({
-                id: crypto.randomUUID(),
-                conversation_id: effectiveConvId,
-                role: "user",
-                content: wantUser,
-                created_at: new Date().toISOString(),
-              });
-            }
-            if (!hasAsst) {
-              next.push({
-                id: crypto.randomUUID(),
-                conversation_id: effectiveConvId,
-                role: "assistant",
-                content: wantAsst,
-                created_at: new Date().toISOString(),
-              });
-            }
-            // created_at順に一応整列（保険）
-            next.sort((a, b) => a.created_at.localeCompare(b.created_at));
-            return next;
-          });
-          setTimeout(scrollBottom, 0);
-        }
-      }
+      if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
     } catch (e: any) {
-      if (handleAuthishError(e)) return;
+      if (await handleAuthishError(e)) return;
       setErrMsg(String(e?.message || "send failed"));
     } finally {
       setLoading(false);
+      setThinking(false);
     }
   };
 
@@ -549,12 +490,8 @@ export default function ChatClient() {
   useEffect(() => saveLocal("chat:dialect", dialect), [dialect]);
   useEffect(() => saveLocal("chat:stance", stance), [stance]);
 
-  const activeTitle =
-    (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) ||
-    "(新規)";
-    const canRename = Boolean(activeConversationId);
-
-    
+  const activeTitle = (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
+  const canRename = Boolean(activeConversationId);
 
   const badge = (() => {
     if (!limitTalks) return "";
@@ -563,115 +500,40 @@ export default function ChatClient() {
     return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）`;
   })();
 
-  // ✅ 横はできるだけ広げる
   const ROOT_W = "min(1400px, 100%)";
   const THREAD_W = 330;
 
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        background: "#fff",
-        position: "relative",
-      }}
-    >
-      {/* header（クリック奪い対策：上に固定） */}
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#fff" }}>
       <div style={{ padding: "10px 16px", position: "relative", zIndex: 30, pointerEvents: "auto" }}>
         <div style={{ display: "flex", alignItems: "center" }}>
           <div style={{ flex: 1 }} />
           <div style={{ textAlign: "center", fontWeight: 900, fontSize: 18 }}>
             さじかげん 🍚🥄｜税務相談{" "}
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#666" }}>
-              ～あなたの欲しい ちょうどいい さじかげん～
-            </span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#666" }}>～あなたの欲しい ちょうどいい さじかげん～</span>
           </div>
           <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: 10 }}>
-            <Link href="/settings/billing" style={LINK_BTN}>
-              プラン変更
-            </Link>
-            <a
-              href={CONTACT_URL}
-              style={LINK_BTN}
-              target={CONTACT_URL.startsWith("http") ? "_blank" : undefined}
-              rel="noreferrer"
-            >
-              お問い合わせ
-            </a>
+            <Link href="/settings/billing" style={LINK_BTN}>プラン変更</Link>
+            <a href={CONTACT_URL} style={LINK_BTN} target={CONTACT_URL.startsWith("http") ? "_blank" : undefined} rel="noreferrer">お問い合わせ</a>
           </div>
         </div>
 
         <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
-          <div
-            style={{
-              width: ROOT_W,
-              border: "1px solid #ddd",
-              borderRadius: 12,
-              padding: "10px 12px",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
+          <div style={{ width: ROOT_W, border: "1px solid #ddd", borderRadius: 12, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
             <div style={{ fontWeight: 800 }}>{badge || "プラン: (loading)"}</div>
-            <button type="button" onClick={refreshStatus} style={BTN}>
-              更新
-            </button>
+            <button type="button" onPointerDown={(e) => { e.preventDefault(); refreshStatus(); }} onTouchStart={(e) => { e.preventDefault(); refreshStatus(); }} style={BTN}>更新</button>
           </div>
         </div>
 
         {errMsg && <div style={{ marginTop: 8, color: "#b00020", fontSize: 13 }}>{errMsg}</div>}
       </div>
 
-      {/* main */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          justifyContent: "center",
-          padding: "0 16px 16px",
-          minHeight: 0,
-          position: "relative",
-          zIndex: 10,
-        }}
-      >
-        <div
-          style={{
-            width: ROOT_W,
-            border: "1px solid #ddd",
-            borderRadius: 12,
-            display: "flex",
-            overflow: "hidden",
-            minHeight: 0,
-          }}
-        >
-          {/* threads */}
-          <div
-            style={{
-              width: THREAD_W,
-              borderRight: "1px solid #eee",
-              display: "flex",
-              flexDirection: "column",
-              minHeight: 0,
-            }}
-          >
-            <div
-              style={{
-                padding: 12,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                borderBottom: "1px solid #eee",
-                position: "relative",
-                zIndex: 5,
-              }}
-            >
+      <div style={{ flex: 1, display: "flex", justifyContent: "center", padding: "0 16px 16px", minHeight: 0 }}>
+        <div style={{ width: ROOT_W, border: "1px solid #ddd", borderRadius: 12, display: "flex", overflow: "hidden", minHeight: 0 }}>
+          <div style={{ width: THREAD_W, borderRight: "1px solid #eee", display: "flex", flexDirection: "column", minHeight: 0 }}>
+            <div style={{ padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #eee" }}>
               <div style={{ fontWeight: 900 }}>スレッド</div>
-              <button type="button" onClick={newThread} style={BTN}>
-                新規
-              </button>
+              <button type="button" onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }} style={BTN}>新規</button>
             </div>
 
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 10, background: "#fafafa" }}>
@@ -681,10 +543,8 @@ export default function ChatClient() {
                   <button
                     key={t.id}
                     type="button"
-                    onClick={() => {
-                      setActiveConversationId(t.id);
-                      saveLocal("chat:activeConversationId", t.id);
-                    }}
+                    onPointerDown={(e) => { e.preventDefault(); setActiveConversationId(t.id); saveLocal("chat:activeConversationId", t.id); }}
+                    onTouchStart={(e) => { e.preventDefault(); setActiveConversationId(t.id); saveLocal("chat:activeConversationId", t.id); }}
                     style={{
                       width: "100%",
                       textAlign: "left",
@@ -698,153 +558,68 @@ export default function ChatClient() {
                     }}
                   >
                     <div style={{ fontWeight: 900, marginBottom: 6 }}>{t.title}</div>
-                    <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
-                      {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
-                    </div>
-                    <div style={{ fontSize: 12, color: t.preview ? "#333" : "#999" }}>
-                      {t.preview || "(プレビューなし)"}
-                    </div>
+                    <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>{toJstLabel(t.createdAt)} {toHm(t.createdAt)}</div>
+                    <div style={{ fontSize: 12, color: t.preview ? "#333" : "#999" }}>{t.preview || "(プレビューなし)"}</div>
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* chat */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-            {/* toolbar（クリック奪い対策：上に固定） */}
-            <div
-              style={{
-                padding: 12,
-                borderBottom: "1px solid #eee",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 10,
-                position: "relative",
-                zIndex: 20,
-                pointerEvents: "auto",
-                background: "#fff",
-              }}
-            >
+            <div style={{ padding: 12, borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, background: "#fff", position: "relative", zIndex: 20 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-  <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-    {activeTitle}
-  </div>
-  <div style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>
-    （{dialect}/{stance}）
-  </div>
-</div>
-
+                <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeTitle}</div>
+                <div style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>（{dialect}/{stance}）</div>
+              </div>
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-               <button
-  type="button"
-  onPointerDown={(e) => {
-    e.preventDefault();
-    if (canRename) renameThread();
-  }}
-  onTouchStart={(e) => {
-    e.preventDefault();
-    if (canRename) renameThread();
-  }}
-  aria-disabled={!canRename}
-  style={{
-    padding: "8px 10px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: canRename ? "#fff" : "#f5f5f5",
-    color: "#111",
-    opacity: canRename ? 1 : 0.5,
-    cursor: canRename ? "pointer" : "not-allowed",
-    pointerEvents: "auto",
-  }}
->
-  ✏️ タイトル
-</button>
-
-
-
                 <button
-  type="button"
-  onPointerDown={(e) => { e.preventDefault(); setDialect("kansai"); }}
-  onTouchStart={(e) => { e.preventDefault(); setDialect("kansai"); }}
-  style={toggleBtn(dialect === "kansai")}
->
-  関西弁
-</button>
+                  type="button"
+                  onPointerDown={(e) => { e.preventDefault(); if (canRename) renameThread(); }}
+                  onTouchStart={(e) => { e.preventDefault(); if (canRename) renameThread(); }}
+                  aria-disabled={!canRename}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: canRename ? "#fff" : "#f5f5f5",
+                    color: "#111",
+                    opacity: canRename ? 1 : 0.5,
+                    cursor: canRename ? "pointer" : "not-allowed",
+                    pointerEvents: "auto",
+                  }}
+                >
+                  ✏️ タイトル
+                </button>
 
-                <button
-  type="button"
-  onPointerDown={(e) => { e.preventDefault(); setDialect("standard"); }}
-  onTouchStart={(e) => { e.preventDefault(); setDialect("standard"); }}
-  style={toggleBtn(dialect === "standard")}
->
-  標準語
-</button>
-
-                <button
-  type="button"
-  onPointerDown={(e) => { e.preventDefault(); setStance("zubatto"); }}
-  onTouchStart={(e) => { e.preventDefault(); setStance("zubatto"); }}
-  style={toggleBtn(stance === "zubatto")}
->
-  ズバっと
-</button>
-
-                <button
-  type="button"
-  onPointerDown={(e) => { e.preventDefault(); setStance("sanbo"); }}
-  onTouchStart={(e) => { e.preventDefault(); setStance("sanbo"); }}
-  style={toggleBtn(stance === "sanbo")}
->
-  参謀
-</button>
-
+                <button type="button" onPointerDown={(e) => { e.preventDefault(); setDialect("kansai"); }} onTouchStart={(e) => { e.preventDefault(); setDialect("kansai"); }} style={toggleBtn(dialect === "kansai")}>関西弁</button>
+                <button type="button" onPointerDown={(e) => { e.preventDefault(); setDialect("standard"); }} onTouchStart={(e) => { e.preventDefault(); setDialect("standard"); }} style={toggleBtn(dialect === "standard")}>標準語</button>
+                <button type="button" onPointerDown={(e) => { e.preventDefault(); setStance("zubatto"); }} onTouchStart={(e) => { e.preventDefault(); setStance("zubatto"); }} style={toggleBtn(stance === "zubatto")}>ズバっと</button>
+                <button type="button" onPointerDown={(e) => { e.preventDefault(); setStance("sanbo"); }} onTouchStart={(e) => { e.preventDefault(); setStance("sanbo"); }} style={toggleBtn(stance === "sanbo")}>参謀</button>
               </div>
             </div>
 
-            {/* messages（ここがスクロール領域） */}
             <div
               ref={msgsRef}
-              style={{
-                flex: 1,
-                minHeight: 0,
-                overflowY: "auto",
-                padding: "12px 14px",
-                background: "#fff",
-                position: "relative",
-                zIndex: 1,
+              onScroll={() => {
+                const el = msgsRef.current;
+                if (!el) return;
+                shouldAutoScrollRef.current = isNearBottom(el);
               }}
+              style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 14px", background: "#fff" }}
             >
               {messages.map((m, idx) => {
                 const role = normalizeRole((m as any).role);
-                const isUser = role === "user"; // ✅ 絶対基準
+                const isUser = role === "user";
                 const raw = String(m.content ?? "");
                 const content = isUser ? raw : stripCatchphraseIfThreePatterns(raw);
 
                 return (
-                  <div
-                    key={m.id ?? idx}
-                    style={{
-                      display: "flex",
-                      justifyContent: isUser ? "flex-end" : "flex-start",
-                      margin: "10px 0",
-                    }}
-                  >
-                    <div
-                      style={{
-                        maxWidth: "86%",
-                        padding: "10px 12px",
-                        borderRadius: 12,
-                        border: "1px solid #e5e5e5",
-                        background: isUser ? "#eef5ff" : "#fff",
-                      }}
-                    >
+                  <div key={m.id ?? idx} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", margin: "10px 0" }}>
+                    <div style={{ maxWidth: "86%", padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e5e5", background: isUser ? "#eef5ff" : "#fff" }}>
                       {isUser ? (
-                        <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 }}>
-                          {content}
-                        </div>
+                        <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 }}>{content}</div>
                       ) : (
                         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                           {content.replace(/\r\n/g, "\n").split("\n").map((line, i) => {
@@ -857,29 +632,25 @@ export default function ChatClient() {
                           })}
                         </div>
                       )}
-
-                      <div style={{ fontSize: 11, color: "#777", marginTop: 8, textAlign: "right" }}>
-                        {toHm(m.created_at)}
-                      </div>
+                      <div style={{ fontSize: 11, color: "#777", marginTop: 8, textAlign: "right" }}>{toHm(m.created_at)}</div>
                     </div>
                   </div>
                 );
               })}
+
+              {thinking && (
+                <div style={{ display: "flex", justifyContent: "flex-start", margin: "10px 0" }}>
+                  <div style={{ maxWidth: "86%", padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e5e5", background: "#fff" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#666" }}>
+                      <span>考え中</span>
+                      <span className="dots" aria-hidden="true">...</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* input（常に最下段） */}
-            <div
-              style={{
-                padding: 12,
-                borderTop: "1px solid #eee",
-                display: "flex",
-                gap: 10,
-                alignItems: "center",
-                background: "#fff",
-                position: "relative",
-                zIndex: 20,
-              }}
-            >
+            <div style={{ padding: 12, borderTop: "1px solid #eee", display: "flex", gap: 10, alignItems: "center", background: "#fff" }}>
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -895,7 +666,8 @@ export default function ChatClient() {
               />
               <button
                 type="button"
-                onClick={sendMessage}
+                onPointerDown={(e) => { e.preventDefault(); if (canSend) sendMessage(); }}
+                onTouchStart={(e) => { e.preventDefault(); if (canSend) sendMessage(); }}
                 disabled={!canSend}
                 style={{
                   padding: "10px 16px",
@@ -904,7 +676,6 @@ export default function ChatClient() {
                   background: "#fff",
                   cursor: !canSend ? "not-allowed" : "pointer",
                   opacity: !canSend ? 0.6 : 1,
-                  pointerEvents: !canSend ? "none" : "auto",
                 }}
               >
                 送信
@@ -917,6 +688,22 @@ export default function ChatClient() {
           </div>
         </div>
       </div>
+
+      <style jsx global>{`
+        .dots {
+          display: inline-block;
+          width: 18px;
+          text-align: left;
+          animation: dotty 1.2s infinite steps(4, end);
+        }
+        @keyframes dotty {
+          0% { width: 0; }
+          25% { width: 6px; }
+          50% { width: 12px; }
+          75% { width: 18px; }
+          100% { width: 0; }
+        }
+      `}</style>
     </div>
   );
 }
