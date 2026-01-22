@@ -68,6 +68,8 @@ type ConsumeTalkV2Result = {
   already_counted: boolean;
 };
 
+type ContextMsg = { role: "user" | "assistant" | "system"; content: string };
+
 async function ensureConversationId(params: {
   db: any;
   userId: string;
@@ -76,28 +78,181 @@ async function ensureConversationId(params: {
   const { db, userId, conversationId } = params;
 
   if (conversationId) {
-    // 所有チェック（RLS + where）
     const { data, error } = (await db
-  .from("conversations")
-  .select("id")
-  .eq("id", conversationId)
-  .eq("user_id", userId)
-  .maybeSingle()) as any;
+      .from("conversations")
+      .select("id")
+      .eq("id", conversationId)
+      .eq("user_id", userId)
+      .maybeSingle()) as any;
 
-if (error) throw error;
-if (!data) throw new Error("Conversation not found");
-return conversationId;
+    if (error) throw error;
+    if (!data) throw new Error("Conversation not found");
+    return conversationId;
   }
 
-  // 新規作成
   const { data, error } = (await db
-  .from("conversations")
-  .insert({ user_id: userId } as any)
-  .select("id")
-  .single()) as any;
+    .from("conversations")
+    .insert({ user_id: userId } as any)
+    .select("id")
+    .single()) as any;
 
-if (error) throw error;
-return data.id as string;
+  if (error) throw error;
+  return data.id as string;
+}
+
+async function loadConversationContext(params: {
+  db: any;
+  userId: string;
+  conversationId: string;
+  historyLimit: number;
+}): Promise<{
+  summary: string | null;
+  summaryUpdatedAt: string | null;
+  context: ContextMsg[];
+}> {
+  const { db, userId, conversationId, historyLimit } = params;
+
+  // conversation 本体（要約）
+  const { data: conv, error: convErr } = (await db
+    .from("conversations")
+    .select("id, summary, summary_updated_at")
+    .eq("id", conversationId)
+    .eq("user_id", userId)
+    .maybeSingle()) as any;
+
+  if (convErr) throw convErr;
+
+  const summary = (conv?.summary as string) ?? null;
+  const summaryUpdatedAt = (conv?.summary_updated_at as string) ?? null;
+
+  // 直近履歴
+  const { data: rows, error: msgErr } = (await db
+    .from("messages")
+    .select("role, content, created_at")
+    .eq("conversation_id", conversationId)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(historyLimit)) as any;
+
+  if (msgErr) throw msgErr;
+
+  const history = (Array.isArray(rows) ? rows : [])
+    .slice()
+    .reverse()
+    .map((r: any) => ({
+      role: r.role as "user" | "assistant" | "system",
+      content: String(r.content ?? ""),
+    }))
+    .filter((m: ContextMsg) => m.content.trim().length > 0);
+
+  const context: ContextMsg[] = [];
+
+  if (summary && summary.trim()) {
+    context.push({
+      role: "system",
+      content:
+        "【これまでの会話要約】\n" +
+        summary.trim() +
+        "\n\n※この要約は参考情報。矛盾があれば直近の発言を優先すること。",
+    });
+  }
+
+  // 既存の会話履歴（直近N件）
+  context.push(...history);
+
+  return { summary, summaryUpdatedAt, context };
+}
+
+function shouldUpdateSummary(params: {
+  summaryUpdatedAt: string | null;
+  nowIso: string;
+  // 最低でもこれだけ会話が積まれてから更新する（頻繁更新を防ぐ）
+  minMessagesToUpdate: number;
+  // summary から何件増えたら更新するか（ざっくり）
+  newlyAddedCount: number;
+}): boolean {
+  const { summaryUpdatedAt, nowIso, minMessagesToUpdate, newlyAddedCount } =
+    params;
+
+  if (newlyAddedCount < minMessagesToUpdate) return false;
+
+  // summaryが無いなら作りに行く
+  if (!summaryUpdatedAt) return true;
+
+  // 直近すぎる更新は避ける（10分）
+  const last = new Date(summaryUpdatedAt).getTime();
+  const now = new Date(nowIso).getTime();
+  if (!Number.isFinite(last) || !Number.isFinite(now)) return true;
+
+  const diffMin = (now - last) / 1000 / 60;
+  return diffMin >= 10;
+}
+
+async function updateConversationSummary(params: {
+  db: any;
+  userId: string;
+  conversationId: string;
+  existingSummary: string | null;
+  maxMessagesForSummary: number;
+}): Promise<void> {
+  const { db, userId, conversationId, existingSummary, maxMessagesForSummary } =
+    params;
+
+  // 最新の会話をある程度拾って要約（AIコストはここだけ追加でかかる）
+  const { data: rows, error } = (await db
+    .from("messages")
+    .select("role, content, created_at")
+    .eq("conversation_id", conversationId)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(maxMessagesForSummary)) as any;
+
+  if (error) throw error;
+
+  const history = (Array.isArray(rows) ? rows : [])
+    .slice()
+    .reverse()
+    .map((r: any) => `${r.role}: ${String(r.content ?? "")}`)
+    .join("\n");
+
+  const seed = (existingSummary ?? "").trim();
+
+  const summarizerMsg =
+    `あなたは「税務顧問bot さじかげん」の会話履歴を要約する係です。\n` +
+    `次の方針で「更新後の要約」を1つだけ作ってください。\n\n` +
+    `【要約ルール】\n` +
+    `- 日本語\n` +
+    `- 300〜600字くらい（長すぎない）\n` +
+    `- 事実/前提/制約/未解決論点/次アクションを中心に\n` +
+    `- 推測は入れない。曖昧なら「未確定」と明記。\n` +
+    `- 箇条書きはOKだが、読みやすさ優先で。\n` +
+    `- 最後に「次に聞くべき確認事項」を1〜3個だけ。\n\n` +
+    `【既存の要約】\n${seed || "(なし)"}\n\n` +
+    `【直近の会話ログ】\n${history}\n\n` +
+    `---\n更新後の要約だけを出力して。`;
+
+  const promptParts: PromptParts = {
+    context: [],
+    injectedRules: [],
+    guardrails: [],
+  };
+
+  const result = await generateAnswer({
+    message: summarizerMsg,
+    promptParts,
+  });
+
+  const newSummary = (result.answer ?? "").trim();
+  if (!newSummary) return;
+
+  await db
+    .from("conversations")
+    .update({
+      summary: newSummary,
+      summary_updated_at: new Date().toISOString(),
+    } as any)
+    .eq("id", conversationId)
+    .eq("user_id", userId);
 }
 
 export async function POST(req: Request) {
@@ -154,11 +309,11 @@ export async function POST(req: Request) {
     });
 
     // plan 参照（無くてもfree扱い）
-    const { data: urow } = await db
+    const { data: urow } = (await db
       .from("users")
       .select("plan")
       .eq("id", user.id)
-      .maybeSingle();
+      .maybeSingle()) as any;
 
     const plan = (urow?.plan as string) ?? "free";
     const limit = limitFromPlan(plan);
@@ -191,7 +346,7 @@ export async function POST(req: Request) {
     }
 
     // =========================
-    // B: conversationId 確定（block以外は会話器を用意）
+    // B: conversationId 確定
     // =========================
     let convId = "";
     try {
@@ -201,9 +356,33 @@ export async function POST(req: Request) {
         conversationId,
       });
     } catch (e: any) {
-      // 会話ID周りが壊れてても、相談自体は止めたくないなら 500
-      const res: ChatRes = { ok: false, error: e?.message ?? "Conversation error" };
+      const res: ChatRes = {
+        ok: false,
+        error: e?.message ?? "Conversation error",
+      };
       return NextResponse.json(res, { status: 500 });
+    }
+
+    // =========================
+    // B: 会話要約 + 直近履歴 読み込み
+    // =========================
+    let convSummary: string | null = null;
+    let convSummaryUpdatedAt: string | null = null;
+    let context: ContextMsg[] = [];
+
+    try {
+      const loaded = await loadConversationContext({
+        db,
+        userId: user.id,
+        conversationId: convId,
+        historyLimit: 12, // 直近N件（ここがAの「直近数件」）
+      });
+      convSummary = loaded.summary;
+      convSummaryUpdatedAt = loaded.summaryUpdatedAt;
+      context = loaded.context;
+    } catch {
+      // 履歴取得に失敗しても、回答自体は止めない
+      context = [];
     }
 
     // =========================
@@ -212,10 +391,10 @@ export async function POST(req: Request) {
     let answer = "";
     try {
       const promptParts: PromptParts = {
-        // 将来ここに B: 会話履歴
-        context: [],
+        // B: 会話履歴
+        context: context as any,
 
-        // 将来ここに C: ルール注入
+        // C: ルール注入（次で強化）
         injectedRules: [],
 
         // A: ガードレール（今回）
@@ -246,7 +425,6 @@ export async function POST(req: Request) {
     });
 
     if (error) {
-      // AIは成功したがDB更新失敗 → 無料回答防止で返さない
       const res: ChatRes = {
         ok: false,
         error: `consume_talk_v2 failed: ${error.message}`,
@@ -267,7 +445,6 @@ export async function POST(req: Request) {
     }
 
     if (!usage.allowed) {
-      // 上限超過 → AI回答は返さない（無料で出さない）
       const res: ChatRes = {
         ok: false,
         error: "Monthly quota exceeded",
@@ -278,28 +455,68 @@ export async function POST(req: Request) {
     }
 
     // =========================
-    // B: 履歴保存（ここで確定）
-    // ※ consume が通った後に保存することで「無料回答ログ」も防ぐ
+    // B: 履歴保存（consume成功後に確定）
     // =========================
     try {
-      // user message
-      await db.from("messages").insert({
-        conversation_id: convId,
-        user_id: user.id,
-        role: "user",
-        content: message,
-      }as any);
+      await db.from("messages").insert(
+        {
+          conversation_id: convId,
+          user_id: user.id,
+          role: "user",
+          content: message,
+        } as any
+      );
 
-      // assistant message
-      await db.from("messages").insert({
-        conversation_id: convId,
-        user_id: user.id,
-        role: "assistant",
-        content: answer,
-      }as any);
+      await db.from("messages").insert(
+        {
+          conversation_id: convId,
+          user_id: user.id,
+          role: "assistant",
+          content: answer,
+        } as any
+      );
     } catch {
-      // ログ保存失敗しても、課金（消費）と回答は成立してるので握りつぶす
-      // （ここで落とすとユーザー体験が最悪になる）
+      // ここで落とさない
+    }
+
+    // =========================
+    // A方針：保存は全部 / AIに渡すのは要約＋直近
+    // → 要約は「たまに」更新する（頻繁更新はコスト増なので抑える）
+    // =========================
+    try {
+      // summary後に何件積まれたか（ざっくり）
+      const nowIso = new Date().toISOString();
+      const since = convSummaryUpdatedAt;
+
+      // 直近だけで判定する簡易版：summaryが無い or 10分以上更新なし → 更新候補
+      // さらに「会話がある程度進んでから」だけ更新
+      const { count } = (await db
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", convId)
+        .eq("user_id", user.id)
+        .gt("created_at", since ?? "1970-01-01T00:00:00.000Z")) as any;
+
+      const newlyAddedCount = Number(count ?? 0);
+
+      if (
+        shouldUpdateSummary({
+          summaryUpdatedAt: convSummaryUpdatedAt,
+          nowIso,
+          minMessagesToUpdate: 8,
+          newlyAddedCount,
+        })
+      ) {
+        await updateConversationSummary({
+          db,
+          userId: user.id,
+          conversationId: convId,
+          existingSummary: convSummary,
+          maxMessagesForSummary: 20,
+        });
+      }
+    } catch {
+      // 要約更新は失敗しても無視（メイン導線を止めない）
     }
 
     // =========================
