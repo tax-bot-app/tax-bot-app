@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
 
 type Role = "user" | "assistant";
@@ -71,7 +72,6 @@ function clamp(s: string, n: number) {
 }
 
 function toJstLabel(iso: string) {
-  // 例: 2026/01/22
   try {
     const d = new Date(iso);
     const y = d.getFullYear();
@@ -84,7 +84,6 @@ function toJstLabel(iso: string) {
 }
 
 function toHm(iso: string) {
-  // 例: 12:34
   try {
     const d = new Date(iso);
     const h = String(d.getHours()).padStart(2, "0");
@@ -116,6 +115,7 @@ function saveLocal(key: string, val: string) {
 
 export default function ChatClient() {
   const supabase = useMemo(() => getSupabaseClient(), []);
+  const router = useRouter();
 
   const [loading, setLoading] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
@@ -145,8 +145,7 @@ export default function ChatClient() {
   const listRef = useRef<HTMLDivElement | null>(null);
   const msgsRef = useRef<HTMLDivElement | null>(null);
 
-  const CONTACT_URL =
-    process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
+  const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
 
   const scrollMessagesBottom = () => {
     const el = msgsRef.current;
@@ -154,13 +153,35 @@ export default function ChatClient() {
     el.scrollTop = el.scrollHeight;
   };
 
+  // ✅ セッション取得を一本化：JWT切れならrefreshを試す。ダメならnull。
+  const getToken = async (): Promise<string | null> => {
+    const { data, error } = await supabase.auth.getSession();
+    if (!error && data.session?.access_token) return data.session.access_token;
+
+    const refreshed = await supabase.auth.refreshSession().catch(() => null);
+    const token = refreshed?.data?.session?.access_token ?? null;
+    return token;
+  };
+
+  // ✅ JWT expired等のときに「再ログイン導線」を出す
+  const handleAuthishError = (raw: unknown) => {
+    const msg = String((raw as any)?.message || raw || "");
+    const low = msg.toLowerCase();
+
+    if (low.includes("jwt expired") || low.includes("invalid jwt") || low.includes("not logged in")) {
+      setErrMsg("セッションが切れています。ログインし直してください。");
+      // ページ遷移（loginページが存在する前提）
+      // もし /login が無い場合は、あなたの実装に合わせて変更してOK
+      router.push("/login");
+      return true;
+    }
+    return false;
+  };
+
   const refreshStatus = async () => {
     setErrMsg(null);
     try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
-
-      const token = data.session?.access_token;
+      const token = await getToken();
       if (!token) {
         setPlan("(not logged in)");
         setUsedTalks(null);
@@ -183,13 +204,12 @@ export default function ChatClient() {
         return;
       }
 
-      // ✅ TSを100%納得させる
       const okJson: Extract<StatusRes, { ok: true }> = json;
-
       setPlan(okJson.plan);
       setUsedTalks(okJson.used_talks);
       setLimitTalks(okJson.limit_talks);
     } catch (e: any) {
+      if (handleAuthishError(e)) return;
       setErrMsg(e?.message || "status failed");
     }
   };
@@ -197,13 +217,9 @@ export default function ChatClient() {
   const loadThreads = async () => {
     setErrMsg(null);
     try {
-      const { data: sess, error: sessErr } = await supabase.auth.getSession();
-      if (sessErr) throw sessErr;
-
-      const token = sess.session?.access_token;
+      const token = await getToken();
       if (!token) return;
 
-      // conversations（RLS前提）
       const { data: convs, error: convErr } = await supabase
         .from("conversations")
         .select("id, summary, created_at, summary_updated_at")
@@ -219,7 +235,6 @@ export default function ChatClient() {
         preview: "",
       }));
 
-      // 最新メッセの頭20文字（N+1になるけど、最大50件＆各1件だけで軽め）
       const previews = await Promise.all(
         base.map(async (t) => {
           const { data: lastMsg } = await supabase
@@ -234,15 +249,9 @@ export default function ChatClient() {
         })
       );
 
-      // summary_updated_at があればそれ優先で並び替え（無ければ createdAt）
-      previews.sort((a, b) => {
-        // ここは“概ね最近順”でOK。厳密にやるなら conversations に updated_at を持たせる。
-        return b.createdAt.localeCompare(a.createdAt);
-      });
-
+      previews.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       setThreads(previews);
 
-      // activeConversationId が無効なら先頭を選ぶ（ただし空ならnull）
       if (previews.length > 0) {
         if (!activeConversationId || !previews.some((t) => t.id === activeConversationId)) {
           setActiveConversationId(previews[0].id);
@@ -253,6 +262,7 @@ export default function ChatClient() {
         saveLocal("chat:activeConversationId", "");
       }
     } catch (e: any) {
+      if (handleAuthishError(e)) return;
       setErrMsg(e?.message || "load threads failed");
     }
   };
@@ -261,9 +271,8 @@ export default function ChatClient() {
     setErrMsg(null);
     setLoading(true);
     try {
-      const { data: sess, error: sessErr } = await supabase.auth.getSession();
-      if (sessErr) throw sessErr;
-      if (!sess.session?.access_token) throw new Error("Not logged in");
+      const token = await getToken();
+      if (!token) throw new Error("Not logged in");
 
       const { data, error } = await supabase
         .from("messages")
@@ -276,6 +285,7 @@ export default function ChatClient() {
       setMessages((data ?? []) as MessageRow[]);
       setTimeout(scrollMessagesBottom, 0);
     } catch (e: any) {
+      if (handleAuthishError(e)) return;
       setErrMsg(e?.message || "load messages failed");
     } finally {
       setLoading(false);
@@ -283,14 +293,12 @@ export default function ChatClient() {
   };
 
   const newThread = () => {
-    // ✅ ここではDB作らない。activeConversationIdをnullにして「未作成」状態へ
     setActiveConversationId(null);
     saveLocal("chat:activeConversationId", "");
     setMessages([]);
     setErrMsg(null);
     setInput("");
     setTimeout(() => {
-      // 右側を上に戻す
       const el = msgsRef.current;
       if (el) el.scrollTop = 0;
     }, 0);
@@ -315,14 +323,19 @@ export default function ChatClient() {
 
       if (error) throw error;
 
-      // ローカル反映
-      setThreads((prev) =>
-        prev.map((t) => (t.id === activeConversationId ? { ...t, title } : t))
-      );
+      setThreads((prev) => prev.map((t) => (t.id === activeConversationId ? { ...t, title } : t)));
     } catch (e: any) {
+      if (handleAuthishError(e)) return;
       setErrMsg(e?.message || "rename failed");
     }
   };
+
+  const canSend = (() => {
+    if (loading) return false;
+    if (!limitTalks) return true; // まだ読めてない時は一旦true（サーバで弾く）
+    const used = usedTalks ?? 0;
+    return used < limitTalks;
+  })();
 
   const sendMessage = async () => {
     const text = input.trim();
@@ -332,7 +345,6 @@ export default function ChatClient() {
     setLoading(true);
     setInput("");
 
-    // 先にUIへユーザー発言を出す（会話IDなしでもOK）
     const tempUser: MessageRow = {
       id: crypto.randomUUID(),
       conversation_id: activeConversationId || "temp",
@@ -344,10 +356,7 @@ export default function ChatClient() {
     setTimeout(scrollMessagesBottom, 0);
 
     try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
-
-      const token = data.session?.access_token;
+      const token = await getToken();
       if (!token) throw new Error("Not logged in");
 
       const idempotencyKey = crypto.randomUUID();
@@ -358,8 +367,6 @@ export default function ChatClient() {
         dialect,
         stance,
       };
-
-      // ✅ 既に会話IDがある場合だけ送る
       if (activeConversationId) body.conversationId = activeConversationId;
 
       const res = await fetch("/api/chat", {
@@ -372,46 +379,34 @@ export default function ChatClient() {
       if (!json) throw new Error(`chat failed: ${res.status}`);
 
       if (json.ok !== true) {
-        // 失敗なら“AI返答なし”で表示する（ユーザーの発言は残ってる想定）
         setErrMsg(json.error || `chat failed: ${res.status}`);
         return;
       }
 
-      // ✅ ok:true に確定
       const okJson: Extract<ChatRes, { ok: true }> = json;
 
-      // ステータス反映
       setPlan(okJson.plan);
       setUsedTalks(okJson.used_talks);
       setLimitTalks(okJson.limit_talks);
 
-      // ✅ 初回送信で新規会話が作られた場合、activeConversationId を確定させる
       const newConvId = okJson.conversation_id;
       if (newConvId && isUuid(newConvId)) {
         if (!activeConversationId) {
           setActiveConversationId(newConvId);
           saveLocal("chat:activeConversationId", newConvId);
 
-          // temp の conversation_id を新IDへ置換
           setMessages((prev) =>
-            prev.map((m) =>
-              m.conversation_id === "temp" ? { ...m, conversation_id: newConvId } : m
-            )
+            prev.map((m) => (m.conversation_id === "temp" ? { ...m, conversation_id: newConvId } : m))
           );
 
-          // スレッド一覧を更新（新規が増える）
           await loadThreads();
         } else {
-          // 既存なら preview 更新のために threads を軽く更新
           setThreads((prev) =>
-            prev.map((t) =>
-              t.id === activeConversationId ? { ...t, preview: clamp(text, 20) } : t
-            )
+            prev.map((t) => (t.id === activeConversationId ? { ...t, preview: clamp(text, 20) } : t))
           );
         }
       }
 
-      // AI返答を追加（DB保存済み想定）
       const tempAsst: MessageRow = {
         id: crypto.randomUUID(),
         conversation_id: newConvId || activeConversationId || "temp",
@@ -423,27 +418,32 @@ export default function ChatClient() {
       setMessages((prev) => [...prev, tempAsst]);
       setTimeout(scrollMessagesBottom, 0);
     } catch (e: any) {
-      setErrMsg(e?.message || "send failed");
+      // ✅ 親切エラーメッセ（JWT切れならログインへ）
+      if (handleAuthishError(e)) return;
+
+      const msg = String(e?.message || "send failed");
+      if (msg.toLowerCase().includes("jwt expired")) {
+        setErrMsg("セッション切れ（JWT expired）です。更新 or 再ログインしてください。");
+      } else {
+        setErrMsg(msg);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // 初期ロード
   useEffect(() => {
     refreshStatus();
     loadThreads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // activeConversationId が変わったら読み込み
   useEffect(() => {
     if (!activeConversationId) return;
     loadMessages(activeConversationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversationId]);
 
-  // dialect/stance 永続化
   useEffect(() => {
     saveLocal("chat:dialect", dialect);
   }, [dialect]);
@@ -451,7 +451,6 @@ export default function ChatClient() {
     saveLocal("chat:stance", stance);
   }, [stance]);
 
-  // --- render helpers ---
   const renderMessages = () => {
     let lastDate = "";
     const out: ReactNode[] = [];
@@ -461,10 +460,7 @@ export default function ChatClient() {
       if (date && date !== lastDate) {
         lastDate = date;
         out.push(
-          <div
-            key={`d-${i}`}
-            style={{ display: "flex", justifyContent: "center", margin: "10px 0" }}
-          >
+          <div key={`d-${i}`} style={{ display: "flex", justifyContent: "center", margin: "10px 0" }}>
             <div
               style={{
                 fontSize: 12,
@@ -516,12 +512,9 @@ export default function ChatClient() {
   };
 
   const activeTitle =
-    (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) ||
-    "(新規)";
-
+    (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
   const activePreview =
-    (activeConversationId && threads.find((t) => t.id === activeConversationId)?.preview) ||
-    "";
+    (activeConversationId && threads.find((t) => t.id === activeConversationId)?.preview) || "";
 
   const badge = (() => {
     if (!limitTalks) return "";
@@ -531,14 +524,7 @@ export default function ChatClient() {
   })();
 
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        background: "#fff",
-      }}
-    >
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#fff" }}>
       {/* top header */}
       <div style={{ padding: "18px 16px 10px", textAlign: "center" }}>
         <div style={{ fontSize: 18, fontWeight: 700 }}>さじかげん｜税務相談</div>
@@ -561,13 +547,7 @@ export default function ChatClient() {
           </a>
         </div>
 
-        <div
-          style={{
-            marginTop: 10,
-            display: "flex",
-            justifyContent: "center",
-          }}
-        >
+        <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
           <div
             style={{
               width: "min(980px, 100%)",
@@ -590,20 +570,11 @@ export default function ChatClient() {
           </div>
         </div>
 
-        {errMsg && (
-          <div style={{ marginTop: 10, color: "#b00020", fontSize: 13 }}>{errMsg}</div>
-        )}
+        {errMsg && <div style={{ marginTop: 10, color: "#b00020", fontSize: 13 }}>{errMsg}</div>}
       </div>
 
       {/* main */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          justifyContent: "center",
-          padding: "0 16px 16px",
-        }}
-      >
+      <div style={{ flex: 1, display: "flex", justifyContent: "center", padding: "0 16px 16px" }}>
         <div
           style={{
             width: "min(980px, 100%)",
@@ -693,14 +664,7 @@ export default function ChatClient() {
           </div>
 
           {/* right chat */}
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              minHeight: 0,
-            }}
-          >
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
             {/* chat header row */}
             <div
               style={{
@@ -717,9 +681,7 @@ export default function ChatClient() {
                   {activeTitle}
                 </div>
                 {activePreview ? (
-                  <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
-                    {activePreview}
-                  </div>
+                  <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{activePreview}</div>
                 ) : null}
               </div>
 
@@ -829,7 +791,7 @@ export default function ChatClient() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    if (!loading) sendMessage();
+                    if (canSend) sendMessage();
                   }
                 }}
                 placeholder="相談内容を入力（Enterで送信）"
@@ -839,17 +801,18 @@ export default function ChatClient() {
                   borderRadius: 10,
                   border: "1px solid #ddd",
                 }}
-                disabled={loading}
+                disabled={!canSend}
               />
               <button
                 onClick={sendMessage}
-                disabled={loading}
+                disabled={!canSend}
                 style={{
                   padding: "10px 16px",
                   borderRadius: 10,
                   border: "1px solid #ddd",
                   background: "#fff",
-                  cursor: loading ? "not-allowed" : "pointer",
+                  cursor: !canSend ? "not-allowed" : "pointer",
+                  opacity: !canSend ? 0.6 : 1,
                 }}
               >
                 送信
