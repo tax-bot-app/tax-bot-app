@@ -552,6 +552,9 @@ export default function ChatClient() {
   const activeTitle =
     (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) ||
     "(新規)";
+    const canRename = Boolean(activeConversationId);
+
+    
 
   const badge = (() => {
     if (!limitTalks) return "";
@@ -724,39 +727,80 @@ export default function ChatClient() {
                 background: "#fff",
               }}
             >
-              <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {activeTitle}
-              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+  <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+    {activeTitle}
+  </div>
+  <div style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>
+    （{dialect}/{stance}）
+  </div>
+</div>
+
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <button
-                  type="button"
-                  onClick={renameThread}
-                  disabled={!activeConversationId}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 10,
-                    border: "1px solid #ddd",
-                    opacity: activeConversationId ? 1 : 0.5,
-                    cursor: activeConversationId ? "pointer" : "not-allowed",
-                    pointerEvents: activeConversationId ? "auto" : "none",
-                  }}
-                >
-                  ✏️ タイトル
-                </button>
+               <button
+  type="button"
+  onPointerDown={(e) => {
+    e.preventDefault();
+    if (canRename) renameThread();
+  }}
+  onTouchStart={(e) => {
+    e.preventDefault();
+    if (canRename) renameThread();
+  }}
+  aria-disabled={!canRename}
+  style={{
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: "1px solid #ddd",
+    background: canRename ? "#fff" : "#f5f5f5",
+    color: "#111",
+    opacity: canRename ? 1 : 0.5,
+    cursor: canRename ? "pointer" : "not-allowed",
+    pointerEvents: "auto",
+  }}
+>
+  ✏️ タイトル
+</button>
 
-                <button type="button" onClick={() => setDialect("kansai")} style={toggleBtn(dialect === "kansai")}>
-                  関西弁
-                </button>
-                <button type="button" onClick={() => setDialect("standard")} style={toggleBtn(dialect === "standard")}>
-                  標準語
-                </button>
-                <button type="button" onClick={() => setStance("zubatto")} style={toggleBtn(stance === "zubatto")}>
-                  ズバっと
-                </button>
-                <button type="button" onClick={() => setStance("sanbo")} style={toggleBtn(stance === "sanbo")}>
-                  参謀
-                </button>
+
+
+                <button
+  type="button"
+  onPointerDown={(e) => { e.preventDefault(); setDialect("kansai"); }}
+  onTouchStart={(e) => { e.preventDefault(); setDialect("kansai"); }}
+  style={toggleBtn(dialect === "kansai")}
+>
+  関西弁
+</button>
+
+                <button
+  type="button"
+  onPointerDown={(e) => { e.preventDefault(); setDialect("standard"); }}
+  onTouchStart={(e) => { e.preventDefault(); setDialect("standard"); }}
+  style={toggleBtn(dialect === "standard")}
+>
+  標準語
+</button>
+
+                <button
+  type="button"
+  onPointerDown={(e) => { e.preventDefault(); setStance("zubatto"); }}
+  onTouchStart={(e) => { e.preventDefault(); setStance("zubatto"); }}
+  style={toggleBtn(stance === "zubatto")}
+>
+  ズバっと
+</button>
+
+                <button
+  type="button"
+  onPointerDown={(e) => { e.preventDefault(); setStance("sanbo"); }}
+  onTouchStart={(e) => { e.preventDefault(); setStance("sanbo"); }}
+  style={toggleBtn(stance === "sanbo")}
+>
+  参謀
+</button>
+
               </div>
             </div>
 
