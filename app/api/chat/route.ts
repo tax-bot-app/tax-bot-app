@@ -77,6 +77,21 @@ function normalizeStance(x: string): Stance {
   return x === "sanbo" ? "sanbo" : "zubatto";
 }
 
+/**
+ * ✅ 25号店：出力ルール（見やすさ + 質問は原則1つ）
+ * - 見出し（##/###）禁止
+ * - アイコンで構造化
+ * - 確認質問は「原則1つ（最大1つ）」
+ */
+function buildOutputRules(): string[] {
+  return [
+    "Markdownの見出し（##、###など）は使わない。代わりにアイコンで構造化する。",
+    "回答の構成は必ずこの順：👉結論(仮OK/条件付きOK) → ✅要点(最大3つ) → ⚠️注意(必要なら最大2つ) → 🔎確認(原則1つ、最大1つ)。",
+    "🔎確認質問は『結論が変わる可能性が高い』ものだけに絞る。その他の不明点は『該当するなら〜』の注意に吸収する。",
+    "文章は短め。箇条書き優先。冗長な前置きは禁止。",
+  ];
+}
+
 function buildStyleRules(dialect: Dialect, stance: Stance): string[] {
   const rules: string[] = [];
 
@@ -149,10 +164,7 @@ function clampForContext(s: string, n: number) {
 
 type MsgMini = { role: "user" | "assistant"; content: string; created_at: string };
 
-async function buildConversationContext(params: {
-  db: any;
-  convId: string;
-}): Promise<string[]> {
+async function buildConversationContext(params: { db: any; convId: string }): Promise<string[]> {
   const { db, convId } = params;
 
   const lines: string[] = [];
@@ -181,7 +193,6 @@ async function buildConversationContext(params: {
   const msgs = (rows ?? []) as MsgMini[];
   if (msgs.length > 0) {
     lines.push("【直近ログ】（古→新）");
-    // DBはdescで取ってるのでひっくり返す
     const asc = [...msgs].reverse();
     for (const m of asc) {
       const role = m.role === "user" ? "ユーザー" : "さじかげん";
@@ -189,8 +200,10 @@ async function buildConversationContext(params: {
     }
   }
 
-  // 3) “ここだけは守れ” を軽く追加（プロンプトが迷子になりにくい）
-  lines.push("【ルール】上の会話要約・直近ログと矛盾しない範囲で回答する。矛盾があるなら確認質問を先に出す。");
+  // 3) “ここだけは守れ”
+  lines.push(
+    "【ルール】上の会話要約・直近ログと矛盾しない範囲で回答する。矛盾があるなら確認質問を先に出す（ただし確認は原則1つ）。"
+  );
 
   return lines;
 }
@@ -287,13 +300,15 @@ export async function POST(req: Request) {
     let answer = "";
     try {
       const styleRules = buildStyleRules(dialect, stance);
+      const outputRules = buildOutputRules();
 
-      // ✅ ここが今回のメイン：コンテクスト注入
+      // ✅ コンテクスト注入
       const contextLines = await buildConversationContext({ db, convId });
 
       const promptParts: PromptParts = {
         context: contextLines,
-        injectedRules: styleRules,
+        // ✅ 25号店：出力ルールを先に。次に口調/スタンス。最後にガードレール
+        injectedRules: [...outputRules, ...styleRules],
         guardrails: gr.action === "inject" ? gr.guardrailLines : [],
       };
 

@@ -47,7 +47,7 @@ type StatusRes = StatusOk | StatusNg;
 
 type ChatOk = {
   ok: true;
-  plan: string;
+  plan: string; 
   used_talks: number | null;
   limit_talks: number | null;
   conversation_id: string | null;
@@ -170,9 +170,7 @@ export default function ChatClient() {
 
     if (low.includes("jwt expired") || low.includes("invalid jwt") || low.includes("not logged in")) {
       setErrMsg("セッションが切れています。ログインし直してください。");
-      // ページ遷移（loginページが存在する前提）
-      // もし /login が無い場合は、あなたの実装に合わせて変更してOK
-      router.push("/login");
+      router.push("/login?redirect=/chat");
       return true;
     }
     return false;
@@ -337,6 +335,7 @@ export default function ChatClient() {
     return used < limitTalks;
   })();
 
+  // ✅ 25号店：二重返信潰し（assistant手動追加を廃止、DB再読込に統一）
   const sendMessage = async () => {
     const text = input.trim();
     if (!text) return;
@@ -352,6 +351,8 @@ export default function ChatClient() {
       content: text,
       created_at: new Date().toISOString(),
     };
+
+    // 送信体験を軽くするため、ユーザー発言だけは先に表示してOK
     setMessages((prev) => [...prev, tempUser]);
     setTimeout(scrollMessagesBottom, 0);
 
@@ -389,41 +390,41 @@ export default function ChatClient() {
       setUsedTalks(okJson.used_talks);
       setLimitTalks(okJson.limit_talks);
 
-      const newConvId = okJson.conversation_id;
-      if (newConvId && isUuid(newConvId)) {
-        if (!activeConversationId) {
-          setActiveConversationId(newConvId);
-          saveLocal("chat:activeConversationId", newConvId);
+      const convId = okJson.conversation_id;
 
-          setMessages((prev) =>
-            prev.map((m) => (m.conversation_id === "temp" ? { ...m, conversation_id: newConvId } : m))
-          );
-
-          await loadThreads();
-        } else {
-          setThreads((prev) =>
-            prev.map((t) => (t.id === activeConversationId ? { ...t, preview: clamp(text, 20) } : t))
-          );
+      // conversation_id が返ってきたら確定（新規スレッド初回送信でもここで確定）
+      if (convId && isUuid(convId)) {
+        if (activeConversationId !== convId) {
+          setActiveConversationId(convId);
+          saveLocal("chat:activeConversationId", convId);
         }
+
+        // 先に表示した tempUser の会話IDを合わせる（見た目の一瞬の違和感を減らす）
+        setMessages((prev) =>
+          prev.map((m) => (m.conversation_id === "temp" ? { ...m, conversation_id: convId } : m))
+        );
+
+        // ✅ DBを正として再読込（ここが二重返信・時刻ズレの根本解決）
+        await loadMessages(convId);
+        await loadThreads();
+      } else if (activeConversationId) {
+        // 既存スレッドでconversation_id返らないケース（念のため）
+        await loadMessages(activeConversationId);
+        await loadThreads();
+      } else {
+        // ここに来るのはAPI側がconversation_id返してない＝仕様不一致の可能性大
+        // とりあえずスレッド更新だけ試す
+        await loadThreads();
       }
 
-      const tempAsst: MessageRow = {
-        id: crypto.randomUUID(),
-        conversation_id: newConvId || activeConversationId || "temp",
-        role: "assistant",
-        content: okJson.message,
-        created_at: new Date().toISOString(),
-      };
-
-      setMessages((prev) => [...prev, tempAsst]);
-      setTimeout(scrollMessagesBottom, 0);
+      // ❌ 25号店：tempAsst は作らない（DBに入ったassistantを再読込で表示する）
     } catch (e: any) {
-      // ✅ 親切エラーメッセ（JWT切れならログインへ）
       if (handleAuthishError(e)) return;
 
       const msg = String(e?.message || "send failed");
       if (msg.toLowerCase().includes("jwt expired")) {
         setErrMsg("セッション切れ（JWT expired）です。更新 or 再ログインしてください。");
+        router.push("/login?redirect=/chat");
       } else {
         setErrMsg(msg);
       }
@@ -588,7 +589,7 @@ export default function ChatClient() {
           {/* left threads */}
           <div
             style={{
-              width: 280,
+              width: 340, // ✅ 280→340
               borderRight: "1px solid #eee",
               display: "flex",
               flexDirection: "column",
@@ -620,6 +621,7 @@ export default function ChatClient() {
                 overflowY: "auto",
                 padding: 10,
                 background: "#fafafa",
+                minHeight: 0,
               }}
             >
               {threads.length === 0 && (
@@ -685,7 +687,7 @@ export default function ChatClient() {
                 ) : null}
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <button
                   onClick={renameThread}
                   disabled={!activeConversationId}
