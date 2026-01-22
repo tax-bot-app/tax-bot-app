@@ -78,35 +78,52 @@ function normalizeStance(x: string): Stance {
 }
 
 /**
- * ✅ 25号店：出力ルール（見やすさ + 質問は原則1つ）
- * - 見出し（##/###）禁止
- * - アイコンで構造化
- * - 確認質問は「原則1つ（最大1つ）」
+ * ✅ 出力ルール（さじかげんフォーマット）
+ * - 見出し禁止
+ * - 🥄ちょうど良いライン を基本
+ * - 要求があった場合のみ 🍚🥄攻め / 🧂🥄守り を追加
+ * - 最後に必ず決め台詞
  */
 function buildOutputRules(): string[] {
   return [
-    "Markdownの見出し（##、###など）は使わない。代わりにアイコンで構造化する。",
-    "回答の構成は必ずこの順：👉結論(仮OK/条件付きOK) → ✅要点(最大3つ) → ⚠️注意(必要なら最大2つ) → 🔎確認(原則1つ、最大1つ)。",
-    "🔎確認質問は『結論が変わる可能性が高い』ものだけに絞る。その他の不明点は『該当するなら〜』の注意に吸収する。",
-    "文章は短め。箇条書き優先。冗長な前置きは禁止。",
+    "Markdownの見出し（##、###など）は使わない。アイコンとテキストだけで構造化する。",
+
+    "基本は以下の1ブロックのみで回答する：",
+    "🥄 ちょうど良いライン（結論を簡潔に） → ✅要点（最大3つ） → ⚠️注意（必要なら最大2つ） → 🔎確認（原則1つ、最大1つ）",
+
+    "ユーザーから『攻め』『守り』『他の見方』『リスク取りたい』『安全寄り』などの要求があった場合のみ、以下も追加する：",
+    "🍚🥄 攻めライン（リスク許容・積極寄りの考え方）",
+    "🧂🥄 守りライン（リスク最小化・保守寄りの考え方）",
+
+    "複数ラインを出す場合の順番は必ず：🥄ちょうど良い → 🍚🥄攻め → 🧂🥄守り",
+
+    "🔎確認質問は『結論が変わる可能性が高い』ものだけ1つに絞る。複数質問は禁止。",
+    "その他の不明点は質問にせず『該当するなら〜』の注意に吸収する。",
+
+    "回答の最後に、必ず次の決め台詞を入れる：",
+    "「とはいえども、税務の世界は答えはひとつちゃうからな。攻め・守りラインの考え方も知りたかったら、遠慮なく言うてな！」",
   ];
 }
 
+/**
+ * ✅ 口調・スタンス制御
+ */
 function buildStyleRules(dialect: Dialect, stance: Stance): string[] {
   const rules: string[] = [];
 
   if (dialect === "kansai") {
-    rules.push("口調は関西弁で。ただし失礼にならず、読みやすさ優先。");
+    rules.push("口調は自然な関西弁で話す。『です・ます調』の敬語は禁止。『やで・やな・やと思う・ちゃう』など口語を使う。");
+    rules.push("乱暴・命令口調・上から目線にはならない。フラットで実務的な関西弁にする。");
   } else {
-    rules.push("口調は標準語で。丁寧で簡潔に。");
+    rules.push("口調は標準語。丁寧で簡潔に。");
   }
 
   if (stance === "zubatto") {
-    rules.push("スタイルは結論ファーストでズバっと。余計な前置きは削る。");
-    rules.push("言いにくいことも、配慮しつつハッキリ言う（断定できない所は断定しない）。");
+    rules.push("スタイルは結論ファーストでズバっと。余計な前置きや一般論は削る。");
+    rules.push("言いにくいことも、曖昧に逃げず率直に伝える（断定できない点は条件付きで表現）。");
   } else {
-    rules.push("スタイルは参謀役。論点整理→選択肢→おすすめ→次のアクションの順で導く。");
-    rules.push("敬語で、出過ぎた断定は避け、前提条件を明確化する。");
+    rules.push("スタイルは参謀役。論点整理→選択肢→おすすめ→次アクションの順で導く。");
+    rules.push("過度な断定は避け、実務上のリスクも併記する。");
   }
 
   return rules;
@@ -155,7 +172,7 @@ async function ensureConversationId(params: {
   return data.id as string;
 }
 
-// --- ここから追加：コンテクスト生成 ---
+// --- コンテクスト生成 ---
 
 function clampForContext(s: string, n: number) {
   const t = (s ?? "").replace(/\s+/g, " ").trim();
@@ -169,10 +186,9 @@ async function buildConversationContext(params: { db: any; convId: string }): Pr
 
   const lines: string[] = [];
 
-  // 1) 要約（conversations.summary）
   const { data: conv } = await db
     .from("conversations")
-    .select("summary, summary_updated_at, created_at")
+    .select("summary, created_at")
     .eq("id", convId)
     .maybeSingle();
 
@@ -181,8 +197,7 @@ async function buildConversationContext(params: { db: any; convId: string }): Pr
     lines.push(`【会話要約】${clampForContext(summary, 400)}`);
   }
 
-  // 2) 直近ログ（最大N件）
-  const N = Number(process.env.CHAT_CONTEXT_TURNS || "16"); // 16メッセ（=8往復くらい）
+  const N = Number(process.env.CHAT_CONTEXT_TURNS || "16");
   const { data: rows } = await db
     .from("messages")
     .select("role, content, created_at")
@@ -200,9 +215,8 @@ async function buildConversationContext(params: { db: any; convId: string }): Pr
     }
   }
 
-  // 3) “ここだけは守れ”
   lines.push(
-    "【ルール】上の会話要約・直近ログと矛盾しない範囲で回答する。矛盾があるなら確認質問を先に出す（ただし確認は原則1つ）。"
+    "【ルール】会話要約・直近ログと矛盾しない範囲で回答する。確認は原則1つまで。"
   );
 
   return lines;
@@ -244,7 +258,7 @@ export async function POST(req: Request) {
     const url = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
     const anon = mustEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
-    // ① user取得
+    // user取得
     const authClient = createClient(url, anon, { auth: { persistSession: false } });
     const { data: userRes, error: userErr } = await authClient.auth.getUser(token);
     if (userErr || !userRes?.user) {
@@ -253,13 +267,12 @@ export async function POST(req: Request) {
     }
     const user = userRes.user;
 
-    // ② DBアクセス（RLS効かせる）
+    // DB
     const db = createClient(url, anon, {
       auth: { persistSession: false },
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
 
-    // plan
     const { data: urow } = await db.from("users").select("plan").eq("id", user.id).maybeSingle();
     const plan = (urow?.plan as string) ?? "free";
     const limit = limitFromPlan(plan);
@@ -274,7 +287,7 @@ export async function POST(req: Request) {
       return NextResponse.json(res, { status: 403 });
     }
 
-    // 🛡 ガードレール（AI前）
+    // ガードレール
     const gr = judgeGuardrails(message);
     if (gr.action === "block") {
       const res: ChatRes = {
@@ -288,7 +301,7 @@ export async function POST(req: Request) {
       return NextResponse.json(res, { status: 200 });
     }
 
-    // conversation id確定（なければ新規）
+    // conversation確定
     const convId = await ensureConversationId({
       db,
       userId: user.id,
@@ -296,18 +309,15 @@ export async function POST(req: Request) {
       firstUserMessage: message,
     });
 
-    // ③ AI回答（先に呼ぶ：失敗なら消費しない）
+    // AI
     let answer = "";
     try {
       const styleRules = buildStyleRules(dialect, stance);
       const outputRules = buildOutputRules();
-
-      // ✅ コンテクスト注入
       const contextLines = await buildConversationContext({ db, convId });
 
       const promptParts: PromptParts = {
         context: contextLines,
-        // ✅ 25号店：出力ルールを先に。次に口調/スタンス。最後にガードレール
         injectedRules: [...outputRules, ...styleRules],
         guardrails: gr.action === "inject" ? gr.guardrailLines : [],
       };
@@ -319,7 +329,7 @@ export async function POST(req: Request) {
       return NextResponse.json(res, { status: 502 });
     }
 
-    // ④ カウント（冪等）: 成功したら消費
+    // カウント
     const { data, error } = await db.rpc("consume_talk_v2", {
       p_user_id: user.id,
       p_limit: limit,
@@ -347,14 +357,14 @@ export async function POST(req: Request) {
       return NextResponse.json(res, { status: 429 });
     }
 
-    // ⑤ DBに保存（課金OKになった後）
+    // 保存
     try {
       await db.from("messages").insert([
         { conversation_id: convId, user_id: user.id, role: "user", content: message },
         { conversation_id: convId, user_id: user.id, role: "assistant", content: answer },
       ]);
     } catch {
-      // 保存失敗でも回答は返す（体験優先）
+      // ignore
     }
 
     const res: ChatRes = {

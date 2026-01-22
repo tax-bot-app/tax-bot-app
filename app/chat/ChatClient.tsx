@@ -24,9 +24,9 @@ type ConversationRow = {
 
 type ThreadItem = {
   id: string;
-  title: string; // 表示名（summary）
+  title: string;
   createdAt: string;
-  preview: string; // 最新メッセの頭20文字（なければ空）
+  preview: string;
 };
 
 type StatusOk = {
@@ -47,7 +47,7 @@ type StatusRes = StatusOk | StatusNg;
 
 type ChatOk = {
   ok: true;
-  plan: string; 
+  plan: string;
   used_talks: number | null;
   limit_talks: number | null;
   conversation_id: string | null;
@@ -144,13 +144,16 @@ export default function ChatClient() {
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const msgsRef = useRef<HTMLDivElement | null>(null);
+  const endRef = useRef<HTMLDivElement | null>(null);
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
 
-  const scrollMessagesBottom = () => {
-    const el = msgsRef.current;
+  const scrollToBottom = (smooth = false) => {
+    const el = endRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    try {
+      el.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "end" });
+    } catch {}
   };
 
   // ✅ セッション取得を一本化：JWT切れならrefreshを試す。ダメならnull。
@@ -163,14 +166,14 @@ export default function ChatClient() {
     return token;
   };
 
-  // ✅ JWT expired等のときに「再ログイン導線」を出す
+  // ✅ JWT expired等のときにログインへ
   const handleAuthishError = (raw: unknown) => {
     const msg = String((raw as any)?.message || raw || "");
     const low = msg.toLowerCase();
 
     if (low.includes("jwt expired") || low.includes("invalid jwt") || low.includes("not logged in")) {
       setErrMsg("セッションが切れています。ログインし直してください。");
-      router.push("/login?redirect=/chat");
+      router.push("/login");
       return true;
     }
     return false;
@@ -202,10 +205,9 @@ export default function ChatClient() {
         return;
       }
 
-      const okJson: Extract<StatusRes, { ok: true }> = json;
-      setPlan(okJson.plan);
-      setUsedTalks(okJson.used_talks);
-      setLimitTalks(okJson.limit_talks);
+      setPlan(json.plan);
+      setUsedTalks(json.used_talks);
+      setLimitTalks(json.limit_talks);
     } catch (e: any) {
       if (handleAuthishError(e)) return;
       setErrMsg(e?.message || "status failed");
@@ -280,8 +282,9 @@ export default function ChatClient() {
         .limit(500);
 
       if (error) throw error;
+
       setMessages((data ?? []) as MessageRow[]);
-      setTimeout(scrollMessagesBottom, 0);
+      setTimeout(() => scrollToBottom(false), 0);
     } catch (e: any) {
       if (handleAuthishError(e)) return;
       setErrMsg(e?.message || "load messages failed");
@@ -296,10 +299,7 @@ export default function ChatClient() {
     setMessages([]);
     setErrMsg(null);
     setInput("");
-    setTimeout(() => {
-      const el = msgsRef.current;
-      if (el) el.scrollTop = 0;
-    }, 0);
+    setTimeout(() => scrollToBottom(false), 0);
   };
 
   const renameThread = async () => {
@@ -330,127 +330,44 @@ export default function ChatClient() {
 
   const canSend = (() => {
     if (loading) return false;
-    if (!limitTalks) return true; // まだ読めてない時は一旦true（サーバで弾く）
+    if (!limitTalks) return true;
     const used = usedTalks ?? 0;
     return used < limitTalks;
   })();
 
-  // ✅ 25号店：二重返信潰し（assistant手動追加を廃止、DB再読込に統一）
-  const sendMessage = async () => {
-    const text = input.trim();
-    if (!text) return;
+  // ✅ アイコン行の装飾（👉太字、🔎背景）
+  const renderAssistantContent = (content: string) => {
+    const lines = (content ?? "").split("\n");
+    return (
+      <div style={{ fontSize: 14, lineHeight: 1.6 }}>
+        {lines.map((line, idx) => {
+          const trimmed = line.trimStart();
+          const isConclusion = trimmed.startsWith("👉");
+          const isCheck = trimmed.startsWith("🔎");
+          const isPoint = trimmed.startsWith("✅");
 
-    setErrMsg(null);
-    setLoading(true);
-    setInput("");
+          if (!line.trim()) return <div key={idx} style={{ height: 6 }} />;
 
-    const tempUser: MessageRow = {
-      id: crypto.randomUUID(),
-      conversation_id: activeConversationId || "temp",
-      role: "user",
-      content: text,
-      created_at: new Date().toISOString(),
-    };
-
-    // 送信体験を軽くするため、ユーザー発言だけは先に表示してOK
-    setMessages((prev) => [...prev, tempUser]);
-    setTimeout(scrollMessagesBottom, 0);
-
-    try {
-      const token = await getToken();
-      if (!token) throw new Error("Not logged in");
-
-      const idempotencyKey = crypto.randomUUID();
-
-      const body: any = {
-        message: text,
-        idempotencyKey,
-        dialect,
-        stance,
-      };
-      if (activeConversationId) body.conversationId = activeConversationId;
-
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
-
-      const json = (await res.json().catch(() => null)) as ChatRes | null;
-      if (!json) throw new Error(`chat failed: ${res.status}`);
-
-      if (json.ok !== true) {
-        setErrMsg(json.error || `chat failed: ${res.status}`);
-        return;
-      }
-
-      const okJson: Extract<ChatRes, { ok: true }> = json;
-
-      setPlan(okJson.plan);
-      setUsedTalks(okJson.used_talks);
-      setLimitTalks(okJson.limit_talks);
-
-      const convId = okJson.conversation_id;
-
-      // conversation_id が返ってきたら確定（新規スレッド初回送信でもここで確定）
-      if (convId && isUuid(convId)) {
-        if (activeConversationId !== convId) {
-          setActiveConversationId(convId);
-          saveLocal("chat:activeConversationId", convId);
-        }
-
-        // 先に表示した tempUser の会話IDを合わせる（見た目の一瞬の違和感を減らす）
-        setMessages((prev) =>
-          prev.map((m) => (m.conversation_id === "temp" ? { ...m, conversation_id: convId } : m))
-        );
-
-        // ✅ DBを正として再読込（ここが二重返信・時刻ズレの根本解決）
-        await loadMessages(convId);
-        await loadThreads();
-      } else if (activeConversationId) {
-        // 既存スレッドでconversation_id返らないケース（念のため）
-        await loadMessages(activeConversationId);
-        await loadThreads();
-      } else {
-        // ここに来るのはAPI側がconversation_id返してない＝仕様不一致の可能性大
-        // とりあえずスレッド更新だけ試す
-        await loadThreads();
-      }
-
-      // ❌ 25号店：tempAsst は作らない（DBに入ったassistantを再読込で表示する）
-    } catch (e: any) {
-      if (handleAuthishError(e)) return;
-
-      const msg = String(e?.message || "send failed");
-      if (msg.toLowerCase().includes("jwt expired")) {
-        setErrMsg("セッション切れ（JWT expired）です。更新 or 再ログインしてください。");
-        router.push("/login?redirect=/chat");
-      } else {
-        setErrMsg(msg);
-      }
-    } finally {
-      setLoading(false);
-    }
+          return (
+            <div
+              key={idx}
+              style={{
+                padding: isCheck ? "6px 8px" : undefined,
+                borderRadius: isCheck ? 8 : undefined,
+                background: isCheck ? "#fff7d6" : undefined,
+                fontWeight: isConclusion ? 800 : isPoint ? 700 : undefined,
+                marginTop: idx === 0 ? 0 : 2,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {line}
+            </div>
+          );
+        })}
+      </div>
+    );
   };
-
-  useEffect(() => {
-    refreshStatus();
-    loadThreads();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!activeConversationId) return;
-    loadMessages(activeConversationId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConversationId]);
-
-  useEffect(() => {
-    saveLocal("chat:dialect", dialect);
-  }, [dialect]);
-  useEffect(() => {
-    saveLocal("chat:stance", stance);
-  }, [stance]);
 
   const renderMessages = () => {
     let lastDate = "";
@@ -495,12 +412,14 @@ export default function ChatClient() {
               borderRadius: 12,
               border: "1px solid #e5e5e5",
               background: isUser ? "#eef5ff" : "#fff",
-              whiteSpace: "pre-wrap",
               overflowWrap: "anywhere",
-              lineHeight: 1.5,
             }}
           >
-            <div style={{ fontSize: 14 }}>{m.content}</div>
+            {isUser ? (
+              <div style={{ fontSize: 14, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{m.content}</div>
+            ) : (
+              renderAssistantContent(m.content)
+            )}
             <div style={{ fontSize: 11, color: "#777", marginTop: 6, textAlign: "right" }}>
               {toHm(m.created_at)}
             </div>
@@ -511,6 +430,103 @@ export default function ChatClient() {
 
     return out;
   };
+
+  const sendMessage = async () => {
+    const text = input.trim();
+    if (!text) return;
+
+    setErrMsg(null);
+    setLoading(true);
+    setInput("");
+
+    const tempUser: MessageRow = {
+      id: crypto.randomUUID(),
+      conversation_id: activeConversationId || "temp",
+      role: "user",
+      content: text,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, tempUser]);
+    setTimeout(() => scrollToBottom(true), 0);
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not logged in");
+
+      const idempotencyKey = crypto.randomUUID();
+
+      const body: any = {
+        message: text,
+        idempotencyKey,
+        dialect,
+        stance,
+      };
+      if (activeConversationId) body.conversationId = activeConversationId;
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+
+      const json = (await res.json().catch(() => null)) as ChatRes | null;
+      if (!json) throw new Error(`chat failed: ${res.status}`);
+
+      if (json.ok !== true) {
+        setErrMsg(json.error || `chat failed: ${res.status}`);
+        return;
+      }
+
+      setPlan(json.plan);
+      setUsedTalks(json.used_talks);
+      setLimitTalks(json.limit_talks);
+
+      const newConvId = json.conversation_id;
+      if (newConvId && isUuid(newConvId)) {
+        if (!activeConversationId) {
+          setActiveConversationId(newConvId);
+          saveLocal("chat:activeConversationId", newConvId);
+
+          setMessages((prev) =>
+            prev.map((m) => (m.conversation_id === "temp" ? { ...m, conversation_id: newConvId } : m))
+          );
+
+          await loadThreads();
+        } else {
+          setThreads((prev) =>
+            prev.map((t) => (t.id === activeConversationId ? { ...t, preview: clamp(text, 20) } : t))
+          );
+        }
+
+        // ✅ assistantは手動追加しない：DBを正にする
+        await loadMessages(newConvId);
+      } else if (activeConversationId) {
+        await loadMessages(activeConversationId);
+      }
+
+      setTimeout(() => scrollToBottom(true), 0);
+    } catch (e: any) {
+      if (handleAuthishError(e)) return;
+      setErrMsg(String(e?.message || "send failed"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshStatus();
+    loadThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!activeConversationId) return;
+    loadMessages(activeConversationId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversationId]);
+
+  useEffect(() => saveLocal("chat:dialect", dialect), [dialect]);
+  useEffect(() => saveLocal("chat:stance", stance), [stance]);
 
   const activeTitle =
     (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
@@ -589,11 +605,12 @@ export default function ChatClient() {
           {/* left threads */}
           <div
             style={{
-              width: 340, // ✅ 280→340
+              width: 320,
               borderRight: "1px solid #eee",
               display: "flex",
               flexDirection: "column",
               minHeight: 0,
+              minWidth: 0,
             }}
           >
             <div
@@ -618,10 +635,10 @@ export default function ChatClient() {
               ref={listRef}
               style={{
                 flex: 1,
+                minHeight: 0,
                 overflowY: "auto",
                 padding: 10,
                 background: "#fafafa",
-                minHeight: 0,
               }}
             >
               {threads.length === 0 && (
@@ -666,7 +683,7 @@ export default function ChatClient() {
           </div>
 
           {/* right chat */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0 }}>
             {/* chat header row */}
             <div
               style={{
@@ -687,7 +704,7 @@ export default function ChatClient() {
                 ) : null}
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <button
                   onClick={renameThread}
                   disabled={!activeConversationId}
@@ -775,6 +792,8 @@ export default function ChatClient() {
               ) : (
                 renderMessages()
               )}
+
+              <div ref={endRef} />
             </div>
 
             {/* input */}
