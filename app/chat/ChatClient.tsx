@@ -284,48 +284,34 @@ export default function ChatClient() {
     }
   };
 
-  const loadThreads = async () => {
+    const loadThreads = async () => {
     setErrMsg(null);
     try {
       const token = await getToken();
       if (!token) return await handleAuthishError("Not logged in");
 
-      const { data: convs, error: convErr } = await supabase
-        .from("conversations")
-        .select("id, summary, created_at, summary_updated_at")
-        .order("created_at", { ascending: false })
+      // ✅ 1クエリで一覧＋最終メッセージプレビューまで取る
+      const { data, error } = await supabase
+        .from("v_conversation_threads")
+        .select("id, title, created_at, last_content, last_activity_at")
+        .order("last_activity_at", { ascending: false })
         .limit(50);
 
-      if (convErr) throw convErr;
+      if (error) throw error;
 
-      const base: ThreadItem[] = (convs ?? []).map((c: ConversationRow) => ({
-        id: c.id,
-        title: c.summary?.trim() ? c.summary!.trim() : "(無題)",
-        createdAt: c.created_at,
-        preview: "",
+      const items: ThreadItem[] = (data ?? []).map((r: any) => ({
+        id: String(r.id),
+        title: String(r.title ?? "(無題)"),
+        createdAt: String(r.created_at),
+        preview: r.last_content ? clamp(String(r.last_content), 24) : "",
       }));
 
-      const previews = await Promise.all(
-        base.map(async (t) => {
-          const { data: lastMsg } = await supabase
-            .from("messages")
-            .select("content, created_at")
-            .eq("conversation_id", t.id)
-            .order("created_at", { ascending: false })
-            .limit(1);
+      setThreads(items);
 
-          const head = lastMsg?.[0]?.content ? clamp(lastMsg[0].content, 24) : "";
-          return { ...t, preview: head };
-        })
-      );
-
-      previews.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      setThreads(previews);
-
-      if (previews.length > 0) {
-        if (!activeConversationId || !previews.some((t) => t.id === activeConversationId)) {
-          setActiveConversationId(previews[0].id);
-          saveLocal("chat:activeConversationId", previews[0].id);
+      if (items.length > 0) {
+        if (!activeConversationId || !items.some((t) => t.id === activeConversationId)) {
+          setActiveConversationId(items[0].id);
+          saveLocal("chat:activeConversationId", items[0].id);
         }
       } else {
         setActiveConversationId(null);
