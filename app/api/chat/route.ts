@@ -70,18 +70,30 @@ type ChatRes =
 type Dialect = "kansai" | "standard";
 type Stance = "zubatto" | "sanbo";
 
+function normalizeDialect(x: string): Dialect {
+  return x === "standard" ? "standard" : "kansai";
+}
+function normalizeStance(x: string): Stance {
+  return x === "sanbo" ? "sanbo" : "zubatto";
+}
+
 function buildStyleRules(dialect: Dialect, stance: Stance): string[] {
   const rules: string[] = [];
 
   // 口調
-  if (dialect === "kansai") rules.push("口調は関西弁で。ただし失礼にならず、読みやすさ優先。");
-  else rules.push("口調は標準語で。丁寧で簡潔に。");
+  if (dialect === "kansai") {
+    rules.push("口調は関西弁で。ただし失礼にならず、読みやすさ優先。");
+  } else {
+    rules.push("口調は標準語で。丁寧で簡潔に。");
+  }
 
   // モード
   if (stance === "zubatto") {
     rules.push("スタイルは結論ファーストでズバっと。余計な前置きは削る。");
+    rules.push("言いにくいことも、配慮しつつハッキリ言う（断定できない所は断定しない）。");
   } else {
     rules.push("スタイルは参謀役。論点整理→選択肢→おすすめ→次のアクションの順で導く。");
+    rules.push("敬語で、出過ぎた断定は避け、前提条件を明確化する。");
   }
 
   return rules;
@@ -112,12 +124,14 @@ async function ensureConversationId(params: {
     if (data?.id) return data.id as string;
   }
 
-  // なければ新規作成（summaryはまず“最初の一言短縮”でOK）
+  // なければ新規作成（title/summary の初期値は “最初の一言”）
   const seed = summarizeSeed(firstUserMessage);
+
   const { data, error } = await db
     .from("conversations")
     .insert({
       user_id: userId,
+      title: seed,
       summary: seed,
       summary_updated_at: new Date().toISOString(),
     })
@@ -143,8 +157,9 @@ export async function POST(req: Request) {
     const message = safeStr(body?.message).trim();
     const idempotencyKey = safeStr(body?.idempotencyKey).trim();
     const conversationIdRaw = safeStr(body?.conversationId).trim();
-    const dialect = (safeStr(body?.dialect) as Dialect) || "kansai";
-    const stance = (safeStr(body?.stance) as Stance) || "zubatto";
+
+    const dialect = normalizeDialect(safeStr(body?.dialect).trim());
+    const stance = normalizeStance(safeStr(body?.stance).trim());
 
     const conversationId = conversationIdRaw ? conversationIdRaw : null;
 
@@ -152,6 +167,7 @@ export async function POST(req: Request) {
       const res: ChatRes = { ok: false, error: "message is required" };
       return NextResponse.json(res, { status: 400 });
     }
+
     if (!idempotencyKey) {
       const res: ChatRes = { ok: false, error: "idempotencyKey is required" };
       return NextResponse.json(res, { status: 400 });
@@ -197,7 +213,7 @@ export async function POST(req: Request) {
     // 🛡 ガードレール（AI前）
     const gr = judgeGuardrails(message);
     if (gr.action === "block") {
-      // Level1: AIにも渡さない / カウントもしない / DBにも残さない（危ない内容の保存を避ける）
+      // Level1: AIにも渡さない / カウントもしない / DBにも残さない
       const res: ChatRes = {
         ok: true,
         plan,
@@ -223,8 +239,7 @@ export async function POST(req: Request) {
       const styleRules = buildStyleRules(dialect, stance);
 
       const promptParts: PromptParts = {
-        // A: 今回は “直近” はまだ注入しない（DB保存だけ先にやる）
-        context: [],
+        context: [], // A: 直近注入はまだ無し
         injectedRules: styleRules,
         guardrails: gr.action === "inject" ? gr.guardrailLines : [],
       };
@@ -270,7 +285,6 @@ export async function POST(req: Request) {
         { conversation_id: convId, user_id: user.id, role: "user", content: message },
         { conversation_id: convId, user_id: user.id, role: "assistant", content: answer },
       ]);
-      // summary が null のままの古い会話がある場合はここで補正してもOK（必要なら）
     } catch {
       // 保存失敗でも回答は返す（体験優先）
     }
