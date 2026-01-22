@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { getSupabaseClient } from "../lib/supabaseClient";
 
@@ -561,7 +561,7 @@ export default function ChatPage() {
   // ---- render helpers ----
   const renderMessages = () => {
     let lastDate = "";
-    const out: JSX.Element[] = [];
+    const out: React.ReactNode[] = [];
 
     messages.forEach((m, i) => {
       const date = toJstLabel(m.created_at);
