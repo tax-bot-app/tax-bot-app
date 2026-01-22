@@ -325,17 +325,22 @@ export default function ChatClient() {
         }),
       });
 
-      const json = (await res.json().catch(() => null)) as ChatRes | null;
-      if (!json) throw new Error("Invalid response");
+      const json = (await res.json().catch(() => null)) as StatusRes | null;
 
-      if (!res.ok || json.ok === false) {
-        throw new Error((json as any).error || `chat failed: ${res.status}`);
-      }
+if (!json) {
+  setErrMsg(`status failed: ${res.status}`);
+  return;
+}
 
-      // usage更新
-      setPlan(json.plan);
-      setUsedTalks(json.used_talks);
-      setLimitTalks(json.limit_talks);
+if (json.ok !== true) {
+  setErrMsg(json.error || `status failed: ${res.status}`);
+  return;
+}
+
+// ✅ ここから先は json が { ok: true; ... } に確定する
+setPlan(json.plan);
+setUsedTalks(json.used_talks);
+setLimitTalks(json.limit_talks);
 
       // 新規だった場合、ここで会話ID確定
       const convId = json.conversation_id || activeConversationId;
