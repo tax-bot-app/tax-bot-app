@@ -83,6 +83,23 @@ function buildOutputRules(): string[] {
   ];
 }
 
+function buildAmbiguityBoostRules(message: string): string[] {
+  const m = (message ?? "").trim();
+  if (!m) return [];
+
+  // 「安全度」系の曖昧語をトリガーにする
+  const hasSafety =
+    /安全度|安全性|リスク|危険|グレー|大丈夫/.test(m);
+
+  if (!hasSafety) return [];
+
+  return [
+    "重要：ユーザーの『安全度/安全性/大丈夫？/リスク』は、まず税務・経営の安全性として解釈する（否認リスク/税務調査リスク/資金繰り・意思決定リスク）。一般的な安全（健康/事故/防犯）に逸れない。",
+    "『安全度』は必ず『税務上の安全度（否認リスク/税務調査リスク）』として 高/中/低 の3段階で返す。",
+    "税務の話か一般論かで揺れるときは、本文は税務で回答し、最後の🔎でYES/NO確認を1つだけ置く。",
+  ];
+}
+
 // 禁止語（“混在”を止めるための実務用）
 // ・ズバっとは標準語でもタメ口（敬語禁止）
 // ・関西弁は参謀でも敬語に逃げない（混在が一番ダサい）
@@ -192,7 +209,7 @@ function clampForContext(s: string, n: number) {
   const t = (s ?? "").replace(/\s+/g, " ").trim();
   return t.length <= n ? t : t.slice(0, n) + "…";
 }
-type MsgMini = { role: "user" | "assistant"; content: string; created_at: string };
+type MsgMini = { id: string; role: "user" | "assistant"; content: string; created_at: string };
 
 async function buildConversationContext(params: { db: any; convId: string }): Promise<string[]> {
   const { db, convId } = params;
@@ -209,9 +226,10 @@ async function buildConversationContext(params: { db: any; convId: string }): Pr
   const N = Number(process.env.CHAT_CONTEXT_TURNS || "16");
   const { data: rows } = await db
     .from("messages")
-    .select("role, content, created_at")
+    .select("id, role, content, created_at")
     .eq("conversation_id", convId)
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(Math.max(0, Math.min(60, N)));
 
   const msgs = (rows ?? []) as MsgMini[];
@@ -307,6 +325,23 @@ function ensureSaltBold(secSalt: string[]): string[] {
   return out;
 }
 
+function collapseInquiryToSingleLine(askLines: string[]): string[] {
+  if (!askLines || askLines.length === 0) return askLines;
+
+  // 例：
+  // ["🔎確認", "税務の安全度の話で合ってる？（はい/いいえ）"]
+  // → ["🔎確認 税務の安全度の話で合ってる？（はい/いいえ）"]
+  const head = askLines[0].trim();
+  const rest = askLines
+    .slice(1)
+    .map((l) => l.trim())
+    .filter((x) => x.length > 0)
+    .join(" ");
+
+  if (!rest) return [head];
+  return [`${head} ${rest}`.trim()];
+}
+
 function enforceTemplate(answer: string): string {
   const a = answer.replace(/\r\n/g, "\n").trim();
   if (!a) return a;
@@ -343,8 +378,7 @@ function enforceTemplate(answer: string): string {
   parts.push(...key);
 
   if (warn.length > 0) parts.push("", ...warn);
-  if (askFixed.length > 0) parts.push("", ...askFixed);
-
+  if (askFixed.length > 0) parts.push("", ...collapseInquiryToSingleLine(askFixed));
   return parts.join("\n").trim();
 }
 
@@ -569,14 +603,15 @@ export async function POST(req: Request) {
     let answer = "";
     try {
       const outputRules = buildOutputRules();
-      const styleRules = buildStyleRules(dialect, stance);
-      const contextLines = await buildConversationContext({ db, convId });
+const ambiguityBoost = buildAmbiguityBoostRules(message);
+const styleRules = buildStyleRules(dialect, stance);
+const contextLines = await buildConversationContext({ db, convId });
 
-      const promptPartsBase: PromptParts = {
-        context: contextLines,
-        injectedRules: [...outputRules, ...styleRules],
-        guardrails: gr.action === "inject" ? gr.guardrailLines : [],
-      };
+const promptPartsBase: PromptParts = {
+  context: contextLines,
+  injectedRules: [...outputRules, ...ambiguityBoost, ...styleRules],
+  guardrails: gr.action === "inject" ? gr.guardrailLines : [],
+};
 
       answer = await generateAnswerStrict({ message, promptPartsBase, dialect, stance });
     } catch (e: any) {
