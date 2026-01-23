@@ -408,17 +408,22 @@ function enforceTemplate(answer: string): string {
 
 
 function catchphraseFor(dialect: Dialect, stance: Stance): string {
-  // ズバっとは常にタメ口（標準語でも）
-  if (dialect === "kansai") {
-    return "とはいえども、税務の世界は答えはひとつちゃうからな。**攻め・守り**ラインも知りたかったら、遠慮なく言うてな！";
+  // ① 関西弁 × 参謀（最優先）
+  if (dialect === "kansai" && stance === "sanbo") {
+    return "攻め・守りの考え方も含めて整理できますさかい、遠慮なく言うてくださいな。";
   }
 
-  // 標準語
-  if (stance === "sanbo") {
-    // 参謀だけは丁寧語OK
-    return "とはいえ、税務の世界は答えが一つとは限りません。**攻め・守り**ラインも必要なら教えてください。";
+  // ② 標準語 × 参謀
+  if (dialect === "standard" && stance === "sanbo") {
+    return "攻め・守りの考え方も含めて整理できます。必要でしたらお知らせください。";
   }
-  // 標準語ズバっと（タメ口）
+
+  // ③ 関西弁 × ズバっと
+  if (dialect === "kansai" && stance === "zubatto") {
+    return "とはいえ、税務の世界は答えがひとつちゃう。**攻め・守り**ラインも知りたかったら、遠慮なく言うてな。";
+  }
+
+  // ④ 標準語 × ズバっと
   return "とはいえ、税務の世界は答えが一つじゃない。**攻め・守り**ラインも知りたければ、遠慮なく言って。";
 }
 
