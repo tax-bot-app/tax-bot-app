@@ -588,6 +588,23 @@ if (usedKnowledge && !already) {
     .trim();
 }
 
+// 🔎は「返事いらんメモ」に固定（質問調を潰す）
+{
+  const lines = a.split("\n");
+  const out: string[] = [];
+  for (const line of lines) {
+    const t = line.trimStart();
+    if (!t.startsWith("🔎")) {
+      out.push(line);
+      continue;
+    }
+
+    // 既存の🔎行を“宣言”に置換（返答要求をしない）
+    out.push("🔎確認（返事いらんメモ） 税務前提で答えたで。前提が違うなら言うてな。");
+  }
+  a = out.join("\n").trim();
+}
+
   if (stance === "zubatto") a = forceCasual(a, dialect);
 
     // 🔎がある場合は必ず末尾1行に寄せる（最終保険）
