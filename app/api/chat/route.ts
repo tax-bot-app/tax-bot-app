@@ -254,11 +254,43 @@ type KnowledgeItem = {
   priority: number;
 };
 
-function wantsAttackDefenseDetail(message: string): boolean {
+function wantsAttackDefenseDetail(message: string, prevUserMessage: string | null): boolean {
   const m = (message ?? "").trim();
+  const prev = (prevUserMessage ?? "").trim();
 
-  // 広めに拾う（取りこぼし防止）
-  return /攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|幅|レンジ|強め|弱め|リスク高|リスク低/.test(m);
+  // 1) 直球ワード（今まで通り：強トリガー）
+  const strong =
+    /攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|幅|レンジ|強め|弱め|リスク高|リスク低/.test(m);
+
+  if (strong) return true;
+
+  // 2) 「追撃っぽい短文」＝深掘り合図（取りこぼし防止）
+  // 完全一致じゃなく「含む」で拾う（お願い/頼む/続き/もっと/詳しく/教えて など）
+  const followupCue =
+    /(教えて|おしえて|詳しく|詳細|具体|もう少し|もっと|続き|つづき|お願い|おねがい|頼む|たのむ|よろしく|再度|もう一回|もういちど|さっき|今の|それ)/.test(m);
+
+  // 3) 「誤送信っぽい」も救う（短すぎる）
+  const veryShort = m.length <= 2 || /^[\.\-ー…\?？!！wｗ]+$/.test(m);
+
+  // 4) 明らかな話題転換なら止める（雑でOK・最小ガード）
+  // 直前のユーザー発言がある場合だけ、キーワードが全く被ってないなら「別話題っぽい」
+  const topicShiftLikely = (() => {
+    if (!prev) return false;
+    // ざっくり単語の被りを見たいので、漢字かな英数を3文字以上で拾う
+    const tokens = (s: string) =>
+      Array.from(s.matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((x) => x[0]);
+    const a = tokens(prev);
+    const b = tokens(m);
+    if (a.length === 0 || b.length === 0) return false;
+    const setA = new Set(a);
+    const overlap = b.some((t) => setA.has(t));
+    return !overlap;
+  })();
+
+  // 追撃 or 誤送信っぽいなら詳細ON（ただし話題転換っぽいならOFF）
+  if ((followupCue || veryShort) && !topicShiftLikely) return true;
+
+  return false;
 }
 
 function inferTopics(message: string): string[] {
@@ -530,6 +562,8 @@ function forceCasual(text: string, dialect: Dialect): string {
   return s;
 }
 
+
+
 function postProcessAnswer(
   raw: string,
   dialect: Dialect,
@@ -774,7 +808,7 @@ try {
 const showMiniAttackDefense = usedKnowledge;
 
 // ✅ 詳細攻め守り：ユーザーが求めた時だけON
-const allowAttackDefenseDetail = usedKnowledge && wantsAttackDefenseDetail(message);
+const allowAttackDefenseDetail = usedKnowledge && wantsAttackDefenseDetail(message, prevUserMessage);
 
 
   // 2) ルール類を組み立て
