@@ -69,6 +69,7 @@ function normalizeStance(x: string): Stance {
 function buildOutputRules(): string[] {
   return [
     "Markdownの見出し（##、###など）は使わない。",
+    "見出しラベルは固定：『🧂ちょうど良いライン』『✅要点』『⚠️注意』『🔎確認』。別の絵文字（👉など）に置換しない。",
     "構成はこの順で固定：🧂ちょうど良いライン → ✅要点 → ⚠️注意（必要なら） → 🔎確認（原則1つ、最大1つ）。",
     "曖昧な質問は税務・経営の文脈を最優先で補完して解釈する。一般論（車/健康/恋愛など）に飛ばない。🔎は原則『返事いらんメモ』。YES/NO確認は、本当に回答が分岐して致命傷になる時だけ。",
     "『安全度』は原則『税務上の安全度（否認リスク/税務調査リスク）』の意味で解釈する。安全度は 高/中/低 の3段階で言語化して返す。",
@@ -123,9 +124,13 @@ const FORBIDDEN_POLITE = [
 ];
 
 function forbiddenFor(dialect: Dialect, stance: Stance): string[] | null {
-  if (stance === "zubatto") return FORBIDDEN_POLITE; // ズバっとは常にタメ口
-  if (dialect === "kansai") return FORBIDDEN_POLITE; // 関西弁も“です/ます混在”禁止
-  return null; // 標準語×参謀だけは敬語OK
+  // ズバっとは常にタメ口（標準語でも関西弁でも）
+  if (stance === "zubatto") return FORBIDDEN_POLITE;
+
+  // 参謀：
+  // - 標準語：丁寧OK（禁止なし）
+  // - 関西弁：関西の丁寧語（〜です/〜ます）も“許可”する（禁止なし）
+  return null;
 }
 
 function findForbiddenHits(text: string, forbidden: string[]): string[] {
@@ -154,18 +159,24 @@ function buildStyleRules(dialect: Dialect, stance: Stance): string[] {
   }
 
   // 方言（語彙・語尾）
-  if (dialect === "kansai") {
-    rules.push("語彙・語尾は関西弁の口語。『です/ます』に逃げない（混在禁止）。");
-    rules.push("語尾例：や／で／やな／やろ／ちゃう／せやな／〜が無難／アウト寄り／OK寄り");
+if (dialect === "kansai") {
+  if (stance === "sanbo") {
+    rules.push("語彙・語尾は関西弁。参謀モードは“関西の丁寧語”を使ってええ（例：やめときなはれ／ええと思いまっせ／〜してもろて）。");
+    rules.push("ただし標準語の丁寧語だけで固めて関西弁が消えるのはNG。関西の言い回しを必ず混ぜる。");
+    rules.push("関西の丁寧語の例：〜やと思いまっせ／〜しときなはれ／〜してもろて／〜でっしゃろ／〜でおま。");
   } else {
-    rules.push("言葉は標準語。");
-    if (stance === "zubatto") {
-      rules.push("標準語でもタメ口：だ／だよ／だな／〜だろ／〜じゃない／まず〜して。");
-      rules.push("丁寧語は禁止（です/ます/ください/でしょう等）。");
-    } else {
-      rules.push("標準語の参謀。丁寧で簡潔（です/ますOK）。");
-    }
+    rules.push("語彙・語尾は関西弁の口語。丁寧語（です/ます）は禁止。");
   }
+  rules.push("語尾例：や／で／やな／やろ／ちゃう／せやな／〜が無難／アウト寄り／OK寄り");
+} else {
+  rules.push("言葉は標準語。");
+  if (stance === "zubatto") {
+    rules.push("標準語でもタメ口：だ／だよ／だな／〜だろ／〜じゃない／まず〜して。");
+    rules.push("丁寧語は禁止（です/ます/ください/でしょう等）。");
+  } else {
+    rules.push("標準語の参謀。丁寧で簡潔（です/ますOK）。");
+  }
+}
 
   return rules;
 }
@@ -343,7 +354,10 @@ function collapseInquiryToSingleLine(askLines: string[]): string[] {
     .filter((x) => x.length > 0)
     .join(" ");
 
-  if (!rest) return [head];
+  if (!rest) {
+  // 🔎見出しだけ来た時の保険（空欄＝エラー感を消す）
+  return ["🔎確認 税務前提で答えた。前提が違うなら言うてな。"];
+}
   return [`${head} ${rest}`.trim()];
 }
 
