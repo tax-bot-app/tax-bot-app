@@ -66,24 +66,29 @@ function normalizeStance(x: string): Stance {
   return x === "sanbo" ? "sanbo" : "zubatto";
 }
 
-function buildOutputRules(): string[] {
+function buildOutputRules(params: { allowAttackDefense: boolean }): string[] {
+  const { allowAttackDefense } = params;
+
   return [
     "Markdownの見出し（##、###など）は使わない。",
     "見出しラベルは固定：『🧂ちょうど良いライン』『✅要点』『⚠️注意』『🔎確認』。別の絵文字（👉など）に置換しない。",
     "構成はこの順で固定：🧂ちょうど良いライン → ✅要点 → ⚠️注意（必要なら） → 🔎確認（原則1つ、最大1つ）。",
     "曖昧な質問は税務・経営の文脈を最優先で補完して解釈する。一般論（車/健康/恋愛など）に飛ばない。🔎は原則『返事いらんメモ』。YES/NO確認は、本当に回答が分岐して致命傷になる時だけ。",
     "『安全度』は原則『税務上の安全度（否認リスク/税務調査リスク）』の意味で解釈する。安全度は 高/中/低 の3段階で言語化して返す。",
-"税務と一般論の両方に解釈できる場合は、まず税務として回答する。末尾の🔎は『税務前提で答えた。前提が違うなら言って』の1行メモにする（返答を要求しない）。",
+    "税務と一般論の両方に解釈できる場合は、まず税務として回答する。末尾の🔎は『税務前提で答えた。前提が違うなら言って』の1行メモにする（返答を要求しない）。",
     "✅/⚠️/🔎 に『(最大◯つ)』などの注釈は書かない。",
     "🧂ちょうど良いラインの結論の1行は **太字** で書く（** **）。",
-    "参謀モードはズバっと禁止：短文連打・強い断定・タメ口の押し付けを避け、丁寧に論点整理→選択肢→おすすめ→次アクションで書く。",
-    "攻め/守りはユーザーが求めた時だけ出す。",
+    "参謀モードは短文連打・強い断定・タメ口の押し付けを避け、丁寧に論点整理→選択肢→おすすめ→次アクションで書く。",
+    allowAttackDefense
+      ? "攻め/守りはユーザーが求めた時だけ出す。"
+      : "育成知見が無い場合は、🍚攻め／🧂守り の区分を自発的に作らない（ユーザーに求められても一般論では作らない）。",
     "🍚攻め と 🧂守り（3パターン）を出した時は決め台詞は禁止。",
     "決め台詞はサーバ側で付与するので、本文では決め台詞を書かない（重複防止）。",
     "🔎は原則『返事いらんメモ』。YES/NO確認は、本当に回答が分岐して致命傷になる時だけ。",
     "攻め/守りを出す場合の見出しは固定：『🍚攻め』と『🧂守り』。『🧂🥄』など別表記は使わない。",
   ];
 }
+
 
 function buildAmbiguityBoostRules(message: string): string[] {
   const m = (message ?? "").trim();
@@ -163,6 +168,7 @@ function buildStyleRules(dialect: Dialect, stance: Stance): string[] {
 if (dialect === "kansai") {
   if (stance === "sanbo") {
     rules.push("関西弁の参謀は“丁寧な関西弁”で統一する（例：〜でっせ／〜でっしゃろ／〜ですわ／〜してはります／〜しときなはれ／〜してもろて）。タメ口（や/で/やな/やろ/ちゃう）は極力使わない。");
+    rules.push("標準語の敬語（〜です/〜ますの“標準語文体”）は禁止。丁寧語を使う場合も関西の言い回しで統一する。");
 rules.push("丁寧語・謙譲語を積極的に使う：〜です／〜ます／〜まっせ／〜でございます（多用はせん）／恐れ入りますが／〜いただけますか／〜してもろてもよろしいですか。");
 rules.push("文末の7割以上を丁寧語で終える。『や・で』で終えるのは禁止に近い（例外はツッコミ1回まで）。");
   } else {
@@ -512,7 +518,14 @@ function forceCasual(text: string, dialect: Dialect): string {
   return s;
 }
 
-function postProcessAnswer(raw: string, dialect: Dialect, stance: Stance): string {
+function postProcessAnswer(
+  raw: string,
+  dialect: Dialect,
+  stance: Stance,
+  opts: { usedKnowledge: boolean; allowAttackDefense: boolean }
+): string {
+  const { usedKnowledge, allowAttackDefense } = opts;
+
   let a = String(raw ?? "").replace(/\r\n/g, "\n").trim();
 
   a = a.replace(/[\(（]最大[^)）]*[\)）]/g, "");
@@ -544,12 +557,24 @@ function postProcessAnswer(raw: string, dialect: Dialect, stance: Stance): strin
   // ✅ ここでテンプレを矯正（※決め台詞を足す前！）
   a = enforceTemplate(a);
 
+  // 育成知見なしの時は、🍚攻め／🧂守りを出さない（誤爆防止）
+if (!allowAttackDefense) {
+  const lines2 = a.split("\n");
+  const out: string[] = [];
+  for (const line of lines2) {
+    const t = line.trimStart();
+    if (t.startsWith("🍚") || t.startsWith("🧂守り") || t.startsWith("🧂🥄") || t.startsWith("🍚🥄")) continue;
+    out.push(line);
+  }
+  a = out.join("\n").trim();
+}
+
   // 通常時は決め台詞を必ず1行だけ付与（既存のままでOK）
   const lines = a.split("\n");
-  const already = lines.some((line) => isCatchphraseLine(line));
-  if (!already) {
-    a = `${a}\n\n${catchphraseFor(dialect, stance)}`.trim();
-  }
+const already = lines.some((line) => isCatchphraseLine(line));
+if (usedKnowledge && !already) {
+  a = `${a}\n\n${catchphraseFor(dialect, stance)}`.trim();
+}
 
   // （はい/いいえ）系を消す（返事不要設計）
 {
@@ -584,6 +609,8 @@ async function generateAnswerStrict(params: {
   promptPartsBase: PromptParts;
   dialect: Dialect;
   stance: Stance;
+  usedKnowledge: boolean;
+  allowAttackDefense: boolean;
 }): Promise<string> {
   const { message, promptPartsBase, dialect, stance } = params;
 
@@ -591,7 +618,7 @@ async function generateAnswerStrict(params: {
   let last = "";
   let lastHits: string[] = [];
 
-  const MAX = 3; // 実運用向け：無限ループしない範囲で現実的に抑える
+  const MAX = 3;
   for (let attempt = 0; attempt < MAX; attempt++) {
     const extra =
       attempt === 0 || !forbidden || lastHits.length === 0
@@ -604,11 +631,14 @@ async function generateAnswerStrict(params: {
     const promptParts: PromptParts = {
       ...promptPartsBase,
       injectedRules: [...(promptPartsBase.injectedRules ?? []), ...extra],
-
     };
 
     const result = await generateAnswer({ message, promptParts });
-    last = postProcessAnswer(result.answer, dialect, stance);
+
+    last = postProcessAnswer(result.answer, dialect, stance, {
+      usedKnowledge: params.usedKnowledge,
+      allowAttackDefense: params.allowAttackDefense,
+    });
 
     if (!forbidden) return last;
 
@@ -616,10 +646,7 @@ async function generateAnswerStrict(params: {
     if (lastHits.length === 0) return last;
   }
 
-  // ここに落ちたら「AIが直せなかった」のでサーバ側で強制フォーム矯正する
-  if (stance === "zubatto") {
-    return forceCasual(last, dialect);
-  }
+  if (stance === "zubatto") return forceCasual(last, dialect);
   return last;
 }
 
@@ -705,28 +732,48 @@ export async function POST(req: Request) {
     });
 
     let answer = "";
-    try {
-      const outputRules = buildOutputRules();
-const ambiguityBoost = buildAmbiguityBoostRules(message);
-const styleRules = buildStyleRules(dialect, stance);
-const contextLines = await buildConversationContext({ db, convId });
+try {
+  // 1) まず育成知見を取得（先に！）
+  const kbItems = await retrieveKnowledge({ db, message });
+  const kbBlock = formatKnowledgeBlock(kbItems);
 
-// ★育成知見を取得して注入
-const kbItems = await retrieveKnowledge({ db, message });
-const kbBlock = formatKnowledgeBlock(kbItems);
+  const usedKnowledge = kbItems.length > 0;
+  const allowAttackDefense = usedKnowledge; // 育成知見がある時だけ許可
 
-const promptPartsBase: PromptParts = {
-  context: contextLines,
-  injectedRules: [...outputRules, ...ambiguityBoost, ...styleRules],
-  guardrails: gr.action === "inject" ? gr.guardrailLines : [],
-};
+  // 2) ルール類を組み立て
+  const outputRules = buildOutputRules({ allowAttackDefense });
+  const ambiguityBoost = buildAmbiguityBoostRules(message);
+  const styleRules = buildStyleRules(dialect, stance);
+  const contextLines = await buildConversationContext({ db, convId });
 
-      answer = await generateAnswerStrict({ message, promptPartsBase, dialect, stance });
-    } catch (e: any) {
-      return NextResponse.json({ ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes, {
-        status: 502,
-      });
-    }
+  // 3) promptParts を作成（育成知見は injectedRules に追加）
+  const promptPartsBase: PromptParts = {
+    context: contextLines,
+    injectedRules: [
+      ...outputRules,
+      ...ambiguityBoost,
+      ...styleRules,
+      ...(kbBlock ? [kbBlock] : []),
+    ],
+    guardrails: gr.action === "inject" ? gr.guardrailLines : [],
+  };
+
+  // 4) 生成（フラグも渡す）
+  answer = await generateAnswerStrict({
+    message,
+    promptPartsBase,
+    dialect,
+    stance,
+    usedKnowledge,
+    allowAttackDefense,
+  });
+} catch (e: any) {
+  return NextResponse.json(
+    { ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes,
+    { status: 502 }
+  );
+}
+
 
     const { data, error } = await db.rpc("consume_talk_v2", {
       p_user_id: user.id,
