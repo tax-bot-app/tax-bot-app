@@ -568,13 +568,24 @@ export default function ChatClient() {
       <div style={{ padding: "10px 16px", position: "relative", zIndex: 30, pointerEvents: "auto" }}>
         <div style={{ display: "flex", alignItems: "center" }}>
           <div style={{ flex: 1 }} />
-          <div style={{ textAlign: "center" }}>
+          <div
+  style={{
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "center",
+    gap: 10,
+    flexWrap: "wrap", // 画面狭い時の保険
+    textAlign: "center",
+  }}
+>
   <div
     className={yuji.className}
     style={{
-      fontSize: 24,
-      letterSpacing: "0.1em",
+      fontSize: 30,
+      letterSpacing: "0.12em",
       fontWeight: 400,
+      lineHeight: 1,
+      whiteSpace: "nowrap",
     }}
   >
     さじかげん 🍚🥄
@@ -582,15 +593,16 @@ export default function ChatClient() {
 
   <div
     style={{
-      fontSize: 12,
+      fontSize: 13,
       fontWeight: 700,
       color: "#666",
-      marginTop: 2,
+      whiteSpace: "nowrap",
     }}
   >
     税務相談 ～あなたの欲しい ちょうどいい さじかげん～
   </div>
 </div>
+
           <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: 10 }}>
             <Link href="/settings/billing" style={LINK_BTN}>プラン変更</Link>
             <a href={CONTACT_URL} style={LINK_BTN} target={CONTACT_URL.startsWith("http") ? "_blank" : undefined} rel="noreferrer">お問い合わせ</a>
