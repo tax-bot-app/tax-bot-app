@@ -232,6 +232,69 @@ function clampForContext(s: string, n: number) {
 }
 type MsgMini = { id: string; role: "user" | "assistant"; content: string; created_at: string };
 
+type KnowledgeItem = {
+  id: string;
+  kind: "rule" | "qa" | "example";
+  topic: string;
+  title: string;
+  content: string;
+  amounts: any;
+  conditions: any;
+  priority: number;
+};
+
+function inferTopics(message: string): string[] {
+  const m = (message ?? "").trim();
+  const topics: string[] = [];
+
+  // 出張手当（まずはこれだけでOK）
+  if (/[出張旅費日当手当宿泊]/.test(m)) topics.push("出張手当");
+
+  // 今後ここに増やす：交際費、私用混在、役員、源泉、消費税…など
+  return Array.from(new Set(topics));
+}
+
+function formatKnowledgeBlock(items: KnowledgeItem[]): string {
+  if (!items || items.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("【育成知見（最優先）】");
+  lines.push("※一般論より優先して扱う。金額の目安は育成知見を採用する。");
+
+  for (const it of items) {
+    const tag = it.kind === "rule" ? "[Rule]" : it.kind === "qa" ? "[Q&A]" : "[Example]";
+    lines.push(`${tag} ${it.title}`);
+    // 文章（ニュアンス）をそのまま
+    lines.push(`- ${it.content.replace(/\r\n/g, "\n").split("\n").join("\n- ")}`);
+
+    // amountsがあれば“目安金額”があることを明示（中身は本文に書いてる想定）
+    if (it.amounts && Object.keys(it.amounts).length > 0) {
+      lines.push(`- 目安金額: ${JSON.stringify(it.amounts)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+async function retrieveKnowledge(params: { db: any; message: string }): Promise<KnowledgeItem[]> {
+  const { db, message } = params;
+
+  const topics = inferTopics(message);
+
+  // topicが取れたら topic一致で引く。取れなければ何もしない（最短）
+  if (topics.length === 0) return [];
+
+  const { data, error } = await db
+    .from("knowledge_items")
+    .select("id, kind, topic, title, content, amounts, conditions, priority")
+    .eq("is_active", true)
+    .in("topic", topics)
+    .order("priority", { ascending: false })
+    .limit(8);
+
+  if (error) return [];
+  return (data ?? []) as KnowledgeItem[];
+}
+
 async function buildConversationContext(params: { db: any; convId: string }): Promise<string[]> {
   const { db, convId } = params;
   const lines: string[] = [];
@@ -410,12 +473,12 @@ function enforceTemplate(answer: string): string {
 function catchphraseFor(dialect: Dialect, stance: Stance): string {
   // ① 関西弁 × 参謀（最優先）
   if (dialect === "kansai" && stance === "sanbo") {
-    return "攻め・守りの考え方も含めて整理できますさかい、遠慮なく言うてくださいな。";
+    return "せやけど、税務の世界は答えひとつちゃいますさかい、**攻め・守り**ラインもお伝えできますさかい、遠慮なく言うてくださいな。";
   }
 
   // ② 標準語 × 参謀
   if (dialect === "standard" && stance === "sanbo") {
-    return "攻め・守りの考え方も含めて整理できます。必要でしたらお知らせください。";
+    return "とはいえ、税務の世界は答えが一つではありませんので、**攻め・守り**の考え方も含めてお伝えできます。必要でしたらお知らせください。";
   }
 
   // ③ 関西弁 × ズバっと
@@ -647,6 +710,10 @@ export async function POST(req: Request) {
 const ambiguityBoost = buildAmbiguityBoostRules(message);
 const styleRules = buildStyleRules(dialect, stance);
 const contextLines = await buildConversationContext({ db, convId });
+
+// ★育成知見を取得して注入
+const kbItems = await retrieveKnowledge({ db, message });
+const kbBlock = formatKnowledgeBlock(kbItems);
 
 const promptPartsBase: PromptParts = {
   context: contextLines,
