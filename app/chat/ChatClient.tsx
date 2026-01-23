@@ -404,7 +404,9 @@ export default function ChatClient() {
         .select("id, conversation_id, role, content, created_at")
         .eq("conversation_id", conversationId)
         .order("created_at", { ascending: true })
-        .limit(700);
+.order("id", { ascending: true })   // ←追加（同時刻の並びを安定化）
+.limit(700);
+
 
       if (error) throw error;
 
@@ -586,7 +588,7 @@ export default function ChatClient() {
   }}
   style={BTN}
 >
-            {DEBUG_AUTH && (
+                        {DEBUG_AUTH && (
               <>
                 <button
                   type="button"
@@ -596,16 +598,18 @@ export default function ChatClient() {
                 >
                   セッション診断
                 </button>
+
                 <button
                   type="button"
-                  onPointerDown={(e) => { e.preventDefault(); simulateExpired(); }}
-                  onTouchStart={(e) => { e.preventDefault(); simulateExpired(); }}
+                  onPointerDown={(e) => { e.preventDefault(); simulateExpiredOnce(); }}
+                  onTouchStart={(e) => { e.preventDefault(); simulateExpiredOnce(); }}
                   style={BTN}
                 >
-                  疑似切れ
+                  疑似切れ（次だけ）
                 </button>
               </>
             )}
+
   ログアウト
 </button>
           </div>
