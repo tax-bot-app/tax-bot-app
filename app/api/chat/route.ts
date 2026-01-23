@@ -70,11 +70,16 @@ function buildOutputRules(): string[] {
   return [
     "Markdownの見出し（##、###など）は使わない。",
     "構成はこの順で固定：🧂ちょうど良いライン → ✅要点 → ⚠️注意（必要なら） → 🔎確認（原則1つ、最大1つ）。",
+    "曖昧な質問は税務・経営の文脈を最優先で補完して解釈する。一般論（車/健康/恋愛など）に飛ばない。税務文脈が複数あり得る時だけ🔎でYES/NO確認する。",
+    "『安全度』は原則『税務上の安全度（否認リスク/税務調査リスク）』の意味で解釈する。安全度は 高/中/低 の3段階で言語化して返す。",
+"税務と一般論の両方に解釈できる場合は、まず税務として回答し、最後の🔎で『税務の安全度の話で合ってる？（はい/いいえ）』と確認する。",
     "✅/⚠️/🔎 に『(最大◯つ)』などの注釈は書かない。",
     "🧂ちょうど良いラインの結論の1行は **太字** で書く（** **）。",
     "攻め/守りはユーザーが求めた時だけ出す。",
     "🍚攻め と 🧂守り（3パターン）を出した時は決め台詞は禁止。",
     "決め台詞はサーバ側で付与するので、本文では決め台詞を書かない（重複防止）。",
+    "🔎確認はYES/NOで答えられる形にする（選択肢を提示）。",
+    "攻め/守りを出す場合の見出しは固定：『🍚攻め』と『🧂守り』。『🧂🥄』など別表記は使わない。",
   ];
 }
 
@@ -421,6 +426,17 @@ function postProcessAnswer(raw: string, dialect: Dialect, stance: Stance): strin
   }
 
   if (stance === "zubatto") a = forceCasual(a, dialect);
+
+    // 🔎がある場合は必ず末尾1行に寄せる（最終保険）
+  {
+    const lines2 = a.split("\n");
+    const askLines = lines2.filter((l) => l.trimStart().startsWith("🔎"));
+    if (askLines.length > 0) {
+      const rest = lines2.filter((l) => !l.trimStart().startsWith("🔎"));
+      a = [...rest, askLines[0]].join("\n").trim();
+    }
+  }
+
   return a;
 }
 

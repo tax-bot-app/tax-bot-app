@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSPropertie
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
+import { yuji } from "@/app/layout";
 
 type Role = "user" | "assistant";
 
@@ -567,10 +568,29 @@ export default function ChatClient() {
       <div style={{ padding: "10px 16px", position: "relative", zIndex: 30, pointerEvents: "auto" }}>
         <div style={{ display: "flex", alignItems: "center" }}>
           <div style={{ flex: 1 }} />
-          <div style={{ textAlign: "center", fontWeight: 900, fontSize: 18 }}>
-            さじかげん 🍚🥄｜税務相談{" "}
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#666" }}>～あなたの欲しい ちょうどいい さじかげん～</span>
-          </div>
+          <div style={{ textAlign: "center" }}>
+  <div
+    className={yuji.className}
+    style={{
+      fontSize: 24,
+      letterSpacing: "0.1em",
+      fontWeight: 400,
+    }}
+  >
+    さじかげん 🍚🥄
+  </div>
+
+  <div
+    style={{
+      fontSize: 12,
+      fontWeight: 700,
+      color: "#666",
+      marginTop: 2,
+    }}
+  >
+    税務相談 ～あなたの欲しい ちょうどいい さじかげん～
+  </div>
+</div>
           <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: 10 }}>
             <Link href="/settings/billing" style={LINK_BTN}>プラン変更</Link>
             <a href={CONTACT_URL} style={LINK_BTN} target={CONTACT_URL.startsWith("http") ? "_blank" : undefined} rel="noreferrer">お問い合わせ</a>
