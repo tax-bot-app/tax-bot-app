@@ -66,27 +66,32 @@ function normalizeStance(x: string): Stance {
   return x === "sanbo" ? "sanbo" : "zubatto";
 }
 
-function buildOutputRules(params: { allowAttackDefense: boolean }): string[] {
-  const { allowAttackDefense } = params;
+function buildOutputRules(params: { showMiniAttackDefense: boolean; allowAttackDefenseDetail: boolean }): string[] {
+  const { showMiniAttackDefense, allowAttackDefenseDetail } = params;
 
-  const attackDefenseRule = allowAttackDefense
-    ? "育成知見があるテーマでは、守り/攻めの幅を基本提示する（ユーザーが『教えて』程度でも出してよい）。"
-    : "育成知見が無い場合は、攻め／守りの区分を自発的に作らない（ユーザーに求められても一般論では作らない）。";
+  const attackDefenseRule = allowAttackDefenseDetail
+    ? "ユーザーが攻め/守り（幅・上限・どこまで等）を求めた場合のみ、見出し付きで『🍚攻め』『🧂守り』の詳細ブロックを出す。"
+    : "見出し付きの『🍚攻め』『🧂守り』は出さない。";
+
+  const miniRule = showMiniAttackDefense
+    ? "育成知見があるテーマでは、✅要点の末尾に『守り：…』『攻め：…』を各1行で添える（ミニ版）。※このミニ版では絵文字（🍚/🧂）や見出しは使わない。"
+    : "育成知見が無い場合は、守り/攻めの提示（ミニ版含む）をしない。";
 
   return [
-  "Markdownの見出し（##、###など）は使わない。",
-  "見出しラベルは固定：『🧂ちょうど良いライン』『✅要点』『⚠️注意』『🔎確認』。別の絵文字（👉など）に置換しない。",
-  "構成はこの順で固定：🧂ちょうど良いライン → ✅要点 → ⚠️注意（必要なら） → 🔎確認（原則1つ、最大1つ）。",
-  "曖昧な質問は税務・経営の文脈を最優先で補完して解釈する。一般論（車/健康/恋愛など）に飛ばない。🔎は原則『返事いらんメモ』。",
-  "『安全度』は原則『税務上の安全度（否認リスク/税務調査リスク）』の意味で解釈する。安全度は高/中/低の3段階で返す。",
-  "🧂ちょうど良いラインの結論の1行は **太字** で書く（** **）。",
-  "参謀モードは短文連打・強い断定・タメ口の押し付けを避け、丁寧に論点整理→選択肢→おすすめ→次アクションで書く。",
-  attackDefenseRule,
-  "🍚攻め と 🧂守り（3パターン）を出した時は決め台詞は禁止。",
-  "決め台詞はサーバ側で付与するので、本文では決め台詞を書かない（重複防止）。",
-  "🔎は原則『返事いらんメモ』。YES/NO確認は、本当に回答が分岐して致命傷になる時だけ。",
-  "攻め/守りを出す場合の見出しは固定：『🍚攻め』と『🧂守り』。別表記は使わない。",
-];
+    "Markdownの見出し（##、###など）は使わない。",
+    "見出しラベルは固定：『🧂ちょうど良いライン』『✅要点』『⚠️注意』『🔎確認』。別の絵文字（👉など）に置換しない。",
+    "構成はこの順で固定：🧂ちょうど良いライン → ✅要点 → ⚠️注意（必要なら） → 🔎確認（原則1つ、最大1つ）。",
+    "曖昧な質問は税務・経営の文脈を最優先で補完して解釈する。一般論に飛ばない。🔎は原則『返事いらんメモ』。",
+    "『安全度』は原則『税務上の安全度（否認リスク/税務調査リスク）』の意味で解釈する。安全度は高/中/低の3段階で返す。",
+    "🧂ちょうど良いラインの結論の1行は **太字** で書く（** **）。",
+    "参謀モードは短文連打・強い断定・タメ口の押し付けを避け、丁寧に論点整理→選択肢→おすすめ→次アクションで書く。",
+    miniRule,
+    attackDefenseRule,
+    "🍚攻め と 🧂守り（詳細ブロック）を出した時は決め台詞は禁止。",
+    "決め台詞はサーバ側で付与するので、本文では決め台詞を書かない（重複防止）。",
+    "🔎は原則『返事いらんメモ』。YES/NO確認は、本当に回答が分岐して致命傷になる時だけ。",
+    "攻め/守り（詳細ブロック）を出す場合の見出しは固定：『🍚攻め』と『🧂守り』。",
+  ];
 }
 
 
@@ -248,6 +253,13 @@ type KnowledgeItem = {
   conditions: any;
   priority: number;
 };
+
+function wantsAttackDefenseDetail(message: string): boolean {
+  const m = (message ?? "").trim();
+
+  // 広めに拾う（取りこぼし防止）
+  return /攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|幅|レンジ|強め|弱め|リスク高|リスク低/.test(m);
+}
 
 function inferTopics(message: string): string[] {
   const m = (message ?? "").trim();
@@ -522,9 +534,9 @@ function postProcessAnswer(
   raw: string,
   dialect: Dialect,
   stance: Stance,
-  opts: { usedKnowledge: boolean; allowAttackDefense: boolean }
+  opts: { usedKnowledge: boolean; showMiniAttackDefense: boolean; allowAttackDefenseDetail: boolean }
 ): string {
-  const { usedKnowledge, allowAttackDefense } = opts;
+  const { usedKnowledge, showMiniAttackDefense, allowAttackDefenseDetail } = opts;
 
   let a = String(raw ?? "").replace(/\r\n/g, "\n").trim();
 
@@ -558,12 +570,12 @@ function postProcessAnswer(
   a = enforceTemplate(a);
 
   // 育成知見なしの時は、🍚攻め／🧂守りを出さない（誤爆防止）
-if (!allowAttackDefense) {
+if (!allowAttackDefenseDetail) {
   const lines2 = a.split("\n");
   const out: string[] = [];
   for (const line of lines2) {
     const t = line.trimStart();
-    if (t.startsWith("🍚") || t.startsWith("🧂守り") || t.startsWith("🧂🥄") || t.startsWith("🍚🥄")) continue;
+    if (t.startsWith("🍚攻め") || t.startsWith("🧂守り") || t.startsWith("🧂🥄") || t.startsWith("🍚🥄")) continue;
     out.push(line);
   }
   a = out.join("\n").trim();
@@ -572,7 +584,7 @@ if (!allowAttackDefense) {
   // 通常時は決め台詞を必ず1行だけ付与（既存のままでOK）
   const lines = a.split("\n");
 const already = lines.some((line) => isCatchphraseLine(line));
-if (usedKnowledge && !already) {
+if (usedKnowledge && !allowAttackDefenseDetail && !already) {
   a = `${a}\n\n${catchphraseFor(dialect, stance)}`.trim();
 }
 
@@ -627,7 +639,8 @@ async function generateAnswerStrict(params: {
   dialect: Dialect;
   stance: Stance;
   usedKnowledge: boolean;
-  allowAttackDefense: boolean;
+  showMiniAttackDefense: boolean;
+  allowAttackDefenseDetail: boolean;
 }): Promise<string> {
   const { message, promptPartsBase, dialect, stance } = params;
 
@@ -653,9 +666,10 @@ async function generateAnswerStrict(params: {
     const result = await generateAnswer({ message, promptParts });
 
     last = postProcessAnswer(result.answer, dialect, stance, {
-      usedKnowledge: params.usedKnowledge,
-      allowAttackDefense: params.allowAttackDefense,
-    });
+  usedKnowledge: params.usedKnowledge,
+  showMiniAttackDefense: params.showMiniAttackDefense,
+  allowAttackDefenseDetail: params.allowAttackDefenseDetail,
+});
 
     if (!forbidden) return last;
 
@@ -755,10 +769,19 @@ try {
   const kbBlock = formatKnowledgeBlock(kbItems);
 
   const usedKnowledge = kbItems.length > 0;
-  const allowAttackDefense = usedKnowledge; // 育成知見がある時だけ許可
+
+// ✅ ミニ攻め守り：育成知見があるなら基本ON
+const showMiniAttackDefense = usedKnowledge;
+
+// ✅ 詳細攻め守り：ユーザーが求めた時だけON
+const allowAttackDefenseDetail = usedKnowledge && wantsAttackDefenseDetail(message);
+
 
   // 2) ルール類を組み立て
-  const outputRules = buildOutputRules({ allowAttackDefense });
+  const outputRules = buildOutputRules({
+  showMiniAttackDefense,
+  allowAttackDefenseDetail,
+});
   const ambiguityBoost = buildAmbiguityBoostRules(message);
   const styleRules = buildStyleRules(dialect, stance);
   const contextLines = await buildConversationContext({ db, convId });
@@ -777,13 +800,14 @@ try {
 
   // 4) 生成（フラグも渡す）
   answer = await generateAnswerStrict({
-    message,
-    promptPartsBase,
-    dialect,
-    stance,
-    usedKnowledge,
-    allowAttackDefense,
-  });
+  message,
+  promptPartsBase,
+  dialect,
+  stance,
+  usedKnowledge,
+  showMiniAttackDefense,
+  allowAttackDefenseDetail,
+});
 } catch (e: any) {
   return NextResponse.json(
     { ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes,
