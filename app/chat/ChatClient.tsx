@@ -182,6 +182,12 @@ export default function ChatClient() {
 
   // 下にいる時だけ追従（送信時は強制 true）
   const shouldAutoScrollRef = useRef(true);
+  
+  // 疑似切れ（次の1回だけ、わざとBad Tokenを使う：ロックアウト防止）
+  const debugBadTokenOnceRef = useRef(false);
+
+  // 本番で出したくないので env で制御
+  const DEBUG_AUTH = process.env.NEXT_PUBLIC_DEBUG_AUTH === "1";
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
 
@@ -228,6 +234,10 @@ export default function ChatClient() {
   };
 
   const getToken = async (): Promise<string | null> => {
+    if (DEBUG_AUTH && debugBadTokenOnceRef.current) {
+      debugBadTokenOnceRef.current = false;
+      return "debug-bad-token";
+    }
     const { data, error } = await supabase.auth.getSession();
     if (!error && data.session?.access_token) return data.session.access_token;
 
@@ -244,6 +254,49 @@ export default function ChatClient() {
       router.replace("/login?reason=expired");
     }
   };
+
+      const authDiag = async () => {
+    try {
+      setErrMsg(null);
+      const token = await getToken();
+      if (!token) return await handleAuthishError("Not logged in");
+
+      const res = await fetch("/api/auth/ping", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const json = await res.json().catch(() => null);
+      console.log("[authDiag]", { status: res.status, json });
+
+      if (await maybeRedirectFromApiError(res, json)) return;
+
+      if (!res.ok) setErrMsg(String(json?.error || `authDiag failed: ${res.status}`));
+      else setErrMsg("authDiag OK（console見て）");
+    } catch (e: any) {
+      console.log("[authDiag] error", e);
+      if (await handleAuthishError(e)) return;
+      setErrMsg(e?.message || "authDiag failed");
+    }
+  };
+
+  const simulateExpiredOnce = () => {
+    debugBadTokenOnceRef.current = true;
+    setErrMsg("疑似切れON：次のAPI呼び出しで401→/login?reason=expiredへ落ちるはず");
+    // すぐ踏ませるならここで refreshStatus() 呼んでもいい
+    // refreshStatus();
+  };
+
+
+  // 疑似セッション切れ（ローカルでアクセストークンだけ壊して挙動確認）
+  const simulateExpired = async () => {
+    try {
+      setErrMsg("疑似セッション切れを発動：次のAPIで/loginへ落ちるはず");
+      // sessionはSupabase側が持ってるので、手元では「次のAPIで401にする」方向が再現性高い
+      // ここでは "tokenを取れない状態" を作るために signOut してから戻す
+      await supabase.auth.signOut().catch(() => null);
+    } catch {}
+  };
+
 
   const handleAuthishError = async (raw: unknown) => {
     const msg = String((raw as any)?.message || raw || "");
@@ -272,6 +325,7 @@ export default function ChatClient() {
       });
 
       const json = (await res.json().catch(() => null)) as StatusRes | null;
+      if (await maybeRedirectFromApiError(res, json)) return;
       if (!json) return setErrMsg(`status failed: ${res.status}`);
       if (json.ok !== true) return setErrMsg(json.error || `status failed: ${res.status}`);
 
@@ -282,6 +336,20 @@ export default function ChatClient() {
       if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "status failed");
     }
+  };
+
+    const maybeRedirectFromApiError = async (res: Response, json: any) => {
+    // 401は最優先でexpiredへ落とす（jsonが取れなくても落とす）
+    if (res.status === 401) {
+      const msg = String(json?.error || "Invalid session");
+      if (await handleAuthishError(msg)) return true;
+    }
+
+    // ok:false の error も authish 判定する
+    if (json && json.ok === false && typeof json.error === "string") {
+      if (await handleAuthishError(json.error)) return true;
+    }
+    return false;
   };
 
     const loadThreads = async () => {
@@ -424,18 +492,21 @@ export default function ChatClient() {
       const body: any = { message: text, idempotencyKey, dialect, stance };
       if (activeConversationId) body.conversationId = activeConversationId;
 
-      const res = await fetch("/api/chat", {
+            const res = await fetch("/api/chat", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
 
       const json = (await res.json().catch(() => null)) as ChatRes | null;
+
+      if (await maybeRedirectFromApiError(res, json)) return;
       if (!json) throw new Error(`chat failed: ${res.status}`);
       if (json.ok !== true) {
         setErrMsg(json.error || `chat failed: ${res.status}`);
         return;
       }
+
 
       setPlan(json.plan);
       setUsedTalks(json.used_talks);
@@ -515,6 +586,26 @@ export default function ChatClient() {
   }}
   style={BTN}
 >
+            {DEBUG_AUTH && (
+              <>
+                <button
+                  type="button"
+                  onPointerDown={(e) => { e.preventDefault(); authDiag(); }}
+                  onTouchStart={(e) => { e.preventDefault(); authDiag(); }}
+                  style={BTN}
+                >
+                  セッション診断
+                </button>
+                <button
+                  type="button"
+                  onPointerDown={(e) => { e.preventDefault(); simulateExpired(); }}
+                  onTouchStart={(e) => { e.preventDefault(); simulateExpired(); }}
+                  style={BTN}
+                >
+                  疑似切れ
+                </button>
+              </>
+            )}
   ログアウト
 </button>
           </div>

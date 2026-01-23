@@ -234,6 +234,114 @@ function isCatchphraseLine(line: string): boolean {
   return false;
 }
 
+function hasAttackOrDefense(answer: string): boolean {
+  const hasAttack = answer.includes("🍚");
+  const hasDefense = answer.includes("🧂守り") || answer.includes("🧂🥄") || answer.includes("🧂 守り");
+  return hasAttack || hasDefense;
+}
+
+function extractSection(answer: string, head: "🧂" | "✅" | "⚠️" | "🔎"): string[] {
+  const lines = answer.replace(/\r\n/g, "\n").split("\n");
+  const out: string[] = [];
+  let inSec = false;
+
+  const markers = ["🧂", "✅", "⚠️", "🔎", "🍚"];
+
+  for (const line of lines) {
+    const t = line.trimStart();
+
+    if (t.startsWith(head)) {
+      inSec = true;
+      out.push(line.trimEnd());
+      continue;
+    }
+
+    if (inSec) {
+      // 次のセクション開始で終了
+      if (markers.some((m) => t.startsWith(m))) break;
+      out.push(line.trimEnd());
+    }
+  }
+
+  // 末尾の空行を落とす
+  while (out.length > 0 && !out[out.length - 1].trim()) out.pop();
+  return out;
+}
+
+function ensureSaltBold(secSalt: string[]): string[] {
+  if (secSalt.length === 0) return secSalt;
+  const out = [...secSalt];
+
+  // すでに ** が含まれてるなら触らない
+  if (out.some((l) => l.includes("**"))) return out;
+
+  // パターン1：1行しかない（🧂行に結論が載ってる想定）
+  if (out.length === 1) {
+    const line = out[0];
+    const idx = Math.max(line.indexOf("："), line.indexOf(":"));
+    if (idx >= 0 && idx < line.length - 1) {
+      const head = line.slice(0, idx + 1);
+      const tail = line.slice(idx + 1).trim();
+      if (tail) out[0] = `${head}**${tail}**`;
+      return out;
+    }
+    // 仕方ないので行全体を太字（ダサいがルール未達よりマシ）
+    out[0] = `**${line.trim()}**`;
+    return out;
+  }
+
+  // パターン2：2行以上 → 2行目以降の最初の非空行を太字
+  for (let i = 1; i < out.length; i++) {
+    const t = out[i].trim();
+    if (!t) continue;
+    out[i] = out[i].replace(/^(\s*)(.*?)(\s*)$/, (_m, p1, body, p2) => `${p1}**${String(body).trim()}**${p2}`);
+    break;
+  }
+  return out;
+}
+
+function enforceTemplate(answer: string): string {
+  const a = answer.replace(/\r\n/g, "\n").trim();
+  if (!a) return a;
+
+  // 攻め/守りが絡む回答はテンプレ矯正しない（誤爆防止）
+  if (hasAttackOrDefense(a)) return a;
+
+  const salt = ensureSaltBold(extractSection(a, "🧂"));
+  const key = extractSection(a, "✅");
+  const warn = extractSection(a, "⚠️");
+  const ask = extractSection(a, "🔎");
+
+  // 🧂と✅が取れないなら、無理に再構築しない（内容消失が怖い）
+  if (salt.length === 0 || key.length === 0) return a;
+
+  // 🔎は最大1つ（先頭🔎ブロックのみ）
+  let askFixed = ask;
+  if (askFixed.length > 0) {
+    const filtered: string[] = [];
+    let seen = false;
+    for (const line of askFixed) {
+      const t = line.trimStart();
+      if (t.startsWith("🔎")) {
+        if (seen) continue;
+        seen = true;
+      }
+      filtered.push(line);
+    }
+    askFixed = filtered;
+  }
+
+  const parts: string[] = [];
+  parts.push(...salt, "");
+  parts.push(...key);
+
+  if (warn.length > 0) parts.push("", ...warn);
+  if (askFixed.length > 0) parts.push("", ...askFixed);
+
+  return parts.join("\n").trim();
+}
+
+
 function catchphraseFor(dialect: Dialect, stance: Stance): string {
   // ズバっとは常にタメ口（標準語でも）
   if (dialect === "kansai") {
@@ -271,14 +379,12 @@ function forceCasual(text: string, dialect: Dialect): string {
   return s;
 }
 
-
 function postProcessAnswer(raw: string, dialect: Dialect, stance: Stance): string {
   let a = String(raw ?? "").replace(/\r\n/g, "\n").trim();
 
-  // 「(最大◯つ)」系を機械的に落とす（意図せず混ざるのを防ぐ）
   a = a.replace(/[\(（]最大[^)）]*[\)）]/g, "");
 
-  // 🔎が複数出たら2つ目以降の「🔎始まり行」だけ落とす（保険）
+  // 🔎複数対策（既存のままでOK）
   {
     const lines = a.split("\n");
     let seen = false;
@@ -294,7 +400,7 @@ function postProcessAnswer(raw: string, dialect: Dialect, stance: Stance): strin
     a = out.join("\n").trim();
   }
 
-  // 3パターン時は決め台詞を削除（サーバ側でも確定させる）
+  // 3パターン時は決め台詞削除で終了（既存のままでOK）
   if (hasThreePatterns(a)) {
     const lines = a.split("\n");
     const out = lines.filter((line) => !isCatchphraseLine(line));
@@ -302,18 +408,20 @@ function postProcessAnswer(raw: string, dialect: Dialect, stance: Stance): strin
     return a;
   }
 
-  // 通常時は決め台詞を必ず1行だけ付与（AIの揺れを殺す）
+  // ✅ ここでテンプレを矯正（※決め台詞を足す前！）
+  a = enforceTemplate(a);
+
+  // 通常時は決め台詞を必ず1行だけ付与（既存のままでOK）
   const lines = a.split("\n");
   const already = lines.some((line) => isCatchphraseLine(line));
   if (!already) {
     a = `${a}\n\n${catchphraseFor(dialect, stance)}`.trim();
   }
 
-  // ★最後の最後：ズバっとはタメ口を強制
   if (stance === "zubatto") a = forceCasual(a, dialect);
-
   return a;
 }
+
 
 async function generateAnswerStrict(params: {
   message: string;
