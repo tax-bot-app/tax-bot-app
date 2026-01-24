@@ -252,7 +252,7 @@ function isFollowupOnlyText(m: string): boolean {
   const s = m.trim();
 
   // 「中身の無い追撃」判定（丁寧語・クッション言葉を広めに拾う）
-  return /^(よろしく|お願い|おねがい|続き|つづき|詳しく|詳細|もう少し|もうちょい|再度|教えて|教えてください|お願いします|お願いできますか|よろしくお願いします)/.test(s);
+  return /^(よろしく|お願い|おねがい|続き|つづき|詳しく|詳細|もう少し|もうちょい|再度|教えて|教えてください|お願いします|お願いできますか|よろしくお願いします|よろしこ|よろ|なんぼまで|なんぼ|どんぐらい)$/.test(s);
 }
 
 function isInFollowupPhase(prevAssistantMessage: string | null): boolean {
@@ -263,7 +263,7 @@ function isInFollowupPhase(prevAssistantMessage: string | null): boolean {
 // 「攻め/守り（線引き）」を求めてる質問か？（=🍚/🧂を出すべきか）
 function isLineRequest(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|レンジ|幅|アウト|セーフ|リスク|大丈夫)/.test(m);
+  return /(攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|レンジ|幅|アウト|セーフ|リスク|大丈夫|いくら|いくつまで|なんぼ|どんぐらい)/.test(m);
 }
 
 // followupフェーズ中に「別の話題に飛んだ」っぽいか（雑でOK）
