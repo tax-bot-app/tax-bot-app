@@ -913,9 +913,15 @@ try {
   // ✅ 追撃（followup）なら、DBの「攻め/守り」からサーバで固定組み立て（AIは呼ばない）
 if (followup) {
   const built = buildFollowupAnswerFromKb(topicKbItems);
-  answer =
-    built ||
-    "🍚攻め：未登録（このテーマの攻め/守りカードがDBにまだ入ってへん）\n🧂守り：未登録（登録後はここに固定ラインを出す）";
+
+  const header = "判断の軸だけ整理するで。";
+  const footer = "※ 税務調査は「形式より実態」「一貫性」を見られる。";
+
+  if (built) {
+    answer = `${header}\n\n${built}\n\n${footer}`;
+  } else {
+    answer = `${header}\n\n🍚攻め：未登録（このテーマの攻め/守りカードがDBにまだ入ってへん）\n🧂守り：未登録（登録後はここに固定ラインを出す）`;
+  }
 }
 
   // まだ answer が確定してない時だけ AI を呼ぶ（＝初回 or 追撃でもDBに無い）
