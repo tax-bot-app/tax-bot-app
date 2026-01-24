@@ -822,8 +822,9 @@ const prevUserMessage = await (async () => {
 })();
 
 // ✅ 詳細攻め守り：ユーザーが求めた時だけON
-const allowAttackDefenseDetail = usedKnowledge && wantsAttackDefenseDetail(message, prevUserMessage);
-
+const allowAttackDefenseDetail =
+  (usedKnowledge || prevUserMessage) &&
+  wantsAttackDefenseDetail(message, prevUserMessage);
 
   // 2) ルール類を組み立て
   const outputRules = buildOutputRules({
