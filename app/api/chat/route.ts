@@ -279,8 +279,11 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
     return !overlap;
   })();
 
-  // 追撃 or 誤送信っぽいなら詳細ON（ただし話題転換っぽいならOFF）
-  if ((followupCue || veryShort) && !topicShiftLikely) return true;
+  // 追撃短文は“救済優先”で必ず深掘りON（話題転換チェックは無視）
+if (followupCue) return true;
+
+// 誤送信っぽい超短文は、話題転換っぽいならOFF（保険）
+if (veryShort && !topicShiftLikely) return true;
 
   return false;
 }
