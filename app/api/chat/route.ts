@@ -858,7 +858,7 @@ if (followup && topicKbItems.length === 0 && prevUserMessage) {
 const usedKnowledge = topicKbItems.length > 0;
 
 // ✅ 詳細攻め守り：ユーザーが求めた時だけON（※topic知見がある場合のみ）
-const allowAttackDefenseDetail = usedKnowledge && followup;
+const allowAttackDefenseDetail = followup;
 
 // 注入ブロック（制度基準 → テーマ知見 の順で入れる）
 const kbGlobalBlock = formatKnowledgeBlock(globalRules);
