@@ -292,10 +292,12 @@ function inferTopics(message: string): string[] {
   const m = (message ?? "").trim();
   const topics: string[] = [];
 
-  // 出張手当（まずはこれだけでOK）
+  // 出張手当
   if (/[出張旅費日当手当宿泊]/.test(m)) topics.push("出張手当");
 
-  // 今後ここに増やす：交際費、私用混在、役員、源泉、消費税…など
+  // 交際費（接待・飲食・お土産・手土産・会食）
+  if (/(交際費|接待|会食|飲み|飲食|飲み会|会合|手土産|お土産|贈答)/.test(m)) topics.push("交際費");
+
   return Array.from(new Set(topics));
 }
 
