@@ -315,9 +315,13 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
   if (strong) return true;
 
   // 2) 「追撃っぽい短文」＝深掘り合図（取りこぼし防止）
-  // 完全一致じゃなく「含む」で拾う（お願い/頼む/続き/もっと/詳しく/教えて など）
-  const followupCue =
-    /(教えて|おしえて|詳しく|詳細|具体|もう少し|もっと|続き|つづき|お願い|おねがい|頼む|たのむ|よろしく|再度|もう一回|もういちど|さっき|今の|それ)/.test(m);
+const followupCue =
+  /(教えて|おしえて|詳しく|詳細|具体|もう少し|もっと|続き|つづき|お願い|おねがい|頼む|たのむ|よろしく|再度|もう一回|もういちど|さっき|今の|それ|よろしこ)/.test(m);
+
+// 「よろ」単体だけは追撃扱い（誤爆防止で完全一致）
+const followupSolo =
+  /^(よろ|よろです|よろです！|よろ！|よろー)$/.test(m);
+
 
   // 3) 「誤送信っぽい」も救う（短すぎる）
   const veryShort = m.length <= 2 || /^[\.\-ー…\?？!！wｗ]+$/.test(m);
@@ -338,7 +342,7 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
   })();
 
   // 追撃短文は“救済優先”で必ず深掘りON（話題転換チェックは無視）
-if (followupCue) return true;
+if (followupCue || followupSolo) return true;
 
 // 誤送信っぽい超短文は、話題転換っぽいならOFF（保険）
 if (veryShort && !topicShiftLikely) return true;
