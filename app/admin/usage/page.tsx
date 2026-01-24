@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { getSupabaseClient } from "@/app/lib/supabaseClient";
 
 type Row = {
   user_id: string;
@@ -21,40 +22,29 @@ function currentMonthKeyJST(): string {
   return jst.toISOString().slice(0, 7);
 }
 
-async function getAccessToken(): Promise<string | null> {
-  // Supabase auth が保存してる token を localStorage から拾う（最小実装）
-  // 複数キーがあり得るので "sb-" を含む key を探す
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i) ?? "";
-      if (!k.includes("sb-")) continue;
-
-      const raw = localStorage.getItem(k);
-      if (!raw) continue;
-
-      const obj = JSON.parse(raw);
-      const token =
-        obj?.access_token ??
-        obj?.currentSession?.access_token ??
-        obj?.session?.access_token ??
-        obj?.auth?.access_token ??
-        null;
-
-      if (typeof token === "string" && token.length > 20) return token;
-    }
-  } catch {
-    // ignore
-  }
-  return null;
-}
-
 export default function AdminUsagePage() {
+  const supabase = useMemo(() => getSupabaseClient(), []);
+
   const [month, setMonth] = useState(currentMonthKeyJST());
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [status, setStatus] = useState<number | null>(null);
+
+  async function tokenOrThrow(): Promise<string> {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+
+    const t = data.session?.access_token;
+    if (!t) throw new Error("Not logged in. 先に /login してな。");
+    return t;
+  }
+
+  async function apiFetch(path: string) {
+    const token = await tokenOrThrow();
+    return fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+  }
 
   useEffect(() => {
     (async () => {
@@ -63,17 +53,9 @@ export default function AdminUsagePage() {
       setStatus(null);
 
       try {
-        const token = await getAccessToken();
-        if (!token) {
-          setStatus(401);
-          throw new Error("Not logged in (no token). 先に /login してな。");
-        }
-
-        const res = await fetch(
-          `/api/admin/usage?month=${encodeURIComponent(month)}`,
-          { headers: { Authorization: `Bearer ${token}` } }
+        const res = await apiFetch(
+          `/api/admin/usage?month=${encodeURIComponent(month)}`
         );
-
         setStatus(res.status);
 
         const json = await res.json().catch(() => null);
@@ -83,12 +65,16 @@ export default function AdminUsagePage() {
 
         setRows((json.data ?? []) as Row[]);
       } catch (e: any) {
-        setErr(e?.message ?? String(e));
+        const msg = e?.message ?? String(e);
+        if (msg.includes("Not logged in")) setStatus(401);
+
+        setErr(msg);
         setRows([]);
       } finally {
         setLoading(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month]);
 
   const filtered = useMemo(() => {
@@ -123,7 +109,14 @@ export default function AdminUsagePage() {
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <span style={{ fontSize: 12, opacity: 0.7 }}>月</span>
             <input
@@ -186,7 +179,13 @@ export default function AdminUsagePage() {
           </div>
         )}
 
-        <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 12 }}>
+        <div
+          style={{
+            overflowX: "auto",
+            border: "1px solid #eee",
+            borderRadius: 12,
+          }}
+        >
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
             <thead>
               <tr style={{ background: "#fafafa" }}>

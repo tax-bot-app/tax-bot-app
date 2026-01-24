@@ -23,7 +23,10 @@ function bearerToken(req: Request): string | null {
   return m ? m[1] : null;
 }
 
-async function requireAdminEmail(req: Request, supabase: ReturnType<typeof adminSupabase>): Promise<string> {
+async function requireAdminEmail(
+  req: Request,
+  supabase: ReturnType<typeof adminSupabase>
+): Promise<string> {
   const token = bearerToken(req);
   if (!token) {
     throw Object.assign(new Error("Missing Authorization Bearer token"), { status: 401 });
@@ -35,21 +38,33 @@ async function requireAdminEmail(req: Request, supabase: ReturnType<typeof admin
     throw Object.assign(new Error("Invalid session"), { status: 401 });
   }
 
+  const uid = userRes.user.id;
   const email = (userRes.user.email ?? "").toLowerCase();
-  if (!email) {
-    throw Object.assign(new Error("No email on session"), { status: 401 });
-  }
+  if (!uid) throw Object.assign(new Error("No user id on session"), { status: 401 });
 
-  // public.users を見て is_admin 判定
-  const { data: adminRow, error: adminErr } = await supabase
+  // public.users を uid で is_admin 判定（最優先）
+  const { data: adminById, error: idErr } = await supabase
+    .from("users")
+    .select("id, email, is_admin")
+    .eq("id", uid)
+    .maybeSingle();
+
+  if (idErr) throw idErr;
+
+  if (adminById?.is_admin) return (adminById.email ?? email ?? "").toLowerCase();
+
+  // フォールバック：古いデータで id が揃ってない場合だけ email で見る
+  if (!email) throw Object.assign(new Error("No email on session"), { status: 401 });
+
+  const { data: adminByEmail, error: mailErr } = await supabase
     .from("users")
     .select("email, is_admin")
     .eq("email", email)
     .maybeSingle();
 
-  if (adminErr) throw adminErr;
+  if (mailErr) throw mailErr;
 
-  if (!adminRow?.is_admin) {
+  if (!adminByEmail?.is_admin) {
     throw Object.assign(new Error(`Forbidden (admin only): ${email}`), { status: 403 });
   }
 
