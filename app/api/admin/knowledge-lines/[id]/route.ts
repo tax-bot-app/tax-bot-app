@@ -23,16 +23,15 @@ function bearerToken(req: Request): string | null {
   return m ? m[1] : null;
 }
 
-async function requireAdminEmail(
+async function requireAdmin(
   req: Request,
   supabase: ReturnType<typeof adminSupabase>
-): Promise<string> {
+): Promise<{ uid: string; email: string }> {
   const token = bearerToken(req);
   if (!token) {
     throw Object.assign(new Error("Missing Authorization Bearer token"), { status: 401 });
   }
 
-  // token からログインユーザー特定
   const { data: userRes, error: userErr } = await supabase.auth.getUser(token);
   if (userErr || !userRes?.user) {
     throw Object.assign(new Error("Invalid session"), { status: 401 });
@@ -40,35 +39,23 @@ async function requireAdminEmail(
 
   const uid = userRes.user.id;
   const email = (userRes.user.email ?? "").toLowerCase();
-  if (!uid) throw Object.assign(new Error("No user id on session"), { status: 401 });
 
-  // public.users を uid で is_admin 判定（最優先）
-  const { data: adminById, error: idErr } = await supabase
+  if (!uid) throw Object.assign(new Error("No user id on session"), { status: 401 });
+  if (!email) throw Object.assign(new Error("No email on session"), { status: 401 });
+
+  const { data: adminRow, error: adminErr } = await supabase
     .from("users")
-    .select("id, email, is_admin")
+    .select("id, is_admin")
     .eq("id", uid)
     .maybeSingle();
 
-  if (idErr) throw idErr;
+  if (adminErr) throw adminErr;
 
-  if (adminById?.is_admin) return (adminById.email ?? email ?? "").toLowerCase();
-
-  // フォールバック：古いデータで id が揃ってない場合だけ email で見る
-  if (!email) throw Object.assign(new Error("No email on session"), { status: 401 });
-
-  const { data: adminByEmail, error: mailErr } = await supabase
-    .from("users")
-    .select("email, is_admin")
-    .eq("email", email)
-    .maybeSingle();
-
-  if (mailErr) throw mailErr;
-
-  if (!adminByEmail?.is_admin) {
+  if (!adminRow?.is_admin) {
     throw Object.assign(new Error(`Forbidden (admin only): ${email}`), { status: 403 });
   }
 
-  return email;
+  return { uid, email };
 }
 
 // /api/admin/knowledge-lines/{id} から末尾idを抜く（ctx型バグ回避）
@@ -105,7 +92,7 @@ function isLens(x: string): x is Lens {
 export async function PATCH(req: Request) {
   try {
     const supabase = adminSupabase();
-    await requireAdminEmail(req, supabase);
+    await requireAdmin(req, supabase);
 
     const id = idFromReq(req);
     if (!id) return NextResponse.json({ ok: false, error: "id missing" }, { status: 400 });
@@ -161,7 +148,7 @@ export async function PATCH(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const supabase = adminSupabase();
-    await requireAdminEmail(req, supabase);
+    await requireAdmin(req, supabase);
 
     const id = idFromReq(req);
     if (!id) return NextResponse.json({ ok: false, error: "id missing" }, { status: 400 });
