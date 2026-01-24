@@ -1036,37 +1036,36 @@ try {
   })();
 
   // 直前のアシスタント発言（同スレッド内）を1件取得（追撃フェーズ継続判定に使う）
-const prevAssistantMessage = await (async () => {
-  const { data: prevRows } = await db
-    .from("messages")
-    .select("content")
-    .eq("conversation_id", convId)
-    .eq("role", "assistant")
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(1);
+  const prevAssistantMessage = await (async () => {
+    const { data: prevRows } = await db
+      .from("messages")
+      .select("content")
+      .eq("conversation_id", convId)
+      .eq("role", "assistant")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(1);
 
-  return prevRows?.[0]?.content ?? null;
-})();
-
+    return prevRows?.[0]?.content ?? null;
+  })();
 
   // 追撃（お願い/詳しく等）判定（明示追撃＋線引き質問＋追撃フェーズ継続）
-const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
-const followupPhase = isInFollowupPhase(prevAssistantMessage);
-const lineRequest = isLineRequest(message);
-const shifted = topicShiftLikelyLite(prevUserMessage, message);
+  const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
+  const followupPhase = isInFollowupPhase(prevAssistantMessage);
+  const lineRequest = isLineRequest(message);
+  const shifted = topicShiftLikelyLite(prevUserMessage, message);
 
-// ✅ 追撃型に入る条件
-const followup = followupExplicit || lineRequest || (followupPhase && !shifted);
+  // ✅ 追撃型に入る条件
+  const followup = followupExplicit || lineRequest || (followupPhase && !shifted);
 
-// ✅ 追撃フェーズ中でも「線引き要求じゃない実務質問」は通常回答（AI）へ戻す
-const forceNormalAnswer = followupPhase && !followupExplicit && !lineRequest;
+  // ✅ 追撃フェーズ中でも「線引き要求じゃない実務質問」は通常回答（AI）へ戻す
+  const forceNormalAnswer = followupPhase && !followupExplicit && !lineRequest;
 
   // A) 制度基準（常時注入：usedKnowledge判定には使わない）
-const globalRules = await retrieveGlobalRules({ db });
+  const globalRules = await retrieveGlobalRules({ db });
 
-// B) テーマ知見（QA等）
-let topicKbItems = await retrieveKnowledge({ db, message });
+  // B) テーマ知見（QA等）
+  let topicKbItems = await retrieveKnowledge({ db, message });
 
   // 追撃なのに知見が取れないなら、直前のユーザー発言で知見を取り直す（救済）
   if (followup && topicKbItems.length === 0 && prevUserMessage) {
@@ -1074,66 +1073,56 @@ let topicKbItems = await retrieveKnowledge({ db, message });
   }
 
   // ✅ 追撃型（🍚/🧂）の時だけ、knowledge_lines → 従来抽出 の順で組み立て（AIは呼ばない）
-if (followup && !forceNormalAnswer) {
-  const header = "判断の軸だけ整理するで。";
-  const footer = "※ 税務調査は「形式より実態」「一貫性」を見られる。";
+  if (followup && !forceNormalAnswer) {
+    const header = "判断の軸だけ整理するで。";
+    const footer = "※ 税務調査は「形式より実態」「一貫性」を見られる。";
 
-  // ① topic：近い話題を優先して決める（スレッド変えないユーザー対策）
-  // ① topic：今のメッセージを最優先。追撃中は「主語省略」を前提に前の話題を継承。
-// ただし、別話題っぽい(shifted)なら継承しない。
-const topic =
-  inferTopics(message)[0] ??
-  (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
-  (topicKbItems?.[0]?.topic ?? null) ??
-  "";
+    // topic：今のメッセージを最優先。追撃中は「主語省略」を前提に前の話題を継承。
+    // ただし、別話題っぽい(shifted)なら継承しない。
+    const topic =
+      inferTopics(message)[0] ??
+      (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
+      (topicKbItems?.[0]?.topic ?? null) ??
+      "";
 
-    // ② lens：基本は「今のメッセージ」で判定
-  // ただし「中身無し追撃（よろしこ等）」だけは直前ユーザー文を使う
-  const lens: Lens = inferLens(
-    (isFollowupOnlyText(message) && prevUserMessage) ? prevUserMessage : message
-  );
+    // lens：基本は「今のメッセージ」で判定
+    // ただし「中身無し追撃（よろしこ等）」だけは直前ユーザー文を使う
+    const lens: Lens = inferLens(
+      (isFollowupOnlyText(message) && prevUserMessage) ? prevUserMessage : message
+    );
 
     // topic が取れない線引きはDB追撃できないので、AIへ戻す（未登録🍚/🧂連発防止）
-  if (!topic) {
-    // answer を作らずに抜ける → 下の「if (!answer) { ...AI... }」が動く
-  } else {
-    // ③ knowledge_lines から取る（優先）
-    let built: string | null = null;
+    if (topic) {
+      let built: string | null = null;
 
-    const picked = await retrieveKnowledgeLines({ db, topic, lens });
-    built = buildFollowupAnswerFromLines(picked);
+      const picked = await retrieveKnowledgeLines({ db, topic, lens });
+      built = buildFollowupAnswerFromLines(picked);
 
-    // ④ フォールバック：まだ lines が無い場合は従来（knowledge_items.content抽出）で作る
-    if (!built) {
-      built = buildFollowupAnswerFromKb(topicKbItems);
-    }
+      if (!built) {
+        built = buildFollowupAnswerFromKb(topicKbItems);
+      }
 
-    // ⑤ それでも無ければ未登録（AIには行かない）
-    if (built) {
-      answer = `${header}\n\n${built}\n\n${footer}`;
-    } else {
-      answer = `${header}\n\n🍚攻め：未登録（このテーマの攻め/守りカードがDBにまだ入ってへん）\n🧂守り：未登録（登録後はここに固定ラインを出す）`;
+      if (built) {
+        answer = `${header}\n\n${built}\n\n${footer}`;
+      } else {
+        answer = `${header}\n\n🍚攻め：未登録（このテーマの攻め/守りカードがDBにまだ入ってへん）\n🧂守り：未登録（登録後はここに固定ラインを出す）`;
+      }
     }
   }
 
-  // まだ answer が確定してない時だけ AI を呼ぶ（＝初回 or 追撃でもDBに無い）
+  // まだ answer が確定してない時だけ AI を呼ぶ（＝初回 or topic無し追撃 or 追撃でもDBに無い）
   if (!answer) {
     const usedKnowledge = topicKbItems.length > 0;
-
-    // 既存ロジック維持：追撃判定は allowAttackDefenseDetail に使う
     const allowAttackDefenseDetail = followup;
 
-    // 注入ブロック（制度基準 → テーマ知見 の順で入れる）
     const kbGlobalBlock = formatKnowledgeBlock(globalRules);
     const kbTopicBlock = formatKnowledgeBlock(topicKbItems);
 
-    // ルール類を組み立て
     const outputRules = buildOutputRules({ allowAttackDefenseDetail });
     const ambiguityBoost = buildAmbiguityBoostRules(message);
     const styleRules = buildStyleRules(dialect, stance);
     const contextLines = await buildConversationContext({ db, convId });
 
-    // promptParts
     const promptPartsBase: PromptParts = {
       context: contextLines,
       injectedRules: [
@@ -1161,6 +1150,7 @@ const topic =
     { status: 502 }
   );
 }
+
 
     const { data, error } = await db.rpc("consume_talk_v2", {
       p_user_id: user.id,
