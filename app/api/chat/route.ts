@@ -807,6 +807,20 @@ try {
 // ✅ ミニ攻め守り：育成知見があるなら基本ON
 const showMiniAttackDefense = usedKnowledge;
 
+// 直前のユーザー発言（同スレッド内）を1件だけ取得
+const prevUserMessage = await (async () => {
+  const { data: prevRows } = await db
+    .from("messages")
+    .select("content")
+    .eq("conversation_id", convId)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1);
+
+  return prevRows?.[0]?.content ?? null;
+})();
+
 // ✅ 詳細攻め守り：ユーザーが求めた時だけON
 const allowAttackDefenseDetail = usedKnowledge && wantsAttackDefenseDetail(message, prevUserMessage);
 
