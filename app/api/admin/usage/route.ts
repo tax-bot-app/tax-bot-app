@@ -22,53 +22,46 @@ function bearerToken(req: Request): string | null {
   return m ? m[1] : null;
 }
 
+async function requireAdmin(
+  req: Request,
+  supabase: ReturnType<typeof adminSupabase>
+): Promise<{ uid: string; email: string }> {
+  const token = bearerToken(req);
+  if (!token) {
+    throw Object.assign(new Error("Missing Authorization Bearer token"), { status: 401 });
+  }
+
+  const { data: userRes, error: userErr } = await supabase.auth.getUser(token);
+  if (userErr || !userRes?.user) {
+    throw Object.assign(new Error("Invalid session"), { status: 401 });
+  }
+
+  const uid = userRes.user.id;
+  const email = (userRes.user.email ?? "").toLowerCase();
+
+  if (!uid) throw Object.assign(new Error("No user id on session"), { status: 401 });
+  if (!email) throw Object.assign(new Error("No email on session"), { status: 401 });
+
+  const { data: adminRow, error: adminErr } = await supabase
+    .from("users")
+    .select("id, is_admin")
+    .eq("id", uid)
+    .maybeSingle();
+
+  if (adminErr) throw adminErr;
+
+  if (!adminRow?.is_admin) {
+    throw Object.assign(new Error(`Forbidden (admin only): ${email}`), { status: 403 });
+  }
+
+  return { uid, email };
+}
+
 export async function GET(req: Request) {
   try {
-    const token = bearerToken(req);
-    if (!token) {
-      return NextResponse.json(
-        { ok: false, error: "Missing Authorization Bearer token" },
-        { status: 401 }
-      );
-    }
-
     const supabase = adminSupabase();
+    await requireAdmin(req, supabase);
 
-    // ① token からログインユーザー特定（email / id）
-    const { data: userRes, error: userErr } = await supabase.auth.getUser(token);
-    if (userErr || !userRes?.user) {
-      return NextResponse.json(
-        { ok: false, error: "Invalid session" },
-        { status: 401 }
-      );
-    }
-
-    const email = (userRes.user.email ?? "").toLowerCase();
-    if (!email) {
-      return NextResponse.json(
-        { ok: false, error: "No email on session" },
-        { status: 401 }
-      );
-    }
-
-    // ② public.users を見て is_admin 判定（ここが唯一の権限判定）
-    const { data: adminRow, error: adminErr } = await supabase
-      .from("users")
-      .select("email, is_admin")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (adminErr) throw adminErr;
-
-    if (!adminRow?.is_admin) {
-      // どのemailで弾かれたか分かるように返す（デバッグ用）
-      return NextResponse.json(
-        { ok: false, error: `Forbidden (admin only): ${email}` },
-        { status: 403 }
-      );
-    }
-
-    // ③ データ取得
     const { searchParams } = new URL(req.url);
     const month = searchParams.get("month") ?? new Date().toISOString().slice(0, 7);
 
@@ -96,10 +89,12 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, data });
   } catch (e: any) {
-    console.error("admin usage api error", e);
+    const status = e?.status ?? 500;
+    if (status >= 500) console.error("admin usage api error", e);
+
     return NextResponse.json(
       { ok: false, error: e?.message ?? String(e) },
-      { status: 500 }
+      { status }
     );
   }
 }
