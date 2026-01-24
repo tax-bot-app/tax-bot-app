@@ -252,7 +252,7 @@ function isFollowupOnlyText(m: string): boolean {
   const s = m.trim();
 
   // 「中身の無い追撃」判定（丁寧語・クッション言葉を広めに拾う）
-  return /^(よろしく|お願い|おねがい|続き|つづき|詳しく|詳細|もう少し|もうちょい|再度|教えて|教えてください|お願いします|お願いできますか|よろしくお願いします|よろしこ|よろ|なんぼまで|なんぼ|どんぐらい)$/.test(s);
+  return /^(よろしく|お願い|おねがい|続き|つづき|詳しく|詳細|もう少し|もうちょい|再度|教えて|教えてください|お願いします|お願いできますか|よろしくお願いします|よろしこ|よろ)$/.test(s);
 }
 
 function isInFollowupPhase(prevAssistantMessage: string | null): boolean {
@@ -1079,15 +1079,11 @@ if (followup && !forceNormalAnswer) {
       fallbackTopicFromKb: topicKbItems?.[0]?.topic ?? null,
     }) || "";
 
-  // ② lens：短文/定型追撃は直前ユーザー文で判定（UX優先）
-  const lens: Lens = isLineRequest(message)
-  ? "amount"
-  : inferLens(
-      ((message.length <= 15 || isFollowupOnlyText(message)) && prevUserMessage)
-        ? prevUserMessage
-        : message
-    );
-
+    // ② lens：基本は「今のメッセージ」で判定
+  // ただし「中身無し追撃（よろしこ等）」だけは直前ユーザー文を使う
+  const lens: Lens = inferLens(
+    (isFollowupOnlyText(message) && prevUserMessage) ? prevUserMessage : message
+  );
 
   // ③ knowledge_lines から取る（優先）
   let built: string | null = null;
