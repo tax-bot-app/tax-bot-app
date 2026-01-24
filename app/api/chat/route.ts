@@ -322,6 +322,61 @@ function formatKnowledgeBlock(items: KnowledgeItem[]): string {
   return lines.join("\n");
 }
 
+type AttackDefensePick = {
+  attack: string;
+  defense: string;
+  pitfall?: string | null;
+};
+
+function pickFirstNonEmpty(...xs: Array<string | null | undefined>): string | null {
+  for (const x of xs) {
+    const t = (x ?? "").trim();
+    if (t) return t;
+  }
+  return null;
+}
+
+function extractAttackDefenseFromContent(content: string): AttackDefensePick | null {
+  const text = (content ?? "").replace(/\r\n/g, "\n");
+
+  const defense = pickFirstNonEmpty(text.match(/^[ \t]*守り[:：]\s*(.+)\s*$/m)?.[1]);
+  const attack = pickFirstNonEmpty(text.match(/^[ \t]*攻め[:：]\s*(.+)\s*$/m)?.[1]);
+
+  if (!attack || !defense) return null;
+
+  // ⚠️地雷 の最初の1個だけ（飽き対策の最小）。不要なら後で消してOK
+  let pitfall: string | null = null;
+  const m = text.match(/【⚠️地雷】([\s\S]*?)(【|$)/);
+  if (m?.[1]) {
+    const lines = m[1]
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const bullet = lines.find((l) => l.startsWith("-") || l.startsWith("・"));
+    if (bullet) pitfall = bullet.replace(/^[-・]\s*/, "").trim();
+  }
+
+  return { attack, defense, pitfall };
+}
+
+function buildFollowupAnswerFromKb(items: KnowledgeItem[]): string | null {
+  // priority順に来てる前提。守り/攻めが入ってる最初のカードを採用
+  for (const it of items ?? []) {
+    const ad = extractAttackDefenseFromContent(it.content);
+    if (!ad) continue;
+
+    const lines: string[] = [];
+    lines.push(`🍚攻め：${ad.attack}`);
+    lines.push(`🧂守り：${ad.defense}`);
+
+    // 飽き対策（最小）。いらんかったらこのifごと消してOK
+    if (ad.pitfall) lines.push(`⚠️地雷メモ：${ad.pitfall}`);
+
+    return lines.join("\n").trim();
+  }
+  return null;
+}
+
 async function retrieveKnowledge(params: { db: any; message: string }): Promise<KnowledgeItem[]> {
   const { db, message } = params;
 
@@ -827,80 +882,87 @@ export async function POST(req: Request) {
     let answer = "";
 try {
   // 直前のユーザー発言（同スレッド内）を最大2件取得（追撃救済に使う）
-const prevUserMessage = await (async () => {
-  const { data: prevRows } = await db
-    .from("messages")
-    .select("content")
-    .eq("conversation_id", convId)
-    .eq("role", "user")
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(2);
+  const prevUserMessage = await (async () => {
+    const { data: prevRows } = await db
+      .from("messages")
+      .select("content")
+      .eq("conversation_id", convId)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(2);
 
-  // 0番目が“今の入力”になり得るので、1番目（ひとつ前）を優先
-  return prevRows?.[1]?.content ?? prevRows?.[0]?.content ?? null;
-})();
+    // 0番目が“今の入力”になり得るので、1番目（ひとつ前）を優先
+    return prevRows?.[1]?.content ?? prevRows?.[0]?.content ?? null;
+  })();
 
-// 追撃（お願い/詳しく等）判定
-const followup = wantsAttackDefenseDetail(message, prevUserMessage);
+  // 追撃（お願い/詳しく等）判定
+  const followup = wantsAttackDefenseDetail(message, prevUserMessage);
 
-// A) 制度基準（常時注入：usedKnowledge判定には使わない）
-const globalRules = await retrieveGlobalRules({ db });
+  // A) 制度基準（常時注入：usedKnowledge判定には使わない）
+  const globalRules = await retrieveGlobalRules({ db });
 
-// B) テーマ知見（QA等：深掘り判定の対象）
-let topicKbItems = await retrieveKnowledge({ db, message });
+  // B) テーマ知見（QA等）
+  let topicKbItems = await retrieveKnowledge({ db, message });
 
-// 追撃なのに知見が取れないなら、直前のユーザー発言で知見を取り直す（救済）
-if (followup && topicKbItems.length === 0 && prevUserMessage) {
-  topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
+  // 追撃なのに知見が取れないなら、直前のユーザー発言で知見を取り直す（救済）
+  if (followup && topicKbItems.length === 0 && prevUserMessage) {
+    topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
+  }
+
+  // ✅ 追撃（followup）なら、DBの「攻め/守り」からサーバで固定組み立て（AIは呼ばない）
+if (followup) {
+  const built = buildFollowupAnswerFromKb(topicKbItems);
+  answer =
+    built ||
+    "🍚攻め：未登録（このテーマの攻め/守りカードがDBにまだ入ってへん）\n🧂守り：未登録（登録後はここに固定ラインを出す）";
 }
 
-const usedKnowledge = topicKbItems.length > 0;
+  // まだ answer が確定してない時だけ AI を呼ぶ（＝初回 or 追撃でもDBに無い）
+  if (!answer) {
+    const usedKnowledge = topicKbItems.length > 0;
 
-// ✅ 詳細攻め守り：ユーザーが求めた時だけON（※topic知見がある場合のみ）
-const allowAttackDefenseDetail = followup;
+    // 既存ロジック維持：追撃判定は allowAttackDefenseDetail に使う
+    const allowAttackDefenseDetail = followup;
 
-// 注入ブロック（制度基準 → テーマ知見 の順で入れる）
-const kbGlobalBlock = formatKnowledgeBlock(globalRules);
-const kbTopicBlock = formatKnowledgeBlock(topicKbItems);
+    // 注入ブロック（制度基準 → テーマ知見 の順で入れる）
+    const kbGlobalBlock = formatKnowledgeBlock(globalRules);
+    const kbTopicBlock = formatKnowledgeBlock(topicKbItems);
 
-  // 2) ルール類を組み立て
-  const outputRules = buildOutputRules({
-  allowAttackDefenseDetail,
-});
-  const ambiguityBoost = buildAmbiguityBoostRules(message);
-  const styleRules = buildStyleRules(dialect, stance);
-  const contextLines = await buildConversationContext({ db, convId });
+    // ルール類を組み立て
+    const outputRules = buildOutputRules({ allowAttackDefenseDetail });
+    const ambiguityBoost = buildAmbiguityBoostRules(message);
+    const styleRules = buildStyleRules(dialect, stance);
+    const contextLines = await buildConversationContext({ db, convId });
 
-  // 3) promptParts を作成（育成知見は injectedRules に追加）
-  const promptPartsBase: PromptParts = {
-    context: contextLines,
-    injectedRules: [
-  ...outputRules,
-  ...ambiguityBoost,
-  ...styleRules,
-  ...(kbGlobalBlock ? [kbGlobalBlock] : []),
-  ...(kbTopicBlock ? [kbTopicBlock] : []),
-],
-    guardrails: gr.action === "inject" ? gr.guardrailLines : [],
-  };
+    // promptParts
+    const promptPartsBase: PromptParts = {
+      context: contextLines,
+      injectedRules: [
+        ...outputRules,
+        ...ambiguityBoost,
+        ...styleRules,
+        ...(kbGlobalBlock ? [kbGlobalBlock] : []),
+        ...(kbTopicBlock ? [kbTopicBlock] : []),
+      ],
+      guardrails: gr.action === "inject" ? gr.guardrailLines : [],
+    };
 
-  // 4) 生成（フラグも渡す）
-  answer = await generateAnswerStrict({
-  message,
-  promptPartsBase,
-  dialect,
-  stance,
-  usedKnowledge,
-  allowAttackDefenseDetail,
-});
+    answer = await generateAnswerStrict({
+      message,
+      promptPartsBase,
+      dialect,
+      stance,
+      usedKnowledge,
+      allowAttackDefenseDetail,
+    });
+  }
 } catch (e: any) {
   return NextResponse.json(
     { ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes,
     { status: 502 }
   );
 }
-
 
     const { data, error } = await db.rpc("consume_talk_v2", {
       p_user_id: user.id,
