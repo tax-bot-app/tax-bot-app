@@ -25,19 +25,13 @@ function bearerToken(req: Request): string | null {
 
 async function requireAdminEmail(req: Request, supabase: ReturnType<typeof adminSupabase>): Promise<string> {
   const token = bearerToken(req);
-  if (!token) {
-    throw Object.assign(new Error("Missing Authorization Bearer token"), { status: 401 });
-  }
+  if (!token) throw Object.assign(new Error("Missing Authorization Bearer token"), { status: 401 });
 
   const { data: userRes, error: userErr } = await supabase.auth.getUser(token);
-  if (userErr || !userRes?.user) {
-    throw Object.assign(new Error("Invalid session"), { status: 401 });
-  }
+  if (userErr || !userRes?.user) throw Object.assign(new Error("Invalid session"), { status: 401 });
 
   const email = (userRes.user.email ?? "").toLowerCase();
-  if (!email) {
-    throw Object.assign(new Error("No email on session"), { status: 401 });
-  }
+  if (!email) throw Object.assign(new Error("No email on session"), { status: 401 });
 
   const { data: adminRow, error: adminErr } = await supabase
     .from("users")
@@ -46,12 +40,17 @@ async function requireAdminEmail(req: Request, supabase: ReturnType<typeof admin
     .maybeSingle();
 
   if (adminErr) throw adminErr;
-
-  if (!adminRow?.is_admin) {
-    throw Object.assign(new Error(`Forbidden (admin only): ${email}`), { status: 403 });
-  }
+  if (!adminRow?.is_admin) throw Object.assign(new Error(`Forbidden (admin only): ${email}`), { status: 403 });
 
   return email;
+}
+
+// /api/admin/knowledge-lines/{id} から末尾idを抜く（ctx型バグ回避）
+function idFromReq(req: Request): string {
+  const { pathname } = new URL(req.url);
+  const parts = pathname.split("/").filter(Boolean);
+  const id = parts[parts.length - 1] || "";
+  return id;
 }
 
 function safeStr(x: unknown): string {
@@ -77,12 +76,12 @@ function isLens(x: string): x is Lens {
   return x === "amount" || x === "substance" || x === "system";
 }
 
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+export async function PATCH(req: Request) {
   try {
     const supabase = adminSupabase();
     await requireAdminEmail(req, supabase);
 
-    const id = ctx.params.id;
+    const id = idFromReq(req);
     if (!id) return NextResponse.json({ ok: false, error: "id missing" }, { status: 400 });
 
     const body = await req.json().catch(() => null);
@@ -133,12 +132,12 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   }
 }
 
-export async function DELETE(req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(req: Request) {
   try {
     const supabase = adminSupabase();
     await requireAdminEmail(req, supabase);
 
-    const id = ctx.params.id;
+    const id = idFromReq(req);
     if (!id) return NextResponse.json({ ok: false, error: "id missing" }, { status: 400 });
 
     const { error } = await supabase.from("knowledge_lines").delete().eq("id", id);
