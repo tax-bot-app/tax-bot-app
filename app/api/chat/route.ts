@@ -419,6 +419,14 @@ function inferTopics(message: string): string[] {
   return Array.from(new Set(topics));
 }
 
+function inferTopicFromHistory(prevUserMessage: string | null, prevAssistantMessage: string | null): string | null {
+  const u = prevUserMessage ? inferTopics(prevUserMessage)[0] : null;
+  if (u) return u;
+  const a = prevAssistantMessage ? inferTopics(prevAssistantMessage)[0] : null;
+  if (a) return a;
+  return null;
+}
+
 function formatKnowledgeBlock(items: KnowledgeItem[]): string {
   if (!items || items.length === 0) return "";
 
@@ -1071,13 +1079,13 @@ if (followup && !forceNormalAnswer) {
   const footer = "※ 税務調査は「形式より実態」「一貫性」を見られる。";
 
   // ① topic：近い話題を優先して決める（スレッド変えないユーザー対策）
-  const topic =
-    pickNearestTopic({
-      message,
-      prevUserMessage,
-      prevAssistantMessage,
-      fallbackTopicFromKb: topicKbItems?.[0]?.topic ?? null,
-    }) || "";
+  // ① topic：今のメッセージを最優先。追撃中は「主語省略」を前提に前の話題を継承。
+// ただし、別話題っぽい(shifted)なら継承しない。
+const topic =
+  inferTopics(message)[0] ??
+  (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
+  (topicKbItems?.[0]?.topic ?? null) ??
+  "";
 
     // ② lens：基本は「今のメッセージ」で判定
   // ただし「中身無し追撃（よろしこ等）」だけは直前ユーザー文を使う
@@ -1085,25 +1093,28 @@ if (followup && !forceNormalAnswer) {
     (isFollowupOnlyText(message) && prevUserMessage) ? prevUserMessage : message
   );
 
-  // ③ knowledge_lines から取る（優先）
-  let built: string | null = null;
-  if (topic) {
+    // topic が取れない線引きはDB追撃できないので、AIへ戻す（未登録🍚/🧂連発防止）
+  if (!topic) {
+    // answer を作らずに抜ける → 下の「if (!answer) { ...AI... }」が動く
+  } else {
+    // ③ knowledge_lines から取る（優先）
+    let built: string | null = null;
+
     const picked = await retrieveKnowledgeLines({ db, topic, lens });
     built = buildFollowupAnswerFromLines(picked);
-  }
 
-  // ④ フォールバック：まだ lines が無い場合は従来（knowledge_items.content抽出）で作る
-  if (!built) {
-    built = buildFollowupAnswerFromKb(topicKbItems);
-  }
+    // ④ フォールバック：まだ lines が無い場合は従来（knowledge_items.content抽出）で作る
+    if (!built) {
+      built = buildFollowupAnswerFromKb(topicKbItems);
+    }
 
-  // ⑤ それでも無ければ未登録（AIには行かない）
-  if (built) {
-    answer = `${header}\n\n${built}\n\n${footer}`;
-  } else {
-    answer = `${header}\n\n🍚攻め：未登録（このテーマの攻め/守りカードがDBにまだ入ってへん）\n🧂守り：未登録（登録後はここに固定ラインを出す）`;
+    // ⑤ それでも無ければ未登録（AIには行かない）
+    if (built) {
+      answer = `${header}\n\n${built}\n\n${footer}`;
+    } else {
+      answer = `${header}\n\n🍚攻め：未登録（このテーマの攻め/守りカードがDBにまだ入ってへん）\n🧂守り：未登録（登録後はここに固定ラインを出す）`;
+    }
   }
-}
 
   // まだ answer が確定してない時だけ AI を呼ぶ（＝初回 or 追撃でもDBに無い）
   if (!answer) {
