@@ -235,6 +235,64 @@ function clampForContext(s: string, n: number) {
 }
 type MsgMini = { id: string; role: "user" | "assistant"; content: string; created_at: string };
 
+type Lens = "amount" | "substance" | "system";
+type StanceAD = "attack" | "defense";
+
+type KnowledgeLine = {
+  id: string;
+  topic: string;
+  stance: StanceAD;
+  lens: Lens;
+  text: string;
+  priority: number;
+};
+
+function isFollowupOnlyText(m: string): boolean {
+  if (!m) return false;
+  const s = m.trim();
+
+  // 「中身の無い追撃」判定（丁寧語・クッション言葉を広めに拾う）
+  return /^(よろしく|お願い|おねがい|続き|つづき|詳しく|詳細|もう少し|もうちょい|再度|教えて|教えてください|お願いします|お願いできますか|よろしくお願いします)/.test(s);
+}
+
+function inferLens(message: string): Lens {
+  const m = (message ?? "").trim();
+
+  // 金額系
+  if (/(いくら|金額|上限|限度|円|万円|一人|1人|１人|単価|高い|安い|相場)/.test(m)) return "amount";
+
+  // 制度・仕組み系
+  if (/(インボイス|消費税|控除|届出|規程|規定|ルール|手続|要件|仕訳|帳簿|請求書|契約書)/.test(m)) return "system";
+
+  // 実態・証拠系（デフォ優先）
+  return "substance";
+}
+
+async function retrieveKnowledgeLines(params: {
+  db: any;
+  topic: string;
+  lens: Lens;
+}): Promise<{ attack: KnowledgeLine | null; defense: KnowledgeLine | null }> {
+  const { db, topic, lens } = params;
+
+  const { data, error } = await db
+    .from("knowledge_lines")
+    .select("id, topic, stance, lens, text, priority")
+    .eq("is_active", true)
+    .eq("topic", topic)
+    .eq("lens", lens)
+    .in("stance", ["attack", "defense"])
+    .order("priority", { ascending: false })
+    .limit(10);
+
+  if (error || !data) return { attack: null, defense: null };
+
+  const rows = data as KnowledgeLine[];
+  const attack = rows.find((r) => r.stance === "attack") ?? null;
+  const defense = rows.find((r) => r.stance === "defense") ?? null;
+  return { attack, defense };
+}
+
 type KnowledgeItem = {
   id: string;
   kind: "rule" | "qa" | "example";
@@ -375,6 +433,19 @@ function buildFollowupAnswerFromKb(items: KnowledgeItem[]): string | null {
     return lines.join("\n").trim();
   }
   return null;
+}
+
+function buildFollowupAnswerFromLines(params: {
+  attack: KnowledgeLine | null;
+  defense: KnowledgeLine | null;
+}): string | null {
+  const { attack, defense } = params;
+  if (!attack || !defense) return null;
+
+  const lines: string[] = [];
+  lines.push(`🍚攻め：${attack.text}`);
+  lines.push(`🧂守り：${defense.text}`);
+  return lines.join("\n").trim();
 }
 
 async function retrieveKnowledge(params: { db: any; message: string }): Promise<KnowledgeItem[]> {
@@ -912,11 +983,36 @@ try {
 
   // ✅ 追撃（followup）なら、DBの「攻め/守り」からサーバで固定組み立て（AIは呼ばない）
 if (followup) {
-  const built = buildFollowupAnswerFromKb(topicKbItems);
-
   const header = "判断の軸だけ整理するで。";
   const footer = "※ 税務調査は「形式より実態」「一貫性」を見られる。";
 
+  // ① topic を確定（topicKbItemsがあればそれを優先、無ければ推定）
+  const topic =
+    topicKbItems?.[0]?.topic ||
+    inferTopics(prevUserMessage ?? message)[0] ||
+    inferTopics(message)[0] ||
+    "";
+
+  // ② lens を推定（追撃メッセージ優先。短文なら直前メッセージも使う）
+  const lens = inferLens(
+  ((message.length <= 15 || isFollowupOnlyText(message)) && prevUserMessage)
+    ? prevUserMessage
+    : message
+);
+
+  // ③ knowledge_lines から引く（優先）
+  let built: string | null = null;
+  if (topic) {
+    const picked = await retrieveKnowledgeLines({ db, topic, lens });
+    built = buildFollowupAnswerFromLines(picked);
+  }
+
+  // ④ フォールバック：まだ lines が無い場合は従来（knowledge_items.content抽出）で作る
+  if (!built) {
+    built = buildFollowupAnswerFromKb(topicKbItems);
+  }
+
+  // ⑤ それでも無ければ未登録（AIには行かない）
   if (built) {
     answer = `${header}\n\n${built}\n\n${footer}`;
   } else {
