@@ -255,6 +255,54 @@ function isFollowupOnlyText(m: string): boolean {
   return /^(よろしく|お願い|おねがい|続き|つづき|詳しく|詳細|もう少し|もうちょい|再度|教えて|教えてください|お願いします|お願いできますか|よろしくお願いします)/.test(s);
 }
 
+function isInFollowupPhase(prevAssistantMessage: string | null): boolean {
+  const s = (prevAssistantMessage ?? "");
+  return s.includes("🍚攻め") && s.includes("🧂守り");
+}
+
+// 「攻め/守り（線引き）」を求めてる質問か？（=🍚/🧂を出すべきか）
+function isLineRequest(message: string): boolean {
+  const m = (message ?? "").trim();
+  return /(攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|レンジ|幅|アウト|セーフ|リスク|大丈夫)/.test(m);
+}
+
+// followupフェーズ中に「別の話題に飛んだ」っぽいか（雑でOK）
+function topicShiftLikelyLite(prevUser: string | null, cur: string): boolean {
+  const prev = (prevUser ?? "").trim();
+  const now = (cur ?? "").trim();
+  if (!prev || !now) return false;
+
+  const tokens = (s: string) =>
+    Array.from(s.matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((x) => x[0]);
+
+  const a = tokens(prev);
+  const b = tokens(now);
+  if (a.length === 0 || b.length === 0) return false;
+
+  const setA = new Set(a);
+  const overlap = b.some((t) => setA.has(t));
+  return !overlap;
+}
+
+// 「一番近い話題」を選ぶ（短文追撃でもtopicを外さない）
+function pickNearestTopic(params: {
+  message: string;
+  prevUserMessage: string | null;
+  prevAssistantMessage: string | null;
+  fallbackTopicFromKb: string | null;
+}): string | null {
+  const { message, prevUserMessage, prevAssistantMessage, fallbackTopicFromKb } = params;
+
+  const cands = [
+    ...inferTopics(message),
+    ...(prevUserMessage ? inferTopics(prevUserMessage) : []),
+    ...(prevAssistantMessage ? inferTopics(prevAssistantMessage) : []),
+  ];
+
+  if (cands.length > 0) return cands[0];
+  return fallbackTopicFromKb ?? null;
+}
+
 function inferLens(message: string): Lens {
   const m = (message ?? "").trim();
 
@@ -971,40 +1019,66 @@ try {
     return prevRows?.[1]?.content ?? prevRows?.[0]?.content ?? null;
   })();
 
-  // 追撃（お願い/詳しく等）判定
-  const followup = wantsAttackDefenseDetail(message, prevUserMessage);
+  // 直前のアシスタント発言（同スレッド内）を1件取得（追撃フェーズ継続判定に使う）
+const prevAssistantMessage = await (async () => {
+  const { data: prevRows } = await db
+    .from("messages")
+    .select("content")
+    .eq("conversation_id", convId)
+    .eq("role", "assistant")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1);
+
+  return prevRows?.[0]?.content ?? null;
+})();
+
+
+  // 追撃（お願い/詳しく等）判定（明示追撃＋線引き質問＋追撃フェーズ継続）
+const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
+const followupPhase = isInFollowupPhase(prevAssistantMessage);
+const lineRequest = isLineRequest(message);
+const shifted = topicShiftLikelyLite(prevUserMessage, message);
+
+// ✅ 追撃型に入る条件
+const followup = followupExplicit || lineRequest || (followupPhase && !shifted);
+
+// ✅ 追撃フェーズ中でも「線引き要求じゃない実務質問」は通常回答（AI）へ戻す
+const forceNormalAnswer = followupPhase && !followupExplicit && !lineRequest;
 
   // A) 制度基準（常時注入：usedKnowledge判定には使わない）
-  const globalRules = await retrieveGlobalRules({ db });
+const globalRules = await retrieveGlobalRules({ db });
 
-  // B) テーマ知見（QA等）
-  let topicKbItems = await retrieveKnowledge({ db, message });
+// B) テーマ知見（QA等）
+let topicKbItems = await retrieveKnowledge({ db, message });
 
   // 追撃なのに知見が取れないなら、直前のユーザー発言で知見を取り直す（救済）
   if (followup && topicKbItems.length === 0 && prevUserMessage) {
     topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
   }
 
-  // ✅ 追撃（followup）なら、DBの「攻め/守り」からサーバで固定組み立て（AIは呼ばない）
-if (followup) {
+  // ✅ 追撃型（🍚/🧂）の時だけ、knowledge_lines → 従来抽出 の順で組み立て（AIは呼ばない）
+if (followup && !forceNormalAnswer) {
   const header = "判断の軸だけ整理するで。";
   const footer = "※ 税務調査は「形式より実態」「一貫性」を見られる。";
 
-  // ① topic を確定（topicKbItemsがあればそれを優先、無ければ推定）
+  // ① topic：近い話題を優先して決める（スレッド変えないユーザー対策）
   const topic =
-    topicKbItems?.[0]?.topic ||
-    inferTopics(prevUserMessage ?? message)[0] ||
-    inferTopics(message)[0] ||
-    "";
+    pickNearestTopic({
+      message,
+      prevUserMessage,
+      prevAssistantMessage,
+      fallbackTopicFromKb: topicKbItems?.[0]?.topic ?? null,
+    }) || "";
 
-  // ② lens を推定（追撃メッセージ優先。短文なら直前メッセージも使う）
+  // ② lens：短文/定型追撃は直前ユーザー文で判定（UX優先）
   const lens = inferLens(
-  ((message.length <= 15 || isFollowupOnlyText(message)) && prevUserMessage)
-    ? prevUserMessage
-    : message
-);
+    (((message.length <= 15) || isFollowupOnlyText(message)) && prevUserMessage)
+      ? prevUserMessage
+      : message
+  );
 
-  // ③ knowledge_lines から引く（優先）
+  // ③ knowledge_lines から取る（優先）
   let built: string | null = null;
   if (topic) {
     const picked = await retrieveKnowledgeLines({ db, topic, lens });
