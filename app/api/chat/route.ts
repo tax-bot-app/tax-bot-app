@@ -306,13 +306,21 @@ function pickNearestTopic(params: {
 function inferLens(message: string): Lens {
   const m = (message ?? "").trim();
 
-  // 金額系
-  if (/(いくら|金額|上限|限度|円|万円|一人|1人|１人|単価|高い|安い|相場)/.test(m)) return "amount";
+  // 金額・上限系（2万円/2万/¥20000/20000円/一人2万円/なんぼ？どんぐらい？）
+  const hasMoney =
+    /([0-9０-９]+)\s*(円|万円|万|千円)|¥\s*[0-9０-９]+|金額|上限|限度|いくら|相場|単価|一人|1人|１人|なんぼ|どんぐらい/.test(m);
+
+  if (hasMoney) return "amount";
+
+  // 「アウト？大丈夫？」＋金額ニュアンス
+  if (/(アウト|セーフ|大丈夫|安全)/.test(m) && /(万|円|いくら|上限|限度)/.test(m))
+    return "amount";
 
   // 制度・仕組み系
-  if (/(インボイス|消費税|控除|届出|規程|規定|ルール|手続|要件|仕訳|帳簿|請求書|契約書)/.test(m)) return "system";
+  if (/(インボイス|消費税|控除|届出|規程|規定|ルール|手続|要件|仕訳|帳簿|請求書|契約書)/.test(m))
+    return "system";
 
-  // 実態・証拠系（デフォ優先）
+  // 実態・証拠系（デフォ）
   return "substance";
 }
 
