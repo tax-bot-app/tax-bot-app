@@ -340,6 +340,22 @@ async function retrieveKnowledge(params: { db: any; message: string }): Promise<
   return (data ?? []) as KnowledgeItem[];
 }
 
+async function retrieveGlobalRules(params: { db: any }): Promise<KnowledgeItem[]> {
+  const { db } = params;
+
+  const { data, error } = await db
+    .from("knowledge_items")
+    .select("id, kind, topic, title, content, amounts, conditions, priority")
+    .eq("is_active", true)
+    .eq("kind", "rule")
+    .eq("topic", "制度基準")
+    .order("priority", { ascending: false })
+    .limit(20);
+
+  if (error) return [];
+  return (data ?? []) as KnowledgeItem[];
+}
+
 async function buildConversationContext(params: { db: any; convId: string }): Promise<string[]> {
   const { db, convId } = params;
   const lines: string[] = [];
@@ -557,7 +573,15 @@ function forceCasual(text: string, dialect: Dialect): string {
   return s;
 }
 
-
+function inquiryLine(dialect: Dialect, stance: Stance): string {
+  if (dialect === "standard" && stance === "sanbo")
+    return "🔎確認（返事いらんメモ） 税務前提で回答しました。前提が違う場合はお知らせください。";
+  if (dialect === "standard" && stance === "zubatto")
+    return "🔎確認（返事いらんメモ） 税務前提で答えた。前提が違うなら言って。";
+  if (dialect === "kansai" && stance === "sanbo")
+    return "🔎確認（返事いらんメモ） 税務前提でお答えしましたで。前提が違うなら言うてくださいな。";
+  return "🔎確認（返事いらんメモ） 税務前提で答えたで。前提が違うなら言うてな。";
+}
 
 function postProcessAnswer(
   raw: string,
@@ -646,7 +670,7 @@ function postProcessAnswer(
         out.push(line);
         continue;
       }
-      out.push("🔎確認（返事いらんメモ） 税務前提で答えたで。前提が違うなら言うてな。");
+      out.push(inquiryLine(dialect, stance));
     }
     a = out.join("\n").trim();
   }
@@ -800,13 +824,7 @@ export async function POST(req: Request) {
 
     let answer = "";
 try {
-  // 1) まず育成知見を取得（先に！）
-  const kbItems = await retrieveKnowledge({ db, message });
-  const kbBlock = formatKnowledgeBlock(kbItems);
-
-  const usedKnowledge = kbItems.length > 0;
-
-// 直前のユーザー発言（同スレッド内）を1件だけ取得
+  // 直前のユーザー発言（同スレッド内）を最大2件取得（追撃救済に使う）
 const prevUserMessage = await (async () => {
   const { data: prevRows } = await db
     .from("messages")
@@ -817,14 +835,32 @@ const prevUserMessage = await (async () => {
     .order("id", { ascending: false })
     .limit(2);
 
-  // 0番目が“今の入力”になり得るので、1番目（ひとつ前）を採用
-  return prevRows?.[1]?.content ?? null;
+  // 0番目が“今の入力”になり得るので、1番目（ひとつ前）を優先
+  return prevRows?.[1]?.content ?? prevRows?.[0]?.content ?? null;
 })();
 
-// ✅ 詳細攻め守り：ユーザーが求めた時だけON
-const allowAttackDefenseDetail =
-  (usedKnowledge || prevUserMessage) &&
-  wantsAttackDefenseDetail(message, prevUserMessage);
+// 追撃（お願い/詳しく等）判定
+const followup = wantsAttackDefenseDetail(message, prevUserMessage);
+
+// A) 制度基準（常時注入：usedKnowledge判定には使わない）
+const globalRules = await retrieveGlobalRules({ db });
+
+// B) テーマ知見（QA等：深掘り判定の対象）
+let topicKbItems = await retrieveKnowledge({ db, message });
+
+// 追撃なのに知見が取れないなら、直前のユーザー発言で知見を取り直す（救済）
+if (followup && topicKbItems.length === 0 && prevUserMessage) {
+  topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
+}
+
+const usedKnowledge = topicKbItems.length > 0;
+
+// ✅ 詳細攻め守り：ユーザーが求めた時だけON（※topic知見がある場合のみ）
+const allowAttackDefenseDetail = usedKnowledge && followup;
+
+// 注入ブロック（制度基準 → テーマ知見 の順で入れる）
+const kbGlobalBlock = formatKnowledgeBlock(globalRules);
+const kbTopicBlock = formatKnowledgeBlock(topicKbItems);
 
   // 2) ルール類を組み立て
   const outputRules = buildOutputRules({
@@ -838,11 +874,12 @@ const allowAttackDefenseDetail =
   const promptPartsBase: PromptParts = {
     context: contextLines,
     injectedRules: [
-      ...outputRules,
-      ...ambiguityBoost,
-      ...styleRules,
-      ...(kbBlock ? [kbBlock] : []),
-    ],
+  ...outputRules,
+  ...ambiguityBoost,
+  ...styleRules,
+  ...(kbGlobalBlock ? [kbGlobalBlock] : []),
+  ...(kbTopicBlock ? [kbTopicBlock] : []),
+],
     guardrails: gr.action === "inject" ? gr.guardrailLines : [],
   };
 
