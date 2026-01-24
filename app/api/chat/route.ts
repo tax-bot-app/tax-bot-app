@@ -515,21 +515,21 @@ function enforceTemplate(answer: string): string {
 function catchphraseFor(dialect: Dialect, stance: Stance): string {
   // ① 関西弁 × 参謀（最優先）
   if (dialect === "kansai" && stance === "sanbo") {
-    return "せやけど、税務の世界は答えひとつちゃいますさかい、**攻め・守り**ラインもお伝えできますさかい、遠慮なく言うてくださいな。";
+    return "せやけど、税務の世界は答えひとつちゃいますさかい、🍚**攻めライン・🧂守り**ラインもお伝えできますさかい、遠慮なく言うてくださいな。";
   }
 
   // ② 標準語 × 参謀
   if (dialect === "standard" && stance === "sanbo") {
-    return "とはいえ、税務の世界は答えが一つではありませんので、**攻め・守り**の考え方も含めてお伝えできます。必要でしたらお知らせください。";
+    return "とはいえ、税務の世界は答えが一つではありませんので、🍚**攻めライン・🧂守り**の考え方も含めてお伝えできます。必要でしたらお知らせください。";
   }
 
   // ③ 関西弁 × ズバっと
   if (dialect === "kansai" && stance === "zubatto") {
-    return "とはいえ、税務の世界は答えがひとつちゃう。**攻め・守り**ラインも知りたかったら、遠慮なく言うてな。";
+    return "とはいえ、税務の世界は答えがひとつちゃう。🍚**攻めライン・🧂守り**ラインも知りたかったら、遠慮なく言うてな。";
   }
 
   // ④ 標準語 × ズバっと
-  return "とはいえ、税務の世界は答えが一つじゃない。**攻め・守り**ラインも知りたければ、遠慮なく言って。";
+  return "とはいえ、税務の世界は答えが一つじゃない。🍚**攻めライン・🧂守り**ラインも知りたければ、遠慮なく言って。";
 }
 
 function forceCasual(text: string, dialect: Dialect): string {
@@ -660,6 +660,8 @@ function postProcessAnswer(
       a = [...rest, askLines[0]].join("\n").trim();
     }
   }
+
+  a = a.replace(/^返事いらんメモ[:：].*$/gm, "").trim();
 
   return a;
 }
@@ -810,9 +812,10 @@ const prevUserMessage = await (async () => {
     .eq("role", "user")
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
-    .limit(1);
+    .limit(2);
 
-  return prevRows?.[0]?.content ?? null;
+  // 0番目が“今の入力”になり得るので、1番目（ひとつ前）を採用
+  return prevRows?.[1]?.content ?? null;
 })();
 
 // ✅ 詳細攻め守り：ユーザーが求めた時だけON

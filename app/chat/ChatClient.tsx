@@ -119,7 +119,12 @@ function stripCatchphraseIfThreePatterns(content: string): string {
 
 function lineStyle(line: string): React.CSSProperties {
   const t = line.trimStart();
-  const isTitle = t.startsWith("🧂") || t.startsWith("🍚") || t.startsWith("🧂🥄") || t.startsWith("🍚🥄");
+  const isTitle =
+  t.startsWith("🥄") ||
+  t.startsWith("🧂") ||
+  t.startsWith("🍚") ||
+  t.startsWith("🧂🥄") ||
+  t.startsWith("🍚🥄");
   if (!isTitle) return { whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 };
 
   return {
