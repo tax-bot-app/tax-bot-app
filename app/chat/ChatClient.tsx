@@ -179,7 +179,17 @@ export default function ChatClient() {
   });
 
   const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [input, setInput] = useState("");
+const [input, setInput] = useState("");
+
+const clearChatUiState = () => {
+  setThreads([]);
+  setMessages([]);
+  setActiveConversationId(null);
+
+  try {
+    localStorage.removeItem("chat:activeConversationId");
+  } catch {}
+};
 
   const msgsRef = useRef<HTMLDivElement | null>(null);
 
@@ -252,14 +262,15 @@ export default function ChatClient() {
   };
 
   const goLoginHard = async () => {
-    if (redirectingRef.current) return;
-    redirectingRef.current = true;
-    try {
-      await supabase.auth.signOut().catch(() => null);
-    } finally {
-      router.replace("/login?reason=expired");
-    }
-  };
+  if (redirectingRef.current) return;
+  redirectingRef.current = true;
+  try {
+    await supabase.auth.signOut().catch(() => null);
+  } finally {
+    clearChatUiState();
+    router.replace("/login?reason=expired");
+  }
+};
 
       const authDiag = async () => {
     try {
@@ -295,13 +306,11 @@ export default function ChatClient() {
 
   // 疑似セッション切れ（ローカルでアクセストークンだけ壊して挙動確認）
   const simulateExpired = async () => {
-    try {
-      setErrMsg("疑似セッション切れを発動：次のAPIで/loginへ落ちるはず");
-      // sessionはSupabase側が持ってるので、手元では「次のAPIで401にする」方向が再現性高い
-      // ここでは "tokenを取れない状態" を作るために signOut してから戻す
-      await supabase.auth.signOut().catch(() => null);
-    } catch {}
-  };
+  try {
+    await supabase.auth.signOut().catch(() => null);
+    clearChatUiState();
+  } catch {}
+};
 
 
   const handleAuthishError = async (raw: unknown) => {
@@ -365,11 +374,17 @@ export default function ChatClient() {
       if (!token) return await handleAuthishError("Not logged in");
 
       // ✅ 1クエリで一覧＋最終メッセージプレビューまで取る
-      const { data, error } = await supabase
-        .from("v_conversation_threads")
-        .select("id, title, created_at, last_content, last_activity_at")
-        .order("last_activity_at", { ascending: false })
-        .limit(50);
+      const { data: u, error: uErr } = await supabase.auth.getUser();
+if (uErr || !u?.user?.id) return await handleAuthishError("Not logged in");
+const userId = u.user.id;
+
+const { data, error } = await supabase
+  .from("v_conversation_threads")
+  .select("id, user_id, title, created_at, last_content, last_activity_at")
+  .eq("user_id", userId)
+  .order("last_activity_at", { ascending: false })
+  .limit(50);
+
 
       if (error) throw error;
 
@@ -449,10 +464,15 @@ export default function ChatClient() {
       const token = await getToken();
       if (!token) return await handleAuthishError("Not logged in");
 
+      const { data: u, error: uErr } = await supabase.auth.getUser();
+      if (uErr || !u?.user?.id) return await handleAuthishError("Not logged in");
+      const userId = u.user.id;
+
       const { error } = await supabase
         .from("conversations")
         .update({ summary: title, summary_updated_at: new Date().toISOString() })
-        .eq("id", activeConversationId);
+        .eq("id", activeConversationId)
+        .eq("user_id", userId);
 
       if (error) throw error;
 
@@ -461,6 +481,7 @@ export default function ChatClient() {
       if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "rename failed");
     }
+
   };
 
   const canSend = (() => {
@@ -614,15 +635,18 @@ export default function ChatClient() {
             <button
   type="button"
   onPointerDown={async (e) => {
-    e.preventDefault();
-    await supabase.auth.signOut().catch(() => null);
-    router.replace("/login");
-  }}
-  onTouchStart={async (e) => {
-    e.preventDefault();
-    await supabase.auth.signOut().catch(() => null);
-    router.replace("/login");
-  }}
+  e.preventDefault();
+  await supabase.auth.signOut().catch(() => null);
+  clearChatUiState();
+  router.replace("/login");
+}}
+
+onTouchStart={async (e) => {
+  e.preventDefault();
+  await supabase.auth.signOut().catch(() => null);
+  clearChatUiState();
+  router.replace("/login");
+}}
   style={BTN}
 >
                         {DEBUG_AUTH && (
