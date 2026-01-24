@@ -1081,10 +1081,13 @@ if (followup && !forceNormalAnswer) {
 
   // ② lens：短文/定型追撃は直前ユーザー文で判定（UX優先）
   const lens = inferLens(
-    (((message.length <= 15) || isFollowupOnlyText(message)) && prevUserMessage)
-      ? prevUserMessage
-      : message
-  );
+  // 金額・線引き語が入ってたら、短文でも今回の message を優先
+  (isLineRequest(message) || /([0-9０-９]+)\s*(円|万円|万|千円)|¥\s*[0-9０-９]+|なんぼ|どんぐらい/.test(message))
+    ? message
+    : (((message.length <= 15) || isFollowupOnlyText(message)) && prevUserMessage)
+        ? prevUserMessage
+        : message
+);
 
   // ③ knowledge_lines から取る（優先）
   let built: string | null = null;
