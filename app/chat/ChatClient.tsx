@@ -522,19 +522,68 @@ const { data, error } = await supabase
       if (activeConversationId) body.conversationId = activeConversationId;
 
             const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+  method: "POST",
+  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
 
-      const json = (await res.json().catch(() => null)) as ChatRes | null;
+const json = (await res.json().catch(() => null)) as ChatRes | null;
 
-      if (await maybeRedirectFromApiError(res, json)) return;
-      if (!json) throw new Error(`chat failed: ${res.status}`);
-      if (json.ok !== true) {
-        setErrMsg(json.error || `chat failed: ${res.status}`);
-        return;
-      }
+if (await maybeRedirectFromApiError(res, json)) return;
+if (!json) throw new Error(`chat failed: ${res.status}`);
+
+if (json.ok !== true) {
+  setErrMsg(json.error || `chat failed: ${res.status}`);
+  return;
+}
+
+// ===== ここから追加：枠出し + 句点/改行単位でタイピング表示 =====
+
+// ① 先に「空のassistant枠」を出す（考え中に枠が見える）
+const assistantId = crypto.randomUUID();
+const tempAssistant: MessageRow = {
+  id: assistantId,
+  conversation_id: activeConversationId || "temp",
+  role: "assistant",
+  content: "",
+  created_at: new Date().toISOString(),
+};
+setMessages((prev) => [...prev, tempAssistant]);
+scrollBottom();
+
+// ② 返事を句点/改行単位で分割（「書いてる感」）
+const full = String((json as any).message ?? "");
+const parts = full
+  .split(/(?<=[。！？\n])/g) // 句点/！/？/改行で区切る（区切り文字は保持）
+  .map((s) => s)
+  .filter((s) => s.length > 0);
+
+// ③ 順番に追記（awaitして sendMessage の finally まで待たせる）
+await new Promise<void>((resolve) => {
+  let i = 0;
+
+  const tick = () => {
+    if (i >= parts.length) return resolve();
+
+    const chunk = parts[i++];
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === assistantId ? { ...m, content: (m.content ?? "") + chunk } : m
+      )
+    );
+
+    // 送信時は下にいる方針に合わせる
+    shouldAutoScrollRef.current = true;
+    scrollBottom();
+
+    // 速度：ここで調整（小さいほど速い）
+    setTimeout(tick, 120);
+  };
+
+  tick();
+});
+
+// ===== 追加ここまで =====
 
 
       setPlan(json.plan);
