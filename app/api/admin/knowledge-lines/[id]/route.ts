@@ -79,9 +79,13 @@ function safeBoolOrNull(x: unknown): boolean | null {
   return typeof x === "boolean" ? x : null;
 }
 
+type Role = "user" | "internal";
 type Stance = "attack" | "defense";
 type Lens = "amount" | "substance" | "system";
 
+function isRole(x: string): x is Role {
+  return x === "user" || x === "internal";
+}
 function isStance(x: string): x is Stance {
   return x === "attack" || x === "defense";
 }
@@ -104,6 +108,7 @@ export async function PATCH(req: Request) {
     const topic = safeStr(body?.topic).trim();
     const stance = safeStr(body?.stance).trim();
     const lens = safeStr(body?.lens).trim();
+    const roleRaw = safeStr(body?.role).trim();
     const text = safeStr(body?.text).trim();
 
     const priority = safeIntOrNull(body?.priority);
@@ -121,6 +126,11 @@ export async function PATCH(req: Request) {
       patch.lens = lens;
     }
 
+    if (roleRaw) {
+      if (!isRole(roleRaw)) return NextResponse.json({ ok: false, error: "invalid role" }, { status: 400 });
+      patch.role = roleRaw;
+    }
+
     if (text) patch.text = text;
     if (priority !== null) patch.priority = priority;
     if (is_active !== null) patch.is_active = is_active;
@@ -133,7 +143,7 @@ export async function PATCH(req: Request) {
       .from("knowledge_lines")
       .update(patch)
       .eq("id", id)
-      .select("id, topic, stance, lens, text, priority, is_active, created_at")
+      .select("id, topic, stance, lens, role, text, priority, is_active, created_at")
       .single();
 
     if (error) throw error;

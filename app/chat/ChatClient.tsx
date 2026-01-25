@@ -577,7 +577,7 @@ await new Promise<void>((resolve) => {
     scrollBottom();
 
     // 速度：ここで調整（小さいほど速い）
-    setTimeout(tick, 120);
+    setTimeout(tick, 150);
   };
 
   tick();

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
 
+type Role = "user" | "internal";
 type Stance = "attack" | "defense";
 type Lens = "amount" | "substance" | "system";
 
@@ -11,6 +12,7 @@ type Row = {
   topic: string;
   stance: Stance;
   lens: Lens;
+  role: Role;
   text: string;
   priority: number;
   is_active: boolean;
@@ -35,6 +37,7 @@ export default function KnowledgeLinesClient() {
   const [fLens, setFLens] = useState("");
   const [fStance, setFStance] = useState("");
   const [fActive, setFActive] = useState(""); // "", "true", "false"
+  const [fRole, setFRole] = useState(""); // "", "user", "internal"
 
   // editor
   const [editing, setEditing] = useState<Row | null>(null);
@@ -71,6 +74,7 @@ export default function KnowledgeLinesClient() {
       if (fLens) qs.set("lens", fLens);
       if (fStance) qs.set("stance", fStance);
       if (fActive) qs.set("active", fActive);
+      if (fRole) qs.set("role", fRole);
 
       const res = await apiFetch(`/api/admin/knowledge-lines?${qs.toString()}`);
       const json = (await res.json()) as ApiListRes;
@@ -86,7 +90,7 @@ export default function KnowledgeLinesClient() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fTopic, fLens, fStance, fActive]);
+  }, [fTopic, fLens, fStance, fActive, fRole]);
 
   function startNew() {
     setIsNew(true);
@@ -95,6 +99,7 @@ export default function KnowledgeLinesClient() {
       topic: fTopic || "交際費",
       stance: (fStance as Stance) || "attack",
       lens: (fLens as Lens) || "substance",
+      role: (fRole as Role) || "user",
       text: "",
       priority: 100,
       is_active: true,
@@ -114,31 +119,27 @@ export default function KnowledgeLinesClient() {
       if (!editing.topic.trim()) throw new Error("topic is required");
       if (!editing.text.trim()) throw new Error("text is required");
 
+      const payload = {
+        topic: editing.topic,
+        stance: editing.stance,
+        lens: editing.lens,
+        role: editing.role,
+        text: editing.text,
+        priority: editing.priority,
+        is_active: editing.is_active,
+      };
+
       if (isNew) {
         const res = await apiFetch(`/api/admin/knowledge-lines`, {
           method: "POST",
-          body: JSON.stringify({
-            topic: editing.topic,
-            stance: editing.stance,
-            lens: editing.lens,
-            text: editing.text,
-            priority: editing.priority,
-            is_active: editing.is_active,
-          }),
+          body: JSON.stringify(payload),
         });
         const json = (await res.json()) as ApiRowRes;
         if (!json.ok) throw new Error(json.error);
       } else {
         const res = await apiFetch(`/api/admin/knowledge-lines/${editing.id}`, {
           method: "PATCH",
-          body: JSON.stringify({
-            topic: editing.topic,
-            stance: editing.stance,
-            lens: editing.lens,
-            text: editing.text,
-            priority: editing.priority,
-            is_active: editing.is_active,
-          }),
+          body: JSON.stringify(payload),
         });
         const json = (await res.json()) as ApiRowRes;
         if (!json.ok) throw new Error(json.error);
@@ -183,7 +184,9 @@ export default function KnowledgeLinesClient() {
           <select value={fTopic} onChange={(e) => setFTopic(e.target.value)}>
             <option value="">(all)</option>
             {topics.map((t) => (
-              <option key={t} value={t}>{t}</option>
+              <option key={t} value={t}>
+                {t}
+              </option>
             ))}
           </select>
         </label>
@@ -204,6 +207,15 @@ export default function KnowledgeLinesClient() {
             <option value="">(all)</option>
             <option value="attack">attack</option>
             <option value="defense">defense</option>
+          </select>
+        </label>
+
+        <label>
+          role&nbsp;
+          <select value={fRole} onChange={(e) => setFRole(e.target.value)}>
+            <option value="">(all)</option>
+            <option value="user">user</option>
+            <option value="internal">internal</option>
           </select>
         </label>
 
@@ -235,6 +247,7 @@ export default function KnowledgeLinesClient() {
               <th style={{ textAlign: "left", padding: 8 }}>topic</th>
               <th style={{ textAlign: "left", padding: 8 }}>lens</th>
               <th style={{ textAlign: "left", padding: 8 }}>stance</th>
+              <th style={{ textAlign: "left", padding: 8 }}>role</th>
               <th style={{ textAlign: "left", padding: 8 }}>priority</th>
               <th style={{ textAlign: "left", padding: 8 }}>active</th>
               <th style={{ textAlign: "left", padding: 8 }}>text</th>
@@ -247,6 +260,18 @@ export default function KnowledgeLinesClient() {
                 <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.topic}</td>
                 <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.lens}</td>
                 <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.stance}</td>
+                <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                  <span
+                    style={{
+                      padding: "2px 8px",
+                      borderRadius: 999,
+                      border: "1px solid #ddd",
+                      background: r.role === "user" ? "#f6fff6" : "#fff6f6",
+                    }}
+                  >
+                    {r.role}
+                  </span>
+                </td>
                 <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.priority}</td>
                 <td style={{ padding: 8, whiteSpace: "nowrap" }}>{String(r.is_active)}</td>
                 <td style={{ padding: 8 }}>{r.text}</td>
@@ -259,7 +284,7 @@ export default function KnowledgeLinesClient() {
             ))}
             {shown.length === 0 && (
               <tr>
-                <td colSpan={7} style={{ padding: 12, color: "#666" }}>
+                <td colSpan={8} style={{ padding: 12, color: "#666" }}>
                   No rows
                 </td>
               </tr>
@@ -299,6 +324,7 @@ export default function KnowledgeLinesClient() {
                   style={{ width: "100%" }}
                 />
               </label>
+
               <label>
                 lens
                 <select
@@ -311,6 +337,7 @@ export default function KnowledgeLinesClient() {
                   <option value="system">system</option>
                 </select>
               </label>
+
               <label>
                 stance
                 <select
@@ -322,6 +349,19 @@ export default function KnowledgeLinesClient() {
                   <option value="defense">defense</option>
                 </select>
               </label>
+
+              <label>
+                role
+                <select
+                  value={editing.role}
+                  onChange={(e) => setEditing({ ...editing, role: e.target.value as Role })}
+                  style={{ width: "100%" }}
+                >
+                  <option value="user">user（ユーザーに出る）</option>
+                  <option value="internal">internal（管理用・絶対出さない）</option>
+                </select>
+              </label>
+
               <label>
                 priority
                 <input

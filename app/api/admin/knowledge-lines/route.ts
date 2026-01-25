@@ -69,9 +69,13 @@ function safeBool(x: unknown, def: boolean): boolean {
   return typeof x === "boolean" ? x : def;
 }
 
+type Role = "user" | "internal";
 type Stance = "attack" | "defense";
 type Lens = "amount" | "substance" | "system";
 
+function isRole(x: string): x is Role {
+  return x === "user" || x === "internal";
+}
 function isStance(x: string): x is Stance {
   return x === "attack" || x === "defense";
 }
@@ -89,13 +93,15 @@ export async function GET(req: Request) {
     const stance = safeStr(u.searchParams.get("stance")).trim();
     const lens = safeStr(u.searchParams.get("lens")).trim();
     const active = safeStr(u.searchParams.get("active")).trim(); // "true"/"false"/""
+    const role = safeStr(u.searchParams.get("role")).trim(); // "user"/"internal"/""
 
     let q = supabase
       .from("knowledge_lines")
-      .select("id, topic, stance, lens, text, priority, is_active, created_at")
+      .select("id, topic, stance, lens, role, text, priority, is_active, created_at")
       .order("topic", { ascending: true })
       .order("lens", { ascending: true })
       .order("stance", { ascending: true })
+      .order("role", { ascending: true })
       .order("priority", { ascending: false });
 
     if (topic) q = q.eq("topic", topic);
@@ -103,6 +109,7 @@ export async function GET(req: Request) {
     if (lens) q = q.eq("lens", lens);
     if (active === "true") q = q.eq("is_active", true);
     if (active === "false") q = q.eq("is_active", false);
+    if (role) q = q.eq("role", role);
 
     const { data, error } = await q;
     if (error) throw error;
@@ -124,6 +131,8 @@ export async function POST(req: Request) {
     const topic = safeStr(body?.topic).trim();
     const stance = safeStr(body?.stance).trim();
     const lens = safeStr(body?.lens).trim();
+    const roleRaw = safeStr(body?.role).trim();
+    const role: Role = isRole(roleRaw) ? roleRaw : "user";
     const text = safeStr(body?.text).trim();
     const priority = safeInt(body?.priority, 100);
     const is_active = safeBool(body?.is_active, true);
@@ -135,8 +144,8 @@ export async function POST(req: Request) {
 
     const { data, error } = await supabase
       .from("knowledge_lines")
-      .insert({ topic, stance, lens, text, priority, is_active })
-      .select("id, topic, stance, lens, text, priority, is_active, created_at")
+      .insert({ topic, stance, lens, role, text, priority, is_active })
+      .select("id, topic, stance, lens, role, text, priority, is_active, created_at")
       .single();
 
     if (error) throw error;
