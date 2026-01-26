@@ -627,7 +627,7 @@ export default function ChatClient() {
               さじかげん 🍚🥄
             </div>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#666", whiteSpace: "nowrap" }}>
-              税務相談 ～あなたの欲しい ちょうどいい さじかげん～
+              税務相談 ～あなたの欲しい ちょうどいい～
             </div>
           </div>
 
@@ -727,24 +727,7 @@ export default function ChatClient() {
                   ☰
                 </button>
 
-                {/* ✅ 上部にAIアイコン＋肩書き（デッドスペース解消） */}
-                <button
-                  type="button"
-                  className="aiTop"
-                  onPointerDown={(e) => { e.preventDefault(); setAiProfileOpen(true); }}
-                  onTouchStart={(e) => { e.preventDefault(); setAiProfileOpen(true); }}
-                  aria-label="AI野口プロフィール"
-                  title="AI野口プロフィール"
-                >
-                  <img
-                    src={AI_AVATAR_URL}
-                    alt="AI野口"
-                    className="aiTopImg"
-                  />
-                  <span className="aiTopName">AI野口（税理士）</span>
-                </button>
-
-                <div className="titleWrap2">
+                                <div className="titleWrap2">
                   <div className="chatTitle2">{activeTitle}</div>
                   <button
                     type="button"
@@ -1199,30 +1182,6 @@ export default function ChatClient() {
           flex: 1;
         }
 
-        .aiTop {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 4px 6px;
-          border: none;
-          background: transparent;
-          cursor: pointer;
-          flex: 0 0 auto;
-        }
-        .aiTopImg {
-          width: 28px;
-          height: 28px;
-          border-radius: 999px;
-          object-fit: cover;
-          border: 1px solid #e5e5e5;
-        }
-        .aiTopName {
-          font-weight: 900;
-          font-size: 13px;
-          color: #111;
-          white-space: nowrap;
-        }
-
         .titleWrap2 {
           min-width: 0;
           display: flex;
@@ -1285,8 +1244,6 @@ export default function ChatClient() {
           .appBody { padding: 0 12px 12px; }
 
           .headerCenter > div:last-child { font-size: 12px !important; }
-
-          .aiTopName { display: none; } /* SPは名前を隠してさらに横幅確保 */
         }
 
         .overlay {
