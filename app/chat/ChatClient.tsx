@@ -579,13 +579,6 @@ export default function ChatClient() {
     else window.location.href = url;
   };
 
-  const setRecommendedMode = () => {
-    setDialect("standard");
-    setStance("sanbo");
-    saveLocal("chat:dialect", "standard");
-    saveLocal("chat:stance", "sanbo");
-  };
-
   // 初回だけ保存（無い人だけ）
   useEffect(() => {
     const d = loadLocal("chat:dialect");
@@ -1068,10 +1061,7 @@ export default function ChatClient() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: 12 }}>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); setRecommendedMode(); }} onTouchStart={(e) => { e.preventDefault(); setRecommendedMode(); }}>
-                  おすすめに戻す（標準語×参謀）
-                </button>
-
+            
                 <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }}>
                   新規スレッド
                 </button>
@@ -1080,7 +1070,6 @@ export default function ChatClient() {
                   type="button"
                   style={{ ...BTN, opacity: canRename ? 1 : 0.5, cursor: canRename ? "pointer" : "not-allowed" }}
                   onPointerDown={(e) => { e.preventDefault(); if (canRename) renameThread(); }}
-                  onTouchStart={(e) => { e.preventDefault(); if (canRename) renameThread(); }}
                   aria-disabled={!canRename}
                 >
                   タイトル変更
