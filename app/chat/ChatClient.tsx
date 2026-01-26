@@ -939,7 +939,7 @@ export default function ChatClient() {
           <div className="overlaySheet">
             <div className="overlayTop">
               <div style={{ fontWeight: 900 }}>スレッド</div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", width: "100%" }}>
                 <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }}>
                   新規
                 </button>
@@ -1339,10 +1339,13 @@ export default function ChatClient() {
         }
 
         .disclaimerBottom {
-          padding-top: 10px;
-          font-size: 12px;
-          color: #777;
-        }
+  padding-top: 10px;
+  font-size: 11px;       /* 12→11に */
+  color: #777;
+  white-space: nowrap;   /* 1行固定 */
+  overflow: hidden;
+  text-overflow: ellipsis; /* どうしても長い端末は…で切る */
+}
 
         .pcOnly { display: flex; }
         .spOnly { display: none; }
@@ -1365,7 +1368,8 @@ export default function ChatClient() {
         .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.35);
+  background: rgba(0,0,0,0.4); /* 0.35 → 0.4 */
+}
   z-index: 200;
   display: flex;
   align-items: flex-end;
@@ -1412,13 +1416,16 @@ max-height: calc(90vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) -
         }
 
         .profileSheet {
-          width: min(560px, 100%);
-          background: #fff;
-          border-radius: 16px;
-          border: 1px solid #ddd;
-          margin: 12px;
-          overflow: hidden;
-        }
+  width: min(560px, 100%);
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #ddd;
+  margin: 12px;
+  overflow: hidden;
+
+  /* ✅ これを追加 */
+  box-shadow: 0 16px 48px rgba(0,0,0,0.25);
+}
 
         .dots {
           display: inline-block;
