@@ -1216,13 +1216,15 @@ export default function ChatClient() {
           white-space: nowrap;
         }
         .iconBtnSmall {
-          padding: 8px 10px;
-          border-radius: 10px;
-          border: 1px solid #ddd;
-          background: #fff;
-          cursor: pointer;
-          white-space: nowrap;
-        }
+  padding: 10px 12px;      /* ←少し大きく */
+  border-radius: 12px;
+  border: 1px solid #ddd;
+  background: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 18px;         /* ←歯車を大きく */
+  line-height: 1;          /* ←縦のブレ防止 */
+}
 
         .badgeRow {
           margin-top: 10px;
@@ -1370,7 +1372,7 @@ export default function ChatClient() {
   justify-content: center;
 
   /* ✅ iOS Safariの上部バーに被らない */
-  padding-top: env(safe-area-inset-top);
+  padding-top: calc(env(safe-area-inset-top) + 18px);
   padding-bottom: env(safe-area-inset-bottom);
   box-sizing: border-box;
 }
@@ -1387,8 +1389,8 @@ export default function ChatClient() {
         .overlaySheet {
   width: min(760px, 100%);
   /* ✅ 上下のsafe-areaぶん余裕を確保 */
-  max-height: calc(90dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
-  max-height: calc(90vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  max-height: calc(90dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 18px);
+max-height: calc(90vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 18px);
   background: #fff;
   border-radius: 16px;
   border: 1px solid #ddd;
