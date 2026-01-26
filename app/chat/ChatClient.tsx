@@ -1140,7 +1140,13 @@ export default function ChatClient() {
               <img
                 src={AI_AVATAR_URL}
                 alt="AI野口"
-                style={{ width: 180, height: 180, borderRadius: "999px", objectFit: "cover", border: "1px solid #e5e5e5" }}
+                style={{
+  width: "min(180px, 52vw)",
+  height: "min(180px, 52vw)",
+  borderRadius: "999px",
+  objectFit: "cover",
+  border: "1px solid #e5e5e5",
+}}
               />
               <div style={{ textAlign: "center" }}>
                 <div style={{ fontWeight: 900, fontSize: 18 }}>AI野口（税理士）</div>
@@ -1367,17 +1373,20 @@ export default function ChatClient() {
 
         .overlay {
   position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.4); /* 0.35 → 0.4 */
-}
+  left: 0;
+  right: 0;
+  bottom: 0;
+
+  /* ✅ ここが肝：上は“ヘッダー分”空ける（衝突しない） */
+  top: 120px;
+
+  background: rgba(0,0,0,0.35);
   z-index: 200;
   display: flex;
   align-items: flex-end;
   justify-content: center;
 
-  /* ✅ iOS Safariの上部バーに被らない */
-  padding-top: calc(env(safe-area-inset-top) + 18px);
-  padding-bottom: env(safe-area-inset-bottom);
+  padding: 12px;
   box-sizing: border-box;
 }
 
@@ -1392,16 +1401,17 @@ export default function ChatClient() {
 
         .overlaySheet {
   width: min(760px, 100%);
-  /* ✅ 上下のsafe-areaぶん余裕を確保 */
-  max-height: calc(90dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 18px);
-max-height: calc(90vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 18px);
+  max-height: calc(100% - 0px); /* overlay内で完結 */
+
   background: #fff;
   border-radius: 16px;
   border: 1px solid #ddd;
+
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  margin: 10px;
+
+  margin: 0; /* overlay側のpaddingで余白を作る */
 }
 
          .overlayTop { padding-top: 14px; }
