@@ -753,7 +753,7 @@ export default function ChatClient() {
                   title="口調選択/新規スレッド"
                 >
                   <span className="hintLong">口調選択/新規スレッド→</span>
-                  <span className="hintShort">口調/新規→</span>
+                  <span className="hintShort">口調/新規スレ→</span>
                 </button>
 
                 <button
@@ -1361,14 +1361,19 @@ export default function ChatClient() {
         }
 
         .overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,0.35);
-          z-index: 200;
-          display: flex;
-          align-items: flex-end;
-          justify-content: center;
-        }
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+
+  /* ✅ iOS Safariの上部バーに被らない */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  box-sizing: border-box;
+}
 
         .menuSheet {
           width: min(560px, 100%);
@@ -1380,19 +1385,20 @@ export default function ChatClient() {
         }
 
         .overlaySheet {
-          width: min(760px, 100%);
-          height: min(90dvh, 720px);
-          height: min(90vh, 720px);
-          background: #fff;
-          border-radius: 16px;
-          border: 1px solid #ddd;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-          margin: 10px;
-        }
+  width: min(760px, 100%);
+  /* ✅ 上下のsafe-areaぶん余裕を確保 */
+  max-height: calc(90dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  max-height: calc(90vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 10px;
+}
 
-        .overlayTop {
+         .overlayTop { padding-top: 14px; }
           padding: 12px;
           border-bottom: 1px solid #eee;
           display: flex;
