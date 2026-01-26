@@ -1127,7 +1127,7 @@ export default function ChatClient() {
 
       {/* ===== AI野口プロフィール ===== */}
       {aiProfileOpen && (
-        <div className="overlay" role="dialog" aria-modal="true" onPointerDown={() => setAiProfileOpen(false)}>
+        <div className="overlay overlayDark" role="dialog" aria-modal="true" onPointerDown={() => setAiProfileOpen(false)}>
           <div className="profileSheet" onPointerDown={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, borderBottom: "1px solid #eee" }}>
               <div style={{ fontWeight: 900 }}>AI野口</div>
@@ -1377,6 +1377,11 @@ export default function ChatClient() {
   right: 0;
   bottom: 0;
 
+  /* ✅ プロフィールだけ背景を濃くする */
+.overlayDark {
+  background: rgba(0,0,0,0.55);
+}
+
   /* ✅ ここが肝：上は“ヘッダー分”空ける（衝突しない） */
   top: 120px;
 
@@ -1432,8 +1437,6 @@ export default function ChatClient() {
   border: 1px solid #ddd;
   margin: 12px;
   overflow: hidden;
-
-  /* ✅ これを追加 */
   box-shadow: 0 16px 48px rgba(0,0,0,0.25);
 }
 
