@@ -16,13 +16,6 @@ type MessageRow = {
   created_at: string;
 };
 
-type ConversationRow = {
-  id: string;
-  summary: string | null;
-  created_at: string;
-  summary_updated_at?: string | null;
-};
-
 type ThreadItem = {
   id: string;
   title: string;
@@ -120,11 +113,11 @@ function stripCatchphraseIfThreePatterns(content: string): string {
 function lineStyle(line: string): React.CSSProperties {
   const t = line.trimStart();
   const isTitle =
-  t.startsWith("🥄") ||
-  t.startsWith("🧂") ||
-  t.startsWith("🍚") ||
-  t.startsWith("🧂🥄") ||
-  t.startsWith("🍚🥄");
+    t.startsWith("🥄") ||
+    t.startsWith("🧂") ||
+    t.startsWith("🍚") ||
+    t.startsWith("🧂🥄") ||
+    t.startsWith("🍚🥄");
   if (!isTitle) return { whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 };
 
   return {
@@ -179,17 +172,20 @@ export default function ChatClient() {
   });
 
   const [messages, setMessages] = useState<MessageRow[]>([]);
-const [input, setInput] = useState("");
+  const [input, setInput] = useState("");
 
-const clearChatUiState = () => {
-  setThreads([]);
-  setMessages([]);
-  setActiveConversationId(null);
+  // ✅ SP: 右上3ボタンはまとめる / スレッドは折り畳み
+  const [spMenuOpen, setSpMenuOpen] = useState(false);
+  const [spThreadsOpen, setSpThreadsOpen] = useState(false);
 
-  try {
-    localStorage.removeItem("chat:activeConversationId");
-  } catch {}
-};
+  const clearChatUiState = () => {
+    setThreads([]);
+    setMessages([]);
+    setActiveConversationId(null);
+    try {
+      localStorage.removeItem("chat:activeConversationId");
+    } catch {}
+  };
 
   const msgsRef = useRef<HTMLDivElement | null>(null);
 
@@ -198,7 +194,7 @@ const clearChatUiState = () => {
 
   // 下にいる時だけ追従（送信時は強制 true）
   const shouldAutoScrollRef = useRef(true);
-  
+
   // 疑似切れ（次の1回だけ、わざとBad Tokenを使う：ロックアウト防止）
   const debugBadTokenOnceRef = useRef(false);
 
@@ -206,6 +202,9 @@ const clearChatUiState = () => {
   const DEBUG_AUTH = process.env.NEXT_PUBLIC_DEBUG_AUTH === "1";
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
+
+  // ✅ AIアイコン（丸抜き用）— 未設定なら絵文字にフォールバック
+  const AI_AVATAR_URL = "/ai-noguchi.jpg";
 
   const BTN: CSSProperties = {
     padding: "8px 12px",
@@ -262,56 +261,15 @@ const clearChatUiState = () => {
   };
 
   const goLoginHard = async () => {
-  if (redirectingRef.current) return;
-  redirectingRef.current = true;
-  try {
-    await supabase.auth.signOut().catch(() => null);
-  } finally {
-    clearChatUiState();
-    router.replace("/login?reason=expired");
-  }
-};
-
-      const authDiag = async () => {
+    if (redirectingRef.current) return;
+    redirectingRef.current = true;
     try {
-      setErrMsg(null);
-      const token = await getToken();
-      if (!token) return await handleAuthishError("Not logged in");
-
-      const res = await fetch("/api/auth/ping", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const json = await res.json().catch(() => null);
-      console.log("[authDiag]", { status: res.status, json });
-
-      if (await maybeRedirectFromApiError(res, json)) return;
-
-      if (!res.ok) setErrMsg(String(json?.error || `authDiag failed: ${res.status}`));
-      else setErrMsg("authDiag OK（console見て）");
-    } catch (e: any) {
-      console.log("[authDiag] error", e);
-      if (await handleAuthishError(e)) return;
-      setErrMsg(e?.message || "authDiag failed");
+      await supabase.auth.signOut().catch(() => null);
+    } finally {
+      clearChatUiState();
+      router.replace("/login?reason=expired");
     }
   };
-
-  const simulateExpiredOnce = () => {
-    debugBadTokenOnceRef.current = true;
-    setErrMsg("疑似切れON：次のAPI呼び出しで401→/login?reason=expiredへ落ちるはず");
-    // すぐ踏ませるならここで refreshStatus() 呼んでもいい
-    // refreshStatus();
-  };
-
-
-  // 疑似セッション切れ（ローカルでアクセストークンだけ壊して挙動確認）
-  const simulateExpired = async () => {
-  try {
-    await supabase.auth.signOut().catch(() => null);
-    clearChatUiState();
-  } catch {}
-};
-
 
   const handleAuthishError = async (raw: unknown) => {
     const msg = String((raw as any)?.message || raw || "");
@@ -325,6 +283,17 @@ const clearChatUiState = () => {
       setErrMsg("セッション切れてる。ログインし直してな。");
       await goLoginHard();
       return true;
+    }
+    return false;
+  };
+
+  const maybeRedirectFromApiError = async (res: Response, json: any) => {
+    if (res.status === 401) {
+      const msg = String(json?.error || "Invalid session");
+      if (await handleAuthishError(msg)) return true;
+    }
+    if (json && json.ok === false && typeof json.error === "string") {
+      if (await handleAuthishError(json.error)) return true;
     }
     return false;
   };
@@ -353,38 +322,22 @@ const clearChatUiState = () => {
     }
   };
 
-    const maybeRedirectFromApiError = async (res: Response, json: any) => {
-    // 401は最優先でexpiredへ落とす（jsonが取れなくても落とす）
-    if (res.status === 401) {
-      const msg = String(json?.error || "Invalid session");
-      if (await handleAuthishError(msg)) return true;
-    }
-
-    // ok:false の error も authish 判定する
-    if (json && json.ok === false && typeof json.error === "string") {
-      if (await handleAuthishError(json.error)) return true;
-    }
-    return false;
-  };
-
-    const loadThreads = async () => {
+  const loadThreads = async () => {
     setErrMsg(null);
     try {
       const token = await getToken();
       if (!token) return await handleAuthishError("Not logged in");
 
-      // ✅ 1クエリで一覧＋最終メッセージプレビューまで取る
       const { data: u, error: uErr } = await supabase.auth.getUser();
-if (uErr || !u?.user?.id) return await handleAuthishError("Not logged in");
-const userId = u.user.id;
+      if (uErr || !u?.user?.id) return await handleAuthishError("Not logged in");
+      const userId = u.user.id;
 
-const { data, error } = await supabase
-  .from("v_conversation_threads")
-  .select("id, user_id, title, created_at, last_content, last_activity_at")
-  .eq("user_id", userId)
-  .order("last_activity_at", { ascending: false })
-  .limit(50);
-
+      const { data, error } = await supabase
+        .from("v_conversation_threads")
+        .select("id, user_id, title, created_at, last_content, last_activity_at")
+        .eq("user_id", userId)
+        .order("last_activity_at", { ascending: false })
+        .limit(50);
 
       if (error) throw error;
 
@@ -425,9 +378,8 @@ const { data, error } = await supabase
         .select("id, conversation_id, role, content, created_at")
         .eq("conversation_id", conversationId)
         .order("created_at", { ascending: true })
-.order("id", { ascending: true })   // ←追加（同時刻の並びを安定化）
-.limit(700);
-
+        .order("id", { ascending: true })
+        .limit(700);
 
       if (error) throw error;
 
@@ -450,6 +402,7 @@ const { data, error } = await supabase
     setMessages([]);
     setErrMsg(null);
     setInput("");
+    setSpThreadsOpen(false); // ✅ SPで閉じる
   };
 
   const renameThread = async () => {
@@ -481,7 +434,6 @@ const { data, error } = await supabase
       if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "rename failed");
     }
-
   };
 
   const canSend = (() => {
@@ -500,7 +452,6 @@ const { data, error } = await supabase
     setThinking(true);
     setInput("");
 
-    // 送信時は必ず“下にいる”扱い
     shouldAutoScrollRef.current = true;
 
     const tempUser: MessageRow = {
@@ -521,70 +472,58 @@ const { data, error } = await supabase
       const body: any = { message: text, idempotencyKey, dialect, stance };
       if (activeConversationId) body.conversationId = activeConversationId;
 
-            const res = await fetch("/api/chat", {
-  method: "POST",
-  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-  body: JSON.stringify(body),
-});
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-const json = (await res.json().catch(() => null)) as ChatRes | null;
+      const json = (await res.json().catch(() => null)) as ChatRes | null;
 
-if (await maybeRedirectFromApiError(res, json)) return;
-if (!json) throw new Error(`chat failed: ${res.status}`);
+      if (await maybeRedirectFromApiError(res, json)) return;
+      if (!json) throw new Error(`chat failed: ${res.status}`);
 
-if (json.ok !== true) {
-  setErrMsg(json.error || `chat failed: ${res.status}`);
-  return;
-}
+      if (json.ok !== true) {
+        setErrMsg(json.error || `chat failed: ${res.status}`);
+        return;
+      }
 
-// ===== ここから追加：枠出し + 句点/改行単位でタイピング表示 =====
+      const assistantId = crypto.randomUUID();
+      const tempAssistant: MessageRow = {
+        id: assistantId,
+        conversation_id: activeConversationId || "temp",
+        role: "assistant",
+        content: "",
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, tempAssistant]);
+      scrollBottom();
 
-// ① 先に「空のassistant枠」を出す（考え中に枠が見える）
-const assistantId = crypto.randomUUID();
-const tempAssistant: MessageRow = {
-  id: assistantId,
-  conversation_id: activeConversationId || "temp",
-  role: "assistant",
-  content: "",
-  created_at: new Date().toISOString(),
-};
-setMessages((prev) => [...prev, tempAssistant]);
-scrollBottom();
+      const full = String((json as any).message ?? "");
+      const parts = full
+        .split(/(?<=[。！？\n])/g)
+        .map((s) => s)
+        .filter((s) => s.length > 0);
 
-// ② 返事を句点/改行単位で分割（「書いてる感」）
-const full = String((json as any).message ?? "");
-const parts = full
-  .split(/(?<=[。！？\n])/g) // 句点/！/？/改行で区切る（区切り文字は保持）
-  .map((s) => s)
-  .filter((s) => s.length > 0);
+      await new Promise<void>((resolve) => {
+        let i = 0;
 
-// ③ 順番に追記（awaitして sendMessage の finally まで待たせる）
-await new Promise<void>((resolve) => {
-  let i = 0;
+        const tick = () => {
+          if (i >= parts.length) return resolve();
 
-  const tick = () => {
-    if (i >= parts.length) return resolve();
+          const chunk = parts[i++];
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, content: (m.content ?? "") + chunk } : m))
+          );
 
-    const chunk = parts[i++];
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === assistantId ? { ...m, content: (m.content ?? "") + chunk } : m
-      )
-    );
+          shouldAutoScrollRef.current = true;
+          scrollBottom();
 
-    // 送信時は下にいる方針に合わせる
-    shouldAutoScrollRef.current = true;
-    scrollBottom();
+          setTimeout(tick, 180);
+        };
 
-    // 速度：ここで調整（小さいほど速い）
-    setTimeout(tick, 150);
-  };
-
-  tick();
-});
-
-// ===== 追加ここまで =====
-
+        tick();
+      });
 
       setPlan(json.plan);
       setUsedTalks(json.used_talks);
@@ -638,95 +577,64 @@ await new Promise<void>((resolve) => {
   const ROOT_W = "min(1400px, 100%)";
   const THREAD_W = 330;
 
+  const doLogout = async () => {
+    await supabase.auth.signOut().catch(() => null);
+    clearChatUiState();
+    router.replace("/login");
+  };
+
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#fff" }}>
-      <div style={{ padding: "10px 16px", position: "relative", zIndex: 30, pointerEvents: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <div style={{ flex: 1 }} />
-          <div
-  style={{
-    display: "flex",
-    alignItems: "baseline",
-    justifyContent: "center",
-    gap: 10,
-    flexWrap: "wrap", // 画面狭い時の保険
-    textAlign: "center",
-  }}
->
-  <div
-    className={yuji.className}
-    style={{
-      fontSize: 30,
-      letterSpacing: "0.12em",
-      fontWeight: 400,
-      lineHeight: 1,
-      whiteSpace: "nowrap",
-    }}
-  >
-    さじかげん 🍚🥄
-  </div>
-
-  <div
-    style={{
-      fontSize: 13,
-      fontWeight: 700,
-      color: "#666",
-      whiteSpace: "nowrap",
-    }}
-  >
-    税務相談 ～あなたの欲しい ちょうどいい さじかげん～
-  </div>
-</div>
-
-          <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: 10 }}>
-            <Link href="/settings/billing" style={LINK_BTN}>プラン変更</Link>
-            <a href={CONTACT_URL} style={LINK_BTN} target={CONTACT_URL.startsWith("http") ? "_blank" : undefined} rel="noreferrer">お問い合わせ</a>
+    <div className="appRoot">
+      {/* ===== Header ===== */}
+      <div className="appHeader">
+        <div className="headerRow">
+          <div className="headerLeft">
+            {/* SP: スレッド開閉 */}
             <button
-  type="button"
-  onPointerDown={async (e) => {
-  e.preventDefault();
-  await supabase.auth.signOut().catch(() => null);
-  clearChatUiState();
-  router.replace("/login");
-}}
+              type="button"
+              className="spOnly iconBtn"
+              onPointerDown={(e) => { e.preventDefault(); setSpThreadsOpen(true); }}
+              onTouchStart={(e) => { e.preventDefault(); setSpThreadsOpen(true); }}
+              aria-label="スレッドを開く"
+            >
+              ☰
+            </button>
+          </div>
 
-onTouchStart={async (e) => {
-  e.preventDefault();
-  await supabase.auth.signOut().catch(() => null);
-  clearChatUiState();
-  router.replace("/login");
-}}
-  style={BTN}
->
-                        {DEBUG_AUTH && (
-              <>
-                <button
-                  type="button"
-                  onPointerDown={(e) => { e.preventDefault(); authDiag(); }}
-                  onTouchStart={(e) => { e.preventDefault(); authDiag(); }}
-                  style={BTN}
-                >
-                  セッション診断
-                </button>
+          <div className="headerCenter">
+            <div className={yuji.className} style={{ fontSize: 30, letterSpacing: "0.12em", fontWeight: 400, lineHeight: 1, whiteSpace: "nowrap" }}>
+              さじかげん 🍚🥄
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#666", whiteSpace: "nowrap" }}>
+              税務相談 ～あなたの欲しい ちょうどいい さじかげん～
+            </div>
+          </div>
 
-                <button
-                  type="button"
-                  onPointerDown={(e) => { e.preventDefault(); simulateExpiredOnce(); }}
-                  onTouchStart={(e) => { e.preventDefault(); simulateExpiredOnce(); }}
-                  style={BTN}
-                >
-                  疑似切れ（次だけ）
-                </button>
-              </>
-            )}
+          <div className="headerRight">
+            {/* PC: 3ボタン通常表示 */}
+            <div className="pcOnly headerBtns">
+              <Link href="/settings/billing" style={LINK_BTN}>プラン変更</Link>
+              <a href={CONTACT_URL} style={LINK_BTN} target={CONTACT_URL.startsWith("http") ? "_blank" : undefined} rel="noreferrer">お問い合わせ</a>
+              <button type="button" onPointerDown={(e) => { e.preventDefault(); doLogout(); }} onTouchStart={(e) => { e.preventDefault(); doLogout(); }} style={BTN}>
+                ログアウト
+              </button>
+            </div>
 
-  ログアウト
-</button>
+            {/* SP: メニューに収納 */}
+            <button
+              type="button"
+              className="spOnly iconBtn"
+              onPointerDown={(e) => { e.preventDefault(); setSpMenuOpen(true); }}
+              onTouchStart={(e) => { e.preventDefault(); setSpMenuOpen(true); }}
+              aria-label="メニューを開く"
+            >
+              ⋯
+            </button>
           </div>
         </div>
 
-        <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
-          <div style={{ width: ROOT_W, border: "1px solid #ddd", borderRadius: 12, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+        <div className="badgeRow">
+          <div className="badgeBox">
             <div style={{ fontWeight: 800 }}>{badge || "プラン: (loading)"}</div>
             <button type="button" onPointerDown={(e) => { e.preventDefault(); refreshStatus(); }} onTouchStart={(e) => { e.preventDefault(); refreshStatus(); }} style={BTN}>更新</button>
           </div>
@@ -735,9 +643,11 @@ onTouchStart={async (e) => {
         {errMsg && <div style={{ marginTop: 8, color: "#b00020", fontSize: 13 }}>{errMsg}</div>}
       </div>
 
-      <div style={{ flex: 1, display: "flex", justifyContent: "center", padding: "0 16px 16px", minHeight: 0 }}>
-        <div style={{ width: ROOT_W, border: "1px solid #ddd", borderRadius: 12, display: "flex", overflow: "hidden", minHeight: 0 }}>
-          <div style={{ width: THREAD_W, borderRight: "1px solid #eee", display: "flex", flexDirection: "column", minHeight: 0 }}>
+      {/* ===== Body ===== */}
+      <div className="appBody">
+        <div className="shell">
+          {/* PC: 左スレッド（SPは隠す） */}
+          <div className="pcOnly threadCol">
             <div style={{ padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #eee" }}>
               <div style={{ fontWeight: 900 }}>スレッド</div>
               <button type="button" onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }} style={BTN}>新規</button>
@@ -773,8 +683,9 @@ onTouchStart={async (e) => {
             </div>
           </div>
 
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-            <div style={{ padding: 12, borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, background: "#fff", position: "relative", zIndex: 20 }}>
+          {/* 右：チャット本体（SPはこれがフル） */}
+          <div className="chatCol">
+            <div className="chatTopBar">
               <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                 <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeTitle}</div>
                 <div style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>（{dialect}/{stance}）</div>
@@ -814,7 +725,7 @@ onTouchStart={async (e) => {
                 if (!el) return;
                 shouldAutoScrollRef.current = isNearBottom(el);
               }}
-              style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 14px", background: "#fff" }}
+              className="chatArea"
             >
               {messages.map((m, idx) => {
                 const role = normalizeRole((m as any).role);
@@ -823,8 +734,29 @@ onTouchStart={async (e) => {
                 const content = isUser ? raw : stripCatchphraseIfThreePatterns(raw);
 
                 return (
-                  <div key={m.id ?? idx} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", margin: "10px 0" }}>
-                    <div style={{ maxWidth: "86%", padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e5e5", background: isUser ? "#eef5ff" : "#fff" }}>
+                  <div key={m.id ?? idx} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", margin: "10px 0", gap: 8 }}>
+                    {/* AIアイコン（ユーザーには出さない） */}
+                    {!isUser && (
+                      <div style={{ width: 34, flex: "0 0 34px", display: "flex", justifyContent: "center" }}>
+                        {AI_AVATAR_URL ? (
+                          <img src={AI_AVATAR_URL} alt="AI" style={{ width: 32, height: 32, borderRadius: "999px", objectFit: "cover", border: "1px solid #e5e5e5" }} />
+                        ) : (
+                          <div style={{ width: 32, height: 32, borderRadius: "999px", border: "1px solid #e5e5e5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>
+                            🤖
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div
+                      style={{
+                        maxWidth: "86%",
+                        padding: "10px 12px",
+                        borderRadius: 12,
+                        border: "1px solid #e5e5e5",
+                        background: isUser ? "#eef5ff" : "#fff",
+                      }}
+                    >
                       {isUser ? (
                         <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 }}>{content}</div>
                       ) : (
@@ -857,46 +789,348 @@ onTouchStart={async (e) => {
               )}
             </div>
 
-            <div style={{ padding: 12, borderTop: "1px solid #eee", display: "flex", gap: 10, alignItems: "center", background: "#fff" }}>
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    if (canSend) sendMessage();
-                  }
-                }}
-                placeholder="相談内容を入力（Enterで送信）"
-                style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd" }}
-                disabled={!canSend}
-              />
-              <button
-                type="button"
-                onPointerDown={(e) => { e.preventDefault(); if (canSend) sendMessage(); }}
-                onTouchStart={(e) => { e.preventDefault(); if (canSend) sendMessage(); }}
-                disabled={!canSend}
-                style={{
-                  padding: "10px 16px",
-                  borderRadius: 10,
-                  border: "1px solid #ddd",
-                  background: "#fff",
-                  cursor: !canSend ? "not-allowed" : "pointer",
-                  opacity: !canSend ? 0.6 : 1,
-                }}
-              >
-                送信
-              </button>
-            </div>
+            {/* 入力欄はSPで見切れないように sticky */}
+            <div className="chatInputWrap">
+              <div className="disclaimer">
+                ※ AIの回答は参考情報です。最終判断はご自身でお願いします。
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      if (canSend) sendMessage();
+                    }
+                  }}
+                  placeholder="相談内容を入力（Enterで送信）"
+                  style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd" }}
+                  disabled={!canSend}
+                />
+                <button
+                  type="button"
+                  onPointerDown={(e) => { e.preventDefault(); if (canSend) sendMessage(); }}
+                  onTouchStart={(e) => { e.preventDefault(); if (canSend) sendMessage(); }}
+                  disabled={!canSend}
+                  style={{
+                    padding: "10px 16px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: "#fff",
+                    cursor: !canSend ? "not-allowed" : "pointer",
+                    opacity: !canSend ? 0.6 : 1,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  送信
+                </button>
+              </div>
 
-            <div style={{ padding: "0 12px 12px", fontSize: 12, color: "#777" }}>
-              ※ 口調/モード切替は次の送信から反映。
+              <div style={{ paddingTop: 8, fontSize: 12, color: "#777" }}>
+                ※ 口調/モード切替は次の送信から反映。
+              </div>
             </div>
           </div>
         </div>
       </div>
 
+      {/* ===== SP: スレッド（全画面オーバーレイ） ===== */}
+      {spThreadsOpen && (
+        <div className="overlay" role="dialog" aria-modal="true">
+          <div className="overlaySheet">
+            <div className="overlayTop">
+              <div style={{ fontWeight: 900 }}>スレッド</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }}>
+                  新規
+                </button>
+                <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); setSpThreadsOpen(false); }} onTouchStart={(e) => { e.preventDefault(); setSpThreadsOpen(false); }}>
+                  閉じる
+                </button>
+              </div>
+            </div>
+
+            <div style={{ padding: 10, overflowY: "auto", flex: 1, background: "#fafafa" }}>
+              {threads.map((t) => {
+                const active = t.id === activeConversationId;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      setActiveConversationId(t.id);
+                      saveLocal("chat:activeConversationId", t.id);
+                      setSpThreadsOpen(false);
+                    }}
+                    onTouchStart={(e) => {
+                      e.preventDefault();
+                      setActiveConversationId(t.id);
+                      saveLocal("chat:activeConversationId", t.id);
+                      setSpThreadsOpen(false);
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: 10,
+                      marginBottom: 8,
+                      borderRadius: 10,
+                      border: active ? "2px solid #9dbbff" : "1px solid #e5e5e5",
+                      background: active ? "#eef5ff" : "#fff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ fontWeight: 900, marginBottom: 6 }}>{t.title}</div>
+                    <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
+                      {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
+                    </div>
+                    <div style={{ fontSize: 12, color: t.preview ? "#333" : "#999" }}>{t.preview || "(プレビューなし)"}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== SP: 右上メニュー（BottomSheet） ===== */}
+      {spMenuOpen && (
+        <div className="overlay" role="dialog" aria-modal="true" onPointerDown={() => setSpMenuOpen(false)}>
+          <div className="menuSheet" onPointerDown={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, borderBottom: "1px solid #eee" }}>
+              <div style={{ fontWeight: 900 }}>メニュー</div>
+              <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); setSpMenuOpen(false); }} onTouchStart={(e) => { e.preventDefault(); setSpMenuOpen(false); }}>
+                閉じる
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12 }}>
+              <Link href="/settings/billing" style={{ ...LINK_BTN, width: "100%" }} onClick={() => setSpMenuOpen(false)}>
+                プラン変更
+              </Link>
+              <a
+                href={CONTACT_URL}
+                style={{ ...LINK_BTN, width: "100%" }}
+                target={CONTACT_URL.startsWith("http") ? "_blank" : undefined}
+                rel="noreferrer"
+                onClick={() => setSpMenuOpen(false)}
+              >
+                お問い合わせ
+              </a>
+              <button type="button" style={{ ...BTN, width: "100%" }} onPointerDown={(e) => { e.preventDefault(); setSpMenuOpen(false); doLogout(); }} onTouchStart={(e) => { e.preventDefault(); setSpMenuOpen(false); doLogout(); }}>
+                ログアウト
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style jsx global>{`
+        /* ========= iOS対策：100vhの罠を避ける ========= */
+        .appRoot {
+          height: 100dvh; /* iOS Safariの正解 */
+          height: 100vh;  /* フォールバック */
+          display: flex;
+          flex-direction: column;
+          background: #fff;
+          overflow: hidden;
+        }
+
+        .appHeader {
+          padding: 10px 16px;
+          position: relative;
+          z-index: 30;
+          pointer-events: auto;
+          flex: 0 0 auto;
+        }
+
+        .headerRow {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .headerLeft, .headerRight {
+          flex: 1;
+          display: flex;
+          align-items: center;
+        }
+        .headerLeft { justify-content: flex-start; }
+        .headerRight { justify-content: flex-end; }
+
+        .headerCenter {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          text-align: center;
+          min-width: 0;
+        }
+
+        .headerBtns {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+
+        .iconBtn {
+          padding: 8px 12px;
+          border-radius: 10px;
+          border: 1px solid #ddd;
+          background: #fff;
+          cursor: pointer;
+        }
+
+        .badgeRow {
+          margin-top: 10px;
+          display: flex;
+          justify-content: center;
+        }
+        .badgeBox {
+          width: min(1400px, 100%);
+          border: 1px solid #ddd;
+          border-radius: 12px;
+          padding: 10px 12px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .appBody {
+          flex: 1 1 auto;
+          min-height: 0;
+          display: flex;
+          justify-content: center;
+          padding: 0 16px 16px;
+        }
+
+        .shell {
+          width: min(1400px, 100%);
+          border: 1px solid #ddd;
+          border-radius: 12px;
+          display: flex;
+          overflow: hidden;
+          min-height: 0;
+          background: #fff;
+        }
+
+        .threadCol {
+          width: ${THREAD_W}px;
+          border-right: 1px solid #eee;
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
+        }
+
+        .chatCol {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
+          background: #fff;
+        }
+
+        .chatTopBar {
+          padding: 12px;
+          border-bottom: 1px solid #eee;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          background: #fff;
+          position: relative;
+          z-index: 20;
+          flex: 0 0 auto;
+        }
+
+        .chatArea {
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow-y: auto;
+          padding: 12px 14px;
+          background: #fff;
+        }
+
+        .chatInputWrap {
+          flex: 0 0 auto;
+          padding: 10px 12px;
+          border-top: 1px solid #eee;
+          background: #fff;
+          position: sticky;
+          bottom: 0;
+        }
+
+        .disclaimer {
+          font-size: 12px;
+          color: #777;
+          padding: 0 0 8px 0;
+        }
+
+        /* ========= SP制御 ========= */
+        .pcOnly { display: flex; }
+        .spOnly { display: none; }
+
+        @media (max-width: 760px) {
+          .pcOnly { display: none !important; }
+          .spOnly { display: inline-flex !important; }
+
+          /* SPは上下余白を削る */
+          .appHeader { padding: 10px 12px; }
+          .appBody { padding: 0 12px 12px; }
+
+          /* サブコピーは詰めすぎ防止（必要なら消してもOK） */
+          .headerCenter > div:last-child {
+            font-size: 12px !important;
+          }
+        }
+
+        /* ========= Overlay ========= */
+        .overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.35);
+          z-index: 200;
+          display: flex;
+          align-items: flex-end;
+          justify-content: center;
+        }
+
+        .menuSheet {
+          width: min(560px, 100%);
+          background: #fff;
+          border-top-left-radius: 16px;
+          border-top-right-radius: 16px;
+          border: 1px solid #ddd;
+          border-bottom: none;
+        }
+
+        .overlaySheet {
+          width: min(760px, 100%);
+          height: min(90dvh, 720px);
+          height: min(90vh, 720px);
+          background: #fff;
+          border-radius: 16px;
+          border: 1px solid #ddd;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          margin: 10px;
+        }
+
+        .overlayTop {
+          padding: 12px;
+          border-bottom: 1px solid #eee;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          background: #fff;
+          flex: 0 0 auto;
+        }
+
+        /* dots */
         .dots {
           display: inline-block;
           width: 18px;
