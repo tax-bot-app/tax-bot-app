@@ -136,6 +136,7 @@ function normalizeRole(x: unknown): Role {
   const r = String(x ?? "").trim().toLowerCase();
   return r === "user" ? "user" : "assistant";
 }
+
 function normalizeMessages(rows: any[]): MessageRow[] {
   return (rows ?? []).map((r) => ({
     id: String(r.id),
@@ -162,7 +163,7 @@ export default function ChatClient() {
   const [usedTalks, setUsedTalks] = useState<number | null>(null);
   const [limitTalks, setLimitTalks] = useState<number | null>(null);
 
-  // ✅ 初期値：標準語 × 参謀（保存済みがあればそれを尊重）
+  // 初期：標準語×参謀（保存があれば尊重）
   const [dialect, setDialect] = useState<Dialect>(() => (loadLocal("chat:dialect") === "kansai" ? "kansai" : "standard"));
   const [stance, setStance] = useState<Stance>(() => (loadLocal("chat:stance") === "zubatto" ? "zubatto" : "sanbo"));
 
@@ -175,7 +176,7 @@ export default function ChatClient() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [input, setInput] = useState("");
 
-  // UI states
+  // UI
   const [spMenuOpen, setSpMenuOpen] = useState(false);
   const [spThreadsOpen, setSpThreadsOpen] = useState(false);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
@@ -186,14 +187,8 @@ export default function ChatClient() {
     () => (loadLocal("chat:sidebar") === "collapsed" ? "collapsed" : "open")
   );
 
-  const clearChatUiState = () => {
-    setThreads([]);
-    setMessages([]);
-    setActiveConversationId(null);
-    try {
-      localStorage.removeItem("chat:activeConversationId");
-    } catch {}
-  };
+  // アバター表示保険（画像が出なくても丸が出る）
+  const [aiAvatarOk, setAiAvatarOk] = useState(true);
 
   const msgsRef = useRef<HTMLDivElement | null>(null);
   const redirectingRef = useRef(false);
@@ -201,7 +196,7 @@ export default function ChatClient() {
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
 
-  // ✅ public/ai-noguchi.jpg
+  // public/ai-noguchi.jpg
   const AI_AVATAR_URL = "/ai-noguchi.jpg";
 
   const BTN: CSSProperties = {
@@ -233,6 +228,15 @@ export default function ChatClient() {
     pointerEvents: "auto",
     whiteSpace: "nowrap",
   });
+
+  const clearChatUiState = () => {
+    setThreads([]);
+    setMessages([]);
+    setActiveConversationId(null);
+    try {
+      localStorage.removeItem("chat:activeConversationId");
+    } catch {}
+  };
 
   const scrollBottom = () => {
     const el = msgsRef.current;
@@ -504,21 +508,16 @@ export default function ChatClient() {
 
       await new Promise<void>((resolve) => {
         let i = 0;
-
         const tick = () => {
           if (i >= parts.length) return resolve();
-
           const chunk = parts[i++];
           setMessages((prev) =>
             prev.map((m) => (m.id === assistantId ? { ...m, content: (m.content ?? "") + chunk } : m))
           );
-
           shouldAutoScrollRef.current = true;
           scrollBottom();
-
           setTimeout(tick, 160);
         };
-
         tick();
       });
 
@@ -562,6 +561,19 @@ export default function ChatClient() {
     return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）`;
   })();
 
+  const openUrl = (url: string) => {
+    if (url.startsWith("http")) window.open(url, "_blank", "noreferrer");
+    else window.location.href = url;
+  };
+
+  const setRecommendedMode = () => {
+    setDialect("standard");
+    setStance("sanbo");
+    saveLocal("chat:dialect", "standard");
+    saveLocal("chat:stance", "sanbo");
+  };
+
+  // 初回だけ保存（無い人だけ）
   useEffect(() => {
     const d = loadLocal("chat:dialect");
     const s = loadLocal("chat:stance");
@@ -574,6 +586,7 @@ export default function ChatClient() {
   useEffect(() => saveLocal("chat:stance", stance), [stance]);
   useEffect(() => saveLocal("chat:sidebar", sidebarMode), [sidebarMode]);
 
+  // 小さめPC/タブレットは初回だけ自動で畳む（保存が無い人だけ）
   useEffect(() => {
     const saved = loadLocal("chat:sidebar");
     if (saved) return;
@@ -592,18 +605,6 @@ export default function ChatClient() {
     loadMessages(activeConversationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversationId]);
-
-  const openUrl = (url: string) => {
-    if (url.startsWith("http")) window.open(url, "_blank", "noreferrer");
-    else window.location.href = url;
-  };
-
-  const setRecommendedMode = () => {
-    setDialect("standard");
-    setStance("sanbo");
-    saveLocal("chat:dialect", "standard");
-    saveLocal("chat:stance", "sanbo");
-  };
 
   return (
     <div className="appRoot">
@@ -627,7 +628,7 @@ export default function ChatClient() {
               さじかげん 🍚🥄
             </div>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#666", whiteSpace: "nowrap" }}>
-              税務相談 ～あなたの欲しい ちょうどいい～
+              税務相談～あなたの欲しいちょうどいい～
             </div>
           </div>
 
@@ -727,20 +728,21 @@ export default function ChatClient() {
                   ☰
                 </button>
 
-                                <div className="titleWrap2">
-                  <div className="chatTitle2">{activeTitle}</div>
-                  <button
-                    type="button"
-                    className="hintLink"
-                    onPointerDown={(e) => { e.preventDefault(); setChatSettingsOpen(true); }}
-                    onTouchStart={(e) => { e.preventDefault(); setChatSettingsOpen(true); }}
-                  >
-                    口調選択/新規スレッド→
-                  </button>
-                </div>
+                <div className="chatTitleLine">{activeTitle}</div>
               </div>
 
               <div className="chatTopRight">
+                <button
+                  type="button"
+                  className="hintLinkRight"
+                  onPointerDown={(e) => { e.preventDefault(); setChatSettingsOpen(true); }}
+                  onTouchStart={(e) => { e.preventDefault(); setChatSettingsOpen(true); }}
+                  title="口調選択/新規スレッド"
+                >
+                  <span className="hintLong">口調選択/新規スレッド→</span>
+                  <span className="hintShort">口調/新規→</span>
+                </button>
+
                 <button
                   type="button"
                   className="iconBtnSmall"
@@ -784,6 +786,68 @@ export default function ChatClient() {
                         <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 }}>{content}</div>
                       ) : (
                         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {/* ✅ 回答枠の一番上に毎回：アイコン＋AI野口（税理士） */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {aiAvatarOk ? (
+                              <img
+                                src={AI_AVATAR_URL}
+                                alt="AI野口"
+                                onClick={() => setAiProfileOpen(true)}
+                                onError={() => setAiAvatarOk(false)}
+                                style={{
+                                  width: 22,
+                                  height: 22,
+                                  minWidth: 22,
+                                  minHeight: 22,
+                                  display: "block",
+                                  borderRadius: 999,
+                                  objectFit: "cover",
+                                  border: "1px solid #e5e5e5",
+                                  cursor: "pointer",
+                                }}
+                              />
+                            ) : (
+                              <div
+                                onClick={() => setAiProfileOpen(true)}
+                                style={{
+                                  width: 22,
+                                  height: 22,
+                                  minWidth: 22,
+                                  minHeight: 22,
+                                  borderRadius: 999,
+                                  border: "1px solid #e5e5e5",
+                                  background: "#fff",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: 12,
+                                  cursor: "pointer",
+                                }}
+                                aria-label="AI野口"
+                                title="AI野口"
+                              >
+                                🤖
+                              </div>
+                            )}
+
+                            <button
+                              type="button"
+                              onPointerDown={(e) => { e.preventDefault(); setAiProfileOpen(true); }}
+                              onTouchStart={(e) => { e.preventDefault(); setAiProfileOpen(true); }}
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                padding: 0,
+                                cursor: "pointer",
+                                fontWeight: 900,
+                                fontSize: 13,
+                                color: "#111",
+                              }}
+                            >
+                              AI野口（税理士）
+                            </button>
+                          </div>
+
                           {content.replace(/\r\n/g, "\n").split("\n").map((line, i) => {
                             if (!line.trim()) return <div key={i} style={{ height: 4 }} />;
                             return (
@@ -794,6 +858,7 @@ export default function ChatClient() {
                           })}
                         </div>
                       )}
+
                       <div style={{ fontSize: 11, color: "#777", marginTop: 8, textAlign: "right" }}>{toHm(m.created_at)}</div>
                     </div>
                   </div>
@@ -812,7 +877,7 @@ export default function ChatClient() {
               )}
             </div>
 
-            {/* 入力欄（注意文言は下へ） */}
+            {/* 入力欄（注意文言は下） */}
             <div className="chatInputWrap">
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <input
@@ -855,7 +920,7 @@ export default function ChatClient() {
         </div>
       </div>
 
-      {/* ===== SP: スレッド（全画面オーバーレイ） ===== */}
+      {/* ===== SP: スレッド（全画面） ===== */}
       {spThreadsOpen && (
         <div className="overlay" role="dialog" aria-modal="true">
           <div className="overlaySheet">
@@ -914,7 +979,7 @@ export default function ChatClient() {
         </div>
       )}
 
-      {/* ===== SP: 右上メニュー（BottomSheet） ===== */}
+      {/* ===== SP: 右上メニュー ===== */}
       {spMenuOpen && (
         <div className="overlay" role="dialog" aria-modal="true" onPointerDown={() => setSpMenuOpen(false)}>
           <div className="menuSheet" onPointerDown={(e) => e.stopPropagation()}>
@@ -940,7 +1005,7 @@ export default function ChatClient() {
         </div>
       )}
 
-      {/* ===== Chat設定（⚙︎） ===== */}
+      {/* ===== Chat設定（⚙︎/口調選択） ===== */}
       {chatSettingsOpen && (
         <div className="overlay" role="dialog" aria-modal="true" onPointerDown={() => setChatSettingsOpen(false)}>
           <div className="menuSheet" onPointerDown={(e) => e.stopPropagation()}>
@@ -1182,33 +1247,26 @@ export default function ChatClient() {
           flex: 1;
         }
 
-        .titleWrap2 {
-          min-width: 0;
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-          flex: 1;
-        }
-
-        .chatTitle2 {
+        .chatTitleLine {
           font-weight: 900;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
 
-        .hintLink {
+        .chatTopRight { display: flex; gap: 10px; align-items: center; flex: 0 0 auto; }
+
+        .hintLinkRight {
           border: none;
           background: transparent;
           padding: 0;
-          text-align: left;
           color: #666;
           font-size: 12px;
           cursor: pointer;
-          width: fit-content;
+          white-space: nowrap;
         }
-
-        .chatTopRight { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; }
+        .hintShort { display: none; }
+        .hintLong { display: inline; }
 
         .chatArea {
           flex: 1 1 auto;
@@ -1244,6 +1302,8 @@ export default function ChatClient() {
           .appBody { padding: 0 12px 12px; }
 
           .headerCenter > div:last-child { font-size: 12px !important; }
+          .hintLong { display: none; }
+          .hintShort { display: inline; }
         }
 
         .overlay {
