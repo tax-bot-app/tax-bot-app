@@ -194,6 +194,13 @@ export default function ChatClient() {
   const redirectingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
 
+  const threadTouchRef = useRef<{ x: number; y: number; moved: boolean; id: string | null }>({
+  x: 0,
+  y: 0,
+  moved: false,
+  id: null,
+});
+
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
 
   // public/ai-noguchi.jpg
@@ -404,6 +411,12 @@ export default function ChatClient() {
     setSpThreadsOpen(false);
     setChatSettingsOpen(false);
   };
+
+  const selectThread = (id: string) => {
+  setActiveConversationId(id);
+  saveLocal("chat:activeConversationId", id);
+  setSpThreadsOpen(false); // SPは選んだら閉じる
+};
 
   const renameThread = async () => {
     if (!activeConversationId) return;
@@ -936,42 +949,79 @@ export default function ChatClient() {
               </div>
             </div>
 
-            <div style={{ padding: 10, overflowY: "auto", flex: 1, background: "#fafafa" }}>
+            <div
+  style={{
+    padding: 10,
+    overflowY: "auto",
+    flex: 1,
+    background: "#fafafa",
+    touchAction: "pan-y",
+    WebkitOverflowScrolling: "touch",
+  }}
+>
+
               {threads.map((t) => {
                 const active = t.id === activeConversationId;
                 return (
                   <button
-                    key={t.id}
-                    type="button"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      setActiveConversationId(t.id);
-                      saveLocal("chat:activeConversationId", t.id);
-                      setSpThreadsOpen(false);
-                    }}
-                    onTouchStart={(e) => {
-                      e.preventDefault();
-                      setActiveConversationId(t.id);
-                      saveLocal("chat:activeConversationId", t.id);
-                      setSpThreadsOpen(false);
-                    }}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      padding: 10,
-                      marginBottom: 8,
-                      borderRadius: 10,
-                      border: active ? "2px solid #9dbbff" : "1px solid #e5e5e5",
-                      background: active ? "#eef5ff" : "#fff",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div style={{ fontWeight: 900, marginBottom: 6 }}>{t.title}</div>
-                    <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
-                      {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
-                    </div>
-                    <div style={{ fontSize: 12, color: t.preview ? "#333" : "#999" }}>{t.preview || "(プレビューなし)"}</div>
-                  </button>
+  key={t.id}
+  type="button"
+  onPointerDown={(e) => {
+    // touch のときだけ「タップ/スクロール判定」を使う
+    const pt = (e as any).pointerType;
+    if (pt && pt !== "touch") return;
+
+    threadTouchRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      moved: false,
+      id: t.id,
+    };
+  }}
+  onPointerMove={(e) => {
+    const pt = (e as any).pointerType;
+    if (pt && pt !== "touch") return;
+
+    const dx = Math.abs(e.clientX - threadTouchRef.current.x);
+    const dy = Math.abs(e.clientY - threadTouchRef.current.y);
+    if (dx > 10 || dy > 10) threadTouchRef.current.moved = true;
+  }}
+  onPointerUp={(e) => {
+    const pt = (e as any).pointerType;
+    if (pt && pt !== "touch") return;
+
+    const st = threadTouchRef.current;
+    if (!st.moved && st.id) {
+      e.preventDefault();
+      selectThread(st.id);
+    }
+    threadTouchRef.current.id = null;
+  }}
+  onClick={(e) => {
+    // PCブラウザ等は click で普通に選べる
+    e.preventDefault();
+    selectThread(t.id);
+  }}
+  style={{
+    width: "100%",
+    textAlign: "left",
+    padding: 10,
+    marginBottom: 8,
+    borderRadius: 10,
+    border: active ? "2px solid #9dbbff" : "1px solid #e5e5e5",
+    background: active ? "#eef5ff" : "#fff",
+    cursor: "pointer",
+    touchAction: "pan-y",
+  }}
+>
+  <div style={{ fontWeight: 900, marginBottom: 6 }}>{t.title}</div>
+  <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
+    {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
+  </div>
+  <div style={{ fontSize: 12, color: t.preview ? "#333" : "#999" }}>
+    {t.preview || "(プレビューなし)"}
+  </div>
+</button>
                 );
               })}
             </div>
@@ -1252,6 +1302,7 @@ export default function ChatClient() {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+          min-width: 0;
         }
 
         .chatTopRight { display: flex; gap: 10px; align-items: center; flex: 0 0 auto; }
@@ -1304,6 +1355,9 @@ export default function ChatClient() {
           .headerCenter > div:last-child { font-size: 12px !important; }
           .hintLong { display: none; }
           .hintShort { display: inline; }
+          
+          .chatTitleLine { max-width: 42vw; }
+
         }
 
         .overlay {
