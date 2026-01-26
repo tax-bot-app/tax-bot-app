@@ -162,8 +162,9 @@ export default function ChatClient() {
   const [usedTalks, setUsedTalks] = useState<number | null>(null);
   const [limitTalks, setLimitTalks] = useState<number | null>(null);
 
-  const [dialect, setDialect] = useState<Dialect>(() => (loadLocal("chat:dialect") === "standard" ? "standard" : "kansai"));
-  const [stance, setStance] = useState<Stance>(() => (loadLocal("chat:stance") === "sanbo" ? "sanbo" : "zubatto"));
+  // ✅ 初期値：標準語 × 参謀（保存済みがあればそれを尊重）
+  const [dialect, setDialect] = useState<Dialect>(() => (loadLocal("chat:dialect") === "kansai" ? "kansai" : "standard"));
+  const [stance, setStance] = useState<Stance>(() => (loadLocal("chat:stance") === "zubatto" ? "zubatto" : "sanbo"));
 
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(() => {
@@ -174,9 +175,16 @@ export default function ChatClient() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [input, setInput] = useState("");
 
-  // ✅ SP: 右上3ボタンはまとめる / スレッドは折り畳み
+  // UI states
   const [spMenuOpen, setSpMenuOpen] = useState(false);
   const [spThreadsOpen, setSpThreadsOpen] = useState(false);
+  const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
+  const [aiProfileOpen, setAiProfileOpen] = useState(false);
+
+  // PC/Tablet: サイドバー畳む
+  const [sidebarMode, setSidebarMode] = useState<"open" | "collapsed">(
+    () => (loadLocal("chat:sidebar") === "collapsed" ? "collapsed" : "open")
+  );
 
   const clearChatUiState = () => {
     setThreads([]);
@@ -195,15 +203,10 @@ export default function ChatClient() {
   // 下にいる時だけ追従（送信時は強制 true）
   const shouldAutoScrollRef = useRef(true);
 
-  // 疑似切れ（次の1回だけ、わざとBad Tokenを使う：ロックアウト防止）
-  const debugBadTokenOnceRef = useRef(false);
-
-  // 本番で出したくないので env で制御
-  const DEBUG_AUTH = process.env.NEXT_PUBLIC_DEBUG_AUTH === "1";
-
+  // env
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
 
-  // ✅ AIアイコン（丸抜き用）— 未設定なら絵文字にフォールバック
+  // ✅ AIアイコン（あなたのpublic/ai-noguchi.jpg）
   const AI_AVATAR_URL = "/ai-noguchi.jpg";
 
   const BTN: CSSProperties = {
@@ -213,6 +216,7 @@ export default function ChatClient() {
     background: "#fff",
     cursor: "pointer",
     pointerEvents: "auto",
+    whiteSpace: "nowrap",
   };
 
   const LINK_BTN: CSSProperties = {
@@ -225,13 +229,14 @@ export default function ChatClient() {
   };
 
   const toggleBtn = (active: boolean): CSSProperties => ({
-    padding: "8px 10px",
-    borderRadius: 10,
+    padding: "10px 12px",
+    borderRadius: 12,
     border: "1px solid #ddd",
     background: active ? "#111" : "#fff",
     color: active ? "#fff" : "#111",
     cursor: "pointer",
     pointerEvents: "auto",
+    whiteSpace: "nowrap",
   });
 
   const scrollBottom = () => {
@@ -249,10 +254,6 @@ export default function ChatClient() {
   };
 
   const getToken = async (): Promise<string | null> => {
-    if (DEBUG_AUTH && debugBadTokenOnceRef.current) {
-      debugBadTokenOnceRef.current = false;
-      return "debug-bad-token";
-    }
     const { data, error } = await supabase.auth.getSession();
     if (!error && data.session?.access_token) return data.session.access_token;
 
@@ -345,7 +346,7 @@ export default function ChatClient() {
         id: String(r.id),
         title: String(r.title ?? "(無題)"),
         createdAt: String(r.created_at),
-        preview: r.last_content ? clamp(String(r.last_content), 24) : "",
+        preview: r.last_content ? clamp(String(r.last_content), 36) : "",
       }));
 
       setThreads(items);
@@ -402,7 +403,8 @@ export default function ChatClient() {
     setMessages([]);
     setErrMsg(null);
     setInput("");
-    setSpThreadsOpen(false); // ✅ SPで閉じる
+    setSpThreadsOpen(false);
+    setChatSettingsOpen(false);
   };
 
   const renameThread = async () => {
@@ -430,6 +432,7 @@ export default function ChatClient() {
       if (error) throw error;
 
       setThreads((prev) => prev.map((t) => (t.id === activeConversationId ? { ...t, title } : t)));
+      setChatSettingsOpen(false);
     } catch (e: any) {
       if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "rename failed");
@@ -519,7 +522,7 @@ export default function ChatClient() {
           shouldAutoScrollRef.current = true;
           scrollBottom();
 
-          setTimeout(tick, 180);
+          setTimeout(tick, 160);
         };
 
         tick();
@@ -549,6 +552,44 @@ export default function ChatClient() {
     }
   };
 
+  const doLogout = async () => {
+    await supabase.auth.signOut().catch(() => null);
+    clearChatUiState();
+    router.replace("/login");
+  };
+
+  const activeTitle = (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
+  const canRename = Boolean(activeConversationId);
+
+  const badge = (() => {
+    if (!limitTalks) return "";
+    const used = usedTalks ?? 0;
+    const left = Math.max(0, limitTalks - used);
+    return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）`;
+  })();
+
+  // 初回だけ「標準語×参謀」をローカルに固定（無い人だけ）
+  useEffect(() => {
+    const d = loadLocal("chat:dialect");
+    const s = loadLocal("chat:stance");
+    if (!d) saveLocal("chat:dialect", dialect);
+    if (!s) saveLocal("chat:stance", stance);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => saveLocal("chat:dialect", dialect), [dialect]);
+  useEffect(() => saveLocal("chat:stance", stance), [stance]);
+
+  useEffect(() => saveLocal("chat:sidebar", sidebarMode), [sidebarMode]);
+
+  // 小さめPC/タブレットは初回だけ自動で畳む（保存が無い人だけ）
+  useEffect(() => {
+    const saved = loadLocal("chat:sidebar");
+    if (saved) return;
+    const w = window.innerWidth;
+    if (w >= 761 && w < 980) setSidebarMode("collapsed");
+  }, []);
+
   useEffect(() => {
     refreshStatus();
     loadThreads();
@@ -561,27 +602,20 @@ export default function ChatClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversationId]);
 
-  useEffect(() => saveLocal("chat:dialect", dialect), [dialect]);
-  useEffect(() => saveLocal("chat:stance", stance), [stance]);
-
-  const activeTitle = (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
-  const canRename = Boolean(activeConversationId);
-
-  const badge = (() => {
-    if (!limitTalks) return "";
-    const used = usedTalks ?? 0;
-    const left = Math.max(0, limitTalks - used);
-    return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）`;
-  })();
-
-  const ROOT_W = "min(1400px, 100%)";
-  const THREAD_W = 330;
-
-  const doLogout = async () => {
-    await supabase.auth.signOut().catch(() => null);
-    clearChatUiState();
-    router.replace("/login");
+  const openUrl = (url: string) => {
+    if (url.startsWith("http")) window.open(url, "_blank", "noreferrer");
+    else window.location.href = url; // mailto など
   };
+
+  const setRecommendedMode = () => {
+    setDialect("standard");
+    setStance("sanbo");
+    saveLocal("chat:dialect", "standard");
+    saveLocal("chat:stance", "sanbo");
+  };
+
+  const dialLabel = dialect === "kansai" ? "kansai" : "standard";
+  const stanceLabel = stance === "zubatto" ? "zubatto" : "sanbo";
 
   return (
     <div className="appRoot">
@@ -589,7 +623,7 @@ export default function ChatClient() {
       <div className="appHeader">
         <div className="headerRow">
           <div className="headerLeft">
-            {/* SP: スレッド開閉 */}
+            {/* SP: スレッド */}
             <button
               type="button"
               className="spOnly iconBtn"
@@ -614,13 +648,20 @@ export default function ChatClient() {
             {/* PC: 3ボタン通常表示 */}
             <div className="pcOnly headerBtns">
               <Link href="/settings/billing" style={LINK_BTN}>プラン変更</Link>
-              <a href={CONTACT_URL} style={LINK_BTN} target={CONTACT_URL.startsWith("http") ? "_blank" : undefined} rel="noreferrer">お問い合わせ</a>
+              <a
+                href={CONTACT_URL}
+                style={LINK_BTN}
+                target={CONTACT_URL.startsWith("http") ? "_blank" : undefined}
+                rel="noreferrer"
+              >
+                お問い合わせ
+              </a>
               <button type="button" onPointerDown={(e) => { e.preventDefault(); doLogout(); }} onTouchStart={(e) => { e.preventDefault(); doLogout(); }} style={BTN}>
                 ログアウト
               </button>
             </div>
 
-            {/* SP: メニューに収納 */}
+            {/* SP: メニュー */}
             <button
               type="button"
               className="spOnly iconBtn"
@@ -635,8 +676,15 @@ export default function ChatClient() {
 
         <div className="badgeRow">
           <div className="badgeBox">
-            <div style={{ fontWeight: 800 }}>{badge || "プラン: (loading)"}</div>
-            <button type="button" onPointerDown={(e) => { e.preventDefault(); refreshStatus(); }} onTouchStart={(e) => { e.preventDefault(); refreshStatus(); }} style={BTN}>更新</button>
+            <div className="badgeText" style={{ fontWeight: 800 }}>{badge || "プラン: (loading)"}</div>
+            <button
+              type="button"
+              onPointerDown={(e) => { e.preventDefault(); refreshStatus(); }}
+              onTouchStart={(e) => { e.preventDefault(); refreshStatus(); }}
+              style={{ ...BTN, minWidth: 78 }}
+            >
+              更新
+            </button>
           </div>
         </div>
 
@@ -646,11 +694,13 @@ export default function ChatClient() {
       {/* ===== Body ===== */}
       <div className="appBody">
         <div className="shell">
-          {/* PC: 左スレッド（SPは隠す） */}
-          <div className="pcOnly threadCol">
+          {/* PC/Tablet: 左スレッド（畳める） */}
+          <div className={`threadCol pcOnly ${sidebarMode === "collapsed" ? "collapsed" : ""}`}>
             <div style={{ padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #eee" }}>
               <div style={{ fontWeight: 900 }}>スレッド</div>
-              <button type="button" onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }} style={BTN}>新規</button>
+              <button type="button" onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }} style={BTN}>
+                新規
+              </button>
             </div>
 
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 10, background: "#fafafa" }}>
@@ -671,7 +721,6 @@ export default function ChatClient() {
                       border: active ? "2px solid #9dbbff" : "1px solid #e5e5e5",
                       background: active ? "#eef5ff" : "#fff",
                       cursor: "pointer",
-                      pointerEvents: "auto",
                     }}
                   >
                     <div style={{ fontWeight: 900, marginBottom: 6 }}>{t.title}</div>
@@ -683,38 +732,39 @@ export default function ChatClient() {
             </div>
           </div>
 
-          {/* 右：チャット本体（SPはこれがフル） */}
+          {/* 右：チャット本体 */}
           <div className="chatCol">
             <div className="chatTopBar">
-              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeTitle}</div>
-                <div style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>（{dialect}/{stance}）</div>
-              </div>
-
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <div className="chatTopLeft">
+                {/* PC/Tablet: サイドバー畳みトグル */}
                 <button
                   type="button"
-                  onPointerDown={(e) => { e.preventDefault(); if (canRename) renameThread(); }}
-                  onTouchStart={(e) => { e.preventDefault(); if (canRename) renameThread(); }}
-                  aria-disabled={!canRename}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 10,
-                    border: "1px solid #ddd",
-                    background: canRename ? "#fff" : "#f5f5f5",
-                    color: "#111",
-                    opacity: canRename ? 1 : 0.5,
-                    cursor: canRename ? "pointer" : "not-allowed",
-                    pointerEvents: "auto",
-                  }}
+                  className="pcOnly iconBtnSmall"
+                  onPointerDown={(e) => { e.preventDefault(); setSidebarMode((p) => (p === "open" ? "collapsed" : "open")); }}
+                  onTouchStart={(e) => { e.preventDefault(); setSidebarMode((p) => (p === "open" ? "collapsed" : "open")); }}
+                  aria-label="スレッドサイドバー切替"
+                  title="スレッド"
                 >
-                  ✏️ タイトル
+                  ☰
                 </button>
 
-                <button type="button" onPointerDown={(e) => { e.preventDefault(); setDialect("kansai"); }} onTouchStart={(e) => { e.preventDefault(); setDialect("kansai"); }} style={toggleBtn(dialect === "kansai")}>関西弁</button>
-                <button type="button" onPointerDown={(e) => { e.preventDefault(); setDialect("standard"); }} onTouchStart={(e) => { e.preventDefault(); setDialect("standard"); }} style={toggleBtn(dialect === "standard")}>標準語</button>
-                <button type="button" onPointerDown={(e) => { e.preventDefault(); setStance("zubatto"); }} onTouchStart={(e) => { e.preventDefault(); setStance("zubatto"); }} style={toggleBtn(stance === "zubatto")}>ズバっと</button>
-                <button type="button" onPointerDown={(e) => { e.preventDefault(); setStance("sanbo"); }} onTouchStart={(e) => { e.preventDefault(); setStance("sanbo"); }} style={toggleBtn(stance === "sanbo")}>参謀</button>
+                <div className="titleWrap">
+                  <div className="chatTitle">{activeTitle}</div>
+                  <div className="chatMeta">（{dialLabel}/{stanceLabel}）</div>
+                </div>
+              </div>
+
+              <div className="chatTopRight">
+                <button
+                  type="button"
+                  className="iconBtnSmall"
+                  onPointerDown={(e) => { e.preventDefault(); setChatSettingsOpen(true); }}
+                  onTouchStart={(e) => { e.preventDefault(); setChatSettingsOpen(true); }}
+                  aria-label="チャット設定"
+                  title="設定"
+                >
+                  ⚙︎
+                </button>
               </div>
             </div>
 
@@ -735,16 +785,23 @@ export default function ChatClient() {
 
                 return (
                   <div key={m.id ?? idx} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", margin: "10px 0", gap: 8 }}>
-                    {/* AIアイコン（ユーザーには出さない） */}
+                    {/* AIアイコン（タップで拡大） */}
                     {!isUser && (
-                      <div style={{ width: 34, flex: "0 0 34px", display: "flex", justifyContent: "center" }}>
-                        {AI_AVATAR_URL ? (
-                          <img src={AI_AVATAR_URL} alt="AI" style={{ width: 32, height: 32, borderRadius: "999px", objectFit: "cover", border: "1px solid #e5e5e5" }} />
-                        ) : (
-                          <div style={{ width: 32, height: 32, borderRadius: "999px", border: "1px solid #e5e5e5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>
-                            🤖
-                          </div>
-                        )}
+                      <div style={{ width: 36, flex: "0 0 36px", display: "flex", justifyContent: "center" }}>
+                        <button
+                          type="button"
+                          onPointerDown={(e) => { e.preventDefault(); setAiProfileOpen(true); }}
+                          onTouchStart={(e) => { e.preventDefault(); setAiProfileOpen(true); }}
+                          style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer" }}
+                          aria-label="AI野口プロフィール"
+                          title="AI野口プロフィール"
+                        >
+                          <img
+                            src={AI_AVATAR_URL}
+                            alt="AI野口"
+                            style={{ width: 32, height: 32, borderRadius: "999px", objectFit: "cover", border: "1px solid #e5e5e5" }}
+                          />
+                        </button>
                       </div>
                     )}
 
@@ -789,11 +846,8 @@ export default function ChatClient() {
               )}
             </div>
 
-            {/* 入力欄はSPで見切れないように sticky */}
+            {/* 入力欄（注意文言は下へ） */}
             <div className="chatInputWrap">
-              <div className="disclaimer">
-                ※ AIの回答は参考情報です。最終判断はご自身でお願いします。
-              </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <input
                   value={input}
@@ -827,8 +881,8 @@ export default function ChatClient() {
                 </button>
               </div>
 
-              <div style={{ paddingTop: 8, fontSize: 12, color: "#777" }}>
-                ※ 口調/モード切替は次の送信から反映。
+              <div className="disclaimerBottom">
+                ※ AIの回答は参考情報です。最終判断はご自身でお願いします。
               </div>
             </div>
           </div>
@@ -909,15 +963,9 @@ export default function ChatClient() {
               <Link href="/settings/billing" style={{ ...LINK_BTN, width: "100%" }} onClick={() => setSpMenuOpen(false)}>
                 プラン変更
               </Link>
-              <a
-                href={CONTACT_URL}
-                style={{ ...LINK_BTN, width: "100%" }}
-                target={CONTACT_URL.startsWith("http") ? "_blank" : undefined}
-                rel="noreferrer"
-                onClick={() => setSpMenuOpen(false)}
-              >
+              <button type="button" style={{ ...BTN, width: "100%" }} onPointerDown={(e) => { e.preventDefault(); setSpMenuOpen(false); openUrl(CONTACT_URL); }} onTouchStart={(e) => { e.preventDefault(); setSpMenuOpen(false); openUrl(CONTACT_URL); }}>
                 お問い合わせ
-              </a>
+              </button>
               <button type="button" style={{ ...BTN, width: "100%" }} onPointerDown={(e) => { e.preventDefault(); setSpMenuOpen(false); doLogout(); }} onTouchStart={(e) => { e.preventDefault(); setSpMenuOpen(false); doLogout(); }}>
                 ログアウト
               </button>
@@ -926,11 +974,120 @@ export default function ChatClient() {
         </div>
       )}
 
+      {/* ===== Chat設定（⚙︎） ===== */}
+      {chatSettingsOpen && (
+        <div className="overlay" role="dialog" aria-modal="true" onPointerDown={() => setChatSettingsOpen(false)}>
+          <div className="menuSheet" onPointerDown={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, borderBottom: "1px solid #eee" }}>
+              <div style={{ fontWeight: 900 }}>チャット設定</div>
+              <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); setChatSettingsOpen(false); }} onTouchStart={(e) => { e.preventDefault(); setChatSettingsOpen(false); }}>
+                閉じる
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: 12 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); setRecommendedMode(); }} onTouchStart={(e) => { e.preventDefault(); setRecommendedMode(); }}>
+                  おすすめに戻す（標準語×参謀）
+                </button>
+
+                <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }}>
+                  新規スレッド
+                </button>
+
+                <button
+                  type="button"
+                  style={{ ...BTN, opacity: canRename ? 1 : 0.5, cursor: canRename ? "pointer" : "not-allowed" }}
+                  onPointerDown={(e) => { e.preventDefault(); if (canRename) renameThread(); }}
+                  onTouchStart={(e) => { e.preventDefault(); if (canRename) renameThread(); }}
+                  aria-disabled={!canRename}
+                >
+                  タイトル変更
+                </button>
+
+                <button
+                  type="button"
+                  className="pcOnly"
+                  style={BTN}
+                  onPointerDown={(e) => { e.preventDefault(); setSidebarMode((p) => (p === "open" ? "collapsed" : "open")); }}
+                  onTouchStart={(e) => { e.preventDefault(); setSidebarMode((p) => (p === "open" ? "collapsed" : "open")); }}
+                >
+                  スレッド欄：{sidebarMode === "open" ? "表示中" : "非表示"}（切替）
+                </button>
+              </div>
+
+              <div style={{ borderTop: "1px solid #eee", paddingTop: 12 }}>
+                <div style={{ fontWeight: 900, marginBottom: 8 }}>口調</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button type="button" style={toggleBtn(dialect === "standard")} onPointerDown={(e) => { e.preventDefault(); setDialect("standard"); }} onTouchStart={(e) => { e.preventDefault(); setDialect("standard"); }}>
+                    標準語
+                  </button>
+                  <button type="button" style={toggleBtn(dialect === "kansai")} onPointerDown={(e) => { e.preventDefault(); setDialect("kansai"); }} onTouchStart={(e) => { e.preventDefault(); setDialect("kansai"); }}>
+                    関西弁
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ borderTop: "1px solid #eee", paddingTop: 12 }}>
+                <div style={{ fontWeight: 900, marginBottom: 8 }}>モード</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button type="button" style={toggleBtn(stance === "sanbo")} onPointerDown={(e) => { e.preventDefault(); setStance("sanbo"); }} onTouchStart={(e) => { e.preventDefault(); setStance("sanbo"); }}>
+                    参謀
+                  </button>
+                  <button type="button" style={toggleBtn(stance === "zubatto")} onPointerDown={(e) => { e.preventDefault(); setStance("zubatto"); }} onTouchStart={(e) => { e.preventDefault(); setStance("zubatto"); }}>
+                    ズバっと
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== AI野口プロフィール（アイコンタップ） ===== */}
+      {aiProfileOpen && (
+        <div className="overlay" role="dialog" aria-modal="true" onPointerDown={() => setAiProfileOpen(false)}>
+          <div className="profileSheet" onPointerDown={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, borderBottom: "1px solid #eee" }}>
+              <div style={{ fontWeight: 900 }}>AI野口</div>
+              <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); setAiProfileOpen(false); }} onTouchStart={(e) => { e.preventDefault(); setAiProfileOpen(false); }}>
+                閉じる
+              </button>
+            </div>
+
+            <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12, alignItems: "center" }}>
+              <img
+                src={AI_AVATAR_URL}
+                alt="AI野口"
+                style={{ width: 180, height: 180, borderRadius: "999px", objectFit: "cover", border: "1px solid #e5e5e5" }}
+              />
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontWeight: 900, fontSize: 18 }}>AI野口（税理士）</div>
+                <div style={{ color: "#666", fontSize: 13, marginTop: 4 }}>税理士法人GLADZ 代表税理士 野口のAI</div>
+              </div>
+
+              <button
+                type="button"
+                style={{ ...BTN, width: "100%", padding: "12px 12px" }}
+                onPointerDown={(e) => { e.preventDefault(); openUrl(CONTACT_URL); }}
+                onTouchStart={(e) => { e.preventDefault(); openUrl(CONTACT_URL); }}
+              >
+                お問い合わせ（AI野口に伝える）
+              </button>
+
+              <div style={{ fontSize: 12, color: "#777", textAlign: "center", lineHeight: 1.6 }}>
+                ※ アイコンをタップするとプロフィールが開きます。<br />
+                相談しにくい内容の連絡窓口としても使ってください。
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style jsx global>{`
-        /* ========= iOS対策：100vhの罠を避ける ========= */
         .appRoot {
-          height: 100dvh; /* iOS Safariの正解 */
-          height: 100vh;  /* フォールバック */
+          height: 100dvh;
+          height: 100vh;
           display: flex;
           flex-direction: column;
           background: #fff;
@@ -980,6 +1137,15 @@ export default function ChatClient() {
           border: 1px solid #ddd;
           background: #fff;
           cursor: pointer;
+          white-space: nowrap;
+        }
+        .iconBtnSmall {
+          padding: 8px 10px;
+          border-radius: 10px;
+          border: 1px solid #ddd;
+          background: #fff;
+          cursor: pointer;
+          white-space: nowrap;
         }
 
         .badgeRow {
@@ -997,6 +1163,7 @@ export default function ChatClient() {
           align-items: center;
           gap: 10px;
         }
+        .badgeText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         .appBody {
           flex: 1 1 auto;
@@ -1017,12 +1184,13 @@ export default function ChatClient() {
         }
 
         .threadCol {
-          width: ${THREAD_W}px;
+          width: 330px;
           border-right: 1px solid #eee;
           display: flex;
           flex-direction: column;
           min-height: 0;
         }
+        .threadCol.collapsed { display: none; }
 
         .chatCol {
           flex: 1;
@@ -1033,7 +1201,7 @@ export default function ChatClient() {
         }
 
         .chatTopBar {
-          padding: 12px;
+          padding: 10px 12px;
           border-bottom: 1px solid #eee;
           display: flex;
           justify-content: space-between;
@@ -1045,6 +1213,34 @@ export default function ChatClient() {
           flex: 0 0 auto;
         }
 
+        .chatTopLeft {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+
+        .titleWrap {
+          min-width: 0;
+          display: flex;
+          align-items: baseline;
+          gap: 10px;
+        }
+        .chatTitle {
+          font-weight: 900;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          max-width: 62vw;
+        }
+        .chatMeta {
+          font-size: 12px;
+          color: #666;
+          white-space: nowrap;
+        }
+
+        .chatTopRight { display: flex; gap: 8px; align-items: center; }
+
         .chatArea {
           flex: 1 1 auto;
           min-height: 0;
@@ -1055,20 +1251,19 @@ export default function ChatClient() {
 
         .chatInputWrap {
           flex: 0 0 auto;
-          padding: 10px 12px;
+          padding: 10px 12px 12px;
           border-top: 1px solid #eee;
           background: #fff;
           position: sticky;
           bottom: 0;
         }
 
-        .disclaimer {
+        .disclaimerBottom {
+          padding-top: 10px;
           font-size: 12px;
           color: #777;
-          padding: 0 0 8px 0;
         }
 
-        /* ========= SP制御 ========= */
         .pcOnly { display: flex; }
         .spOnly { display: none; }
 
@@ -1076,17 +1271,14 @@ export default function ChatClient() {
           .pcOnly { display: none !important; }
           .spOnly { display: inline-flex !important; }
 
-          /* SPは上下余白を削る */
           .appHeader { padding: 10px 12px; }
           .appBody { padding: 0 12px 12px; }
 
-          /* サブコピーは詰めすぎ防止（必要なら消してもOK） */
-          .headerCenter > div:last-child {
-            font-size: 12px !important;
-          }
+          .headerCenter > div:last-child { font-size: 12px !important; }
+
+          .chatTitle { max-width: 52vw; }
         }
 
-        /* ========= Overlay ========= */
         .overlay {
           position: fixed;
           inset: 0;
@@ -1130,7 +1322,15 @@ export default function ChatClient() {
           flex: 0 0 auto;
         }
 
-        /* dots */
+        .profileSheet {
+          width: min(560px, 100%);
+          background: #fff;
+          border-radius: 16px;
+          border: 1px solid #ddd;
+          margin: 12px;
+          overflow: hidden;
+        }
+
         .dots {
           display: inline-block;
           width: 18px;
