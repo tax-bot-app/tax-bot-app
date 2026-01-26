@@ -1127,7 +1127,7 @@ export default function ChatClient() {
 
       {/* ===== AI野口プロフィール ===== */}
       {aiProfileOpen && (
-        <div className="overlay overlayDark" role="dialog" aria-modal="true" onPointerDown={() => setAiProfileOpen(false)}>
+        <div className="overlay overlayProfile" role="dialog" aria-modal="true">
           <div className="profileSheet" onPointerDown={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, borderBottom: "1px solid #eee" }}>
               <div style={{ fontWeight: 900 }}>AI野口</div>
@@ -1136,7 +1136,7 @@ export default function ChatClient() {
               </button>
             </div>
 
-            <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12, alignItems: "center" }}>
+            <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12, alignItems: "center", overflowY: "auto" }}>
               <img
                 src={AI_AVATAR_URL}
                 alt="AI野口"
@@ -1371,18 +1371,14 @@ export default function ChatClient() {
 
         }
 
-        .overlay {
+        /* ===== Overlay（共通） ===== */
+.overlay {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
 
-  /* ✅ プロフィールだけ背景を濃くする */
-.overlayDark {
-  background: rgba(0,0,0,0.55);
-}
-
-  /* ✅ ここが肝：上は“ヘッダー分”空ける（衝突しない） */
+  /* ✅ ヘッダーと衝突しない */
   top: 120px;
 
   background: rgba(0,0,0,0.35);
@@ -1395,49 +1391,52 @@ export default function ChatClient() {
   box-sizing: border-box;
 }
 
-        .menuSheet {
-          width: min(560px, 100%);
-          background: #fff;
-          border-top-left-radius: 16px;
-          border-top-right-radius: 16px;
-          border: 1px solid #ddd;
-          border-bottom: none;
-        }
-
-        .overlaySheet {
+/* スレッド一覧の白カード */
+.overlaySheet {
   width: min(760px, 100%);
-  max-height: calc(100% - 0px); /* overlay内で完結 */
-
+  max-height: 100%;
   background: #fff;
   border-radius: 16px;
   border: 1px solid #ddd;
-
   display: flex;
   flex-direction: column;
   overflow: hidden;
-
-  margin: 0; /* overlay側のpaddingで余白を作る */
+  margin: 0;
 }
 
-         .overlayTop { padding-top: 14px; }
-          padding: 12px;
-          border-bottom: 1px solid #eee;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 10px;
-          background: #fff;
-          flex: 0 0 auto;
-        }
-
-        .profileSheet {
+/* メニュー/設定の下からシート */
+.menuSheet {
   width: min(560px, 100%);
   background: #fff;
-  border-radius: 16px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
   border: 1px solid #ddd;
-  margin: 12px;
+  border-bottom: none;
+}
+
+/* ===== プロフィールだけは完全フルスクリーン（後ろを見せない） ===== */
+.overlayProfile {
+  top: 0 !important;
+  background: #fff !important;
+  padding: 0 !important;
+  align-items: stretch !important;
+}
+
+.overlayProfile .profileSheet {
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
   overflow: hidden;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.25);
+  display: flex;
+  flex-direction: column;
+}
+
+/* もう使わない（残ってても害は少ないけど、消してOK） */
+.overlayDark {
+  /* background: rgba(0,0,0,0.55); */
 }
 
         .dots {
