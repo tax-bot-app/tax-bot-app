@@ -1,4 +1,4 @@
-// app/api/admin/knowledge-lines/[id]/route.ts
+// app/api/admin/knowledge-items/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -58,115 +58,99 @@ async function requireAdmin(
   return { uid, email };
 }
 
-// /api/admin/knowledge-lines/{id} から末尾idを抜く（ctx型バグ回避）
-function idFromReq(req: Request): string {
-  const { pathname } = new URL(req.url);
-  const parts = pathname.split("/").filter(Boolean);
-  const id = parts[parts.length - 1] || "";
-  return id;
-}
-
 function safeStr(x: unknown): string {
   return typeof x === "string" ? x : "";
 }
-function safeIntOrNull(x: unknown): number | null {
-  if (x === null || x === undefined || x === "") return null;
+function safeInt(x: unknown, def: number): number {
   const n = Number(x);
-  return Number.isFinite(n) ? Math.trunc(n) : null;
+  return Number.isFinite(n) ? Math.trunc(n) : def;
 }
-function safeBoolOrNull(x: unknown): boolean | null {
-  if (x === null || x === undefined) return null;
-  return typeof x === "boolean" ? x : null;
-}
-
-type Role = "user" | "internal";
-type Stance = "attack" | "defense";
-type Lens = "amount" | "substance" | "system";
-
-function isRole(x: string): x is Role {
-  return x === "user" || x === "internal";
-}
-function isStance(x: string): x is Stance {
-  return x === "attack" || x === "defense";
-}
-function isLens(x: string): x is Lens {
-  return x === "amount" || x === "substance" || x === "system";
+function safeBool(x: unknown, def: boolean): boolean {
+  return typeof x === "boolean" ? x : def;
 }
 
-export async function PATCH(req: Request) {
+type Kind = "qa";
+function isKind(x: string): x is Kind {
+  return x === "qa";
+}
+
+export async function GET(req: Request) {
   try {
     const supabase = adminSupabase();
     await requireAdmin(req, supabase);
 
-    const id = idFromReq(req);
-    if (!id) return NextResponse.json({ ok: false, error: "id missing" }, { status: 400 });
+    const u = new URL(req.url);
+    const kindRaw = safeStr(u.searchParams.get("kind")).trim();
+    const kind: Kind = isKind(kindRaw) ? kindRaw : "qa";
 
-    const body = await req.json().catch(() => null);
+    const topic = safeStr(u.searchParams.get("topic")).trim();
+    const active = safeStr(u.searchParams.get("active")).trim(); // "true"/"false"/""
+    const q = safeStr(u.searchParams.get("q")).trim(); // title/content keyword
 
-    const patch: any = {};
+    let query = supabase
+      .from("knowledge_items")
+      .select("id, kind, topic, title, content, priority, is_active, created_at, updated_at")
+      .eq("kind", kind)
+      .order("priority", { ascending: false })
+      .order("updated_at", { ascending: false });
 
-    const topic = safeStr(body?.topic).trim();
-    const stance = safeStr(body?.stance).trim();
-    const lens = safeStr(body?.lens).trim();
-    const roleRaw = safeStr(body?.role).trim();
-    const text = safeStr(body?.text).trim();
+    if (topic) query = query.eq("topic", topic);
+    if (active === "true") query = query.eq("is_active", true);
+    if (active === "false") query = query.eq("is_active", false);
 
-    const priority = safeIntOrNull(body?.priority);
-    const is_active = safeBoolOrNull(body?.is_active);
-
-    if (topic) patch.topic = topic;
-
-    if (stance) {
-      if (!isStance(stance)) return NextResponse.json({ ok: false, error: "invalid stance" }, { status: 400 });
-      patch.stance = stance;
+    if (q) {
+      const s = q.replace(/[%_]/g, "\\$&");
+      query = query.or(`title.ilike.%${s}%,content.ilike.%${s}%`);
     }
 
-    if (lens) {
-      if (!isLens(lens)) return NextResponse.json({ ok: false, error: "invalid lens" }, { status: 400 });
-      patch.lens = lens;
-    }
-
-    if (roleRaw) {
-      if (!isRole(roleRaw)) return NextResponse.json({ ok: false, error: "invalid role" }, { status: 400 });
-      patch.role = roleRaw;
-    }
-
-    if (text) patch.text = text;
-    if (priority !== null) patch.priority = priority;
-    if (is_active !== null) patch.is_active = is_active;
-
-    if (Object.keys(patch).length === 0) {
-      return NextResponse.json({ ok: false, error: "no fields to update" }, { status: 400 });
-    }
-
-    const { data, error } = await supabase
-      .from("knowledge_lines")
-      .update(patch)
-      .eq("id", id)
-      .select("id, topic, stance, lens, role, text, priority, is_active, created_at")
-      .single();
-
+    const { data, error } = await query;
     if (error) throw error;
 
-    return NextResponse.json({ ok: true, row: data }, { status: 200 });
+    return NextResponse.json({ ok: true, rows: data ?? [] }, { status: 200 });
   } catch (e: any) {
     const status = e?.status ?? 500;
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
   }
 }
 
-export async function DELETE(req: Request) {
+export async function POST(req: Request) {
   try {
     const supabase = adminSupabase();
     await requireAdmin(req, supabase);
 
-    const id = idFromReq(req);
-    if (!id) return NextResponse.json({ ok: false, error: "id missing" }, { status: 400 });
+    const body = await req.json().catch(() => null);
 
-    const { error } = await supabase.from("knowledge_lines").delete().eq("id", id);
+    const kindRaw = safeStr(body?.kind).trim();
+    const kind: Kind = isKind(kindRaw) ? kindRaw : "qa";
+
+    const topic = safeStr(body?.topic).trim();
+    const title = safeStr(body?.title).trim();
+    const content = safeStr(body?.content).trim();
+    const priority = safeInt(body?.priority, 50);
+    const is_active = safeBool(body?.is_active, true);
+
+    if (!topic) return NextResponse.json({ ok: false, error: "topic is required" }, { status: 400 });
+    if (!title) return NextResponse.json({ ok: false, error: "title is required" }, { status: 400 });
+    if (!content) return NextResponse.json({ ok: false, error: "content is required" }, { status: 400 });
+
+    const { data, error } = await supabase
+      .from("knowledge_items")
+      .insert({
+        kind,
+        topic,
+        title,
+        content,
+        priority,
+        is_active,
+        amounts: {},
+        conditions: {},
+      })
+      .select("id, kind, topic, title, content, priority, is_active, created_at, updated_at")
+      .single();
+
     if (error) throw error;
 
-    return NextResponse.json({ ok: true }, { status: 200 });
+    return NextResponse.json({ ok: true, row: data }, { status: 200 });
   } catch (e: any) {
     const status = e?.status ?? 500;
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
