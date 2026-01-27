@@ -307,15 +307,24 @@ function inferLens(message: string): Lens {
   const m = (message ?? "").trim();
 
   const hasMoney =
-    /([0-9０-９]+)\s*(円|万円|万|千円)|¥\s*[0-9０-９]+|金額|上限|限度|いくら|相場|単価|一人|1人|１人|なんぼ|どんぐらい/.test(
+    /([0-9０-９]+)\s*(円|万円|万|千円)|¥\s*[0-9０-９]+|金額|上限|限度|相場|単価|目安|程度|レンジ|幅|ライン|いくら|いくらぐらい|どれぐらい|どれくらい|どのくらい|なんぼ|どんぐらい|くらい/.test(
       m
     );
 
   if (hasMoney) return "amount";
 
-  if (/(アウト|セーフ|大丈夫|安全)/.test(m) && /(万|円|いくら|上限|限度)/.test(m)) return "amount";
+  // 「書類」単体では system に倒さない（有料価値が落ちるため）
+  // ただし「書類＋制度操作語」のセットは system
+  if (
+    /(書類|資料)/.test(m) &&
+    /(届出|規程|規定|手続|要件|インボイス|請求書|契約書|帳簿|仕訳)/.test(m)
+  ) {
+    return "system";
+  }
 
-  if (/(インボイス|消費税|控除|届出|規程|規定|ルール|手続|要件|仕訳|帳簿|請求書|契約書)/.test(m)) return "system";
+  if (/(インボイス|消費税|控除|届出|規程|規定|ルール|手続|要件|仕訳|帳簿|請求書|契約書)/.test(m)) {
+    return "system";
+  }
 
   return "substance";
 }
@@ -962,7 +971,7 @@ function postProcessAnswer(
   raw: string,
   dialect: Dialect,
   stance: Stance,
-  opts: { usedKnowledge: boolean; allowAttackDefenseDetail: boolean }
+  opts: { usedKnowledge: boolean; allowAttackDefenseDetail: boolean; inquiryOverride?: string | null }
 ): string {
   const { usedKnowledge, allowAttackDefenseDetail } = opts;
 
@@ -971,19 +980,26 @@ function postProcessAnswer(
   a = a.replace(/[\(（]最大[^)）]*[\)）]/g, "");
 
   {
-    const lines = a.split("\n");
-    let seen = false;
-    const out: string[] = [];
-    for (const line of lines) {
-      const t = line.trimStart();
-      if (t.startsWith("🔎")) {
-        if (seen) continue;
-        seen = true;
-      }
+  const override = (opts.inquiryOverride ?? "").trim();
+  const lines = a.split("\n");
+  const out: string[] = [];
+  let replaced = false;
+
+  for (const line of lines) {
+    const t = line.trimStart();
+    if (!t.startsWith("🔎")) {
       out.push(line);
+      continue;
     }
-    a = out.join("\n").trim();
+    out.push(override ? override : inquiryLine(dialect, stance));
+    replaced = true;
   }
+
+  // 🔎が元の回答に無い時でも、overrideがあれば末尾に1行だけ足す
+  if (!replaced && override) out.push(override);
+
+  a = out.join("\n").trim();
+}
 
   if (hasThreePatterns(a)) {
     const lines = a.split("\n");
@@ -1063,6 +1079,7 @@ async function generateAnswerStrict(params: {
   stance: Stance;
   usedKnowledge: boolean;
   allowAttackDefenseDetail: boolean;
+  inquiryOverride?: string | null;
 }): Promise<string> {
   const { message, promptPartsBase, dialect, stance } = params;
 
@@ -1080,6 +1097,7 @@ async function generateAnswerStrict(params: {
             "書き直し後も禁止表現が1つでも含まれてたら不合格。",
           ];
 
+          
     const promptParts: PromptParts = {
       ...promptPartsBase,
       injectedRules: [...(promptPartsBase.injectedRules ?? []), ...extra],
@@ -1088,9 +1106,10 @@ async function generateAnswerStrict(params: {
     const result = await generateAnswer({ message, promptParts });
 
     last = postProcessAnswer(result.answer, dialect, stance, {
-      usedKnowledge: params.usedKnowledge,
-      allowAttackDefenseDetail: params.allowAttackDefenseDetail,
-    });
+  usedKnowledge: params.usedKnowledge,
+  allowAttackDefenseDetail: params.allowAttackDefenseDetail,
+  inquiryOverride: params.inquiryOverride ?? null,
+});
 
     if (!forbidden) return last;
 
@@ -1285,41 +1304,59 @@ try {
     }
   }
 
+  // B) topic未確定の時だけ、🔎を「topic確認」に差し替える（YES/NOでは聞かない）
+const needTopicClarify = topicsNow.length === 0 && topicKbItems.length === 0;
+
+const inquiryOverride = needTopicClarify
+  ? "🔎確認 どの話の相談かだけ教えて（例：交際費/出張手当/外注/家事按分/福利厚生/役員報酬/車両/消費税/税務調査/退職金/不動産/相続・承継）。"
+  : null;
+
   if (!answer) {
-    const usedKnowledge = topicKbItems.length > 0;
-    const allowAttackDefenseDetail = followup;
+  const usedKnowledge = topicKbItems.length > 0;
+  const allowAttackDefenseDetail = followup;
 
-    const kbGlobalBlock = formatKnowledgeBlock(globalRules);
-    const kbTopicBlock = formatKnowledgeBlock(topicKbItems);
+  const kbGlobalBlock = formatKnowledgeBlock(globalRules);
+  const kbTopicBlock = formatKnowledgeBlock(topicKbItems);
 
-    const outputRules = buildOutputRules({ allowAttackDefenseDetail });
-    const ambiguityBoost = buildAmbiguityBoostRules(message);
-    const styleRules = buildStyleRules(dialect, stance);
-    const contextLines = await buildConversationContext({ db, convId });
+  const outputRules = buildOutputRules({ allowAttackDefenseDetail });
+  const ambiguityBoost = buildAmbiguityBoostRules(message);
+  const styleRules = buildStyleRules(dialect, stance);
+  const contextLines = await buildConversationContext({ db, convId });
 
-    const promptPartsBase: PromptParts = {
-      context: contextLines,
-      injectedRules: [
-        ...outputRules,
-        ...ambiguityBoost,
-        ...styleRules,
-        ...(kbGlobalBlock ? [kbGlobalBlock] : []),
-        ...(kbTopicBlock ? [kbTopicBlock] : []),
-      ],
-      guardrails: gr.action === "inject" ? gr.guardrailLines : [],
-    };
+  // ✅ C) systemでも実態バイアス（ここでlensが見える）
+  const systemBias =
+    lens === "system"
+      ? [
+          "重要：制度（規程/届出/要件）の説明だけで終わらず、最初に『実態の地雷（運用のズレ）』を1つ提示してから制度の話に入る。ネットの一般論の羅列は禁止。",
+        ]
+      : [];
 
-    answer = await generateAnswerStrict({
-      message,
-      promptPartsBase,
-      dialect,
-      stance,
-      usedKnowledge,
-      allowAttackDefenseDetail,
-    });
+  const promptPartsBase: PromptParts = {
+    context: contextLines,
+    injectedRules: [
+      ...outputRules,
+      ...systemBias,        // ←ここに入れる
+      ...ambiguityBoost,
+      ...styleRules,
+      ...(kbGlobalBlock ? [kbGlobalBlock] : []),
+      ...(kbTopicBlock ? [kbTopicBlock] : []),
+    ],
+    guardrails: gr.action === "inject" ? gr.guardrailLines : [],
+  };
 
-    path = "normal_llm";
-  }
+  answer = await generateAnswerStrict({
+    message,
+    promptPartsBase,
+    dialect,
+    stance,
+    usedKnowledge,
+    allowAttackDefenseDetail,
+    inquiryOverride, // Bで作ったやつ（ある場合）
+  });
+
+  path = "normal_llm";
+}
+
 
   // ✅ 最終安全弁（どの経路でも internal 語彙を落とす）
   answer = stripInternalLeaks(answer);
