@@ -98,7 +98,7 @@ function buildAmbiguityBoostRules(message: string): string[] {
     "『安全度』は必ず『税務上の安全度（否認リスク/税務調査リスク）』として 高/中/低 の3段階で返す。",
     hasTaxWords
       ? "ユーザー文面が税務寄りなら、🔎は原則出さない（トーク消費を避ける）。"
-      : "一般論の可能性が残る時だけ、末尾の🔎は『税務前提で答えた。前提が違うなら言って』の1行メモにする（YES/NOで聞かない）。",
+      : "一般論の可能性が残る時だけ、末尾の🔎は『税務・経営前提で答えた。前提が違うなら言って』の1行メモにする（YES/NOで聞かない）。",
   ];
 }
 
@@ -200,6 +200,62 @@ type MsgMini = { id: string; role: "user" | "assistant"; content: string; create
 type Lens = "amount" | "substance" | "system";
 type StanceAD = "attack" | "defense";
 type RoleKL = "user" | "internal";
+
+type DebugTrace = {
+  convId: string;
+  userId: string;
+  messageHead: string;
+  topicsNow: string[];
+  inferredTopic: string;
+  lens: Lens;
+  followupExplicit: boolean;
+  followupPhase: boolean;
+  lineRequest: boolean;
+  shifted: boolean;
+  followup: boolean;
+  forceNormalAnswer: boolean;
+  usedKnowledge: boolean;
+  usedLinesPick: boolean;
+  path: "followup_lines" | "followup_kb" | "followup_fallback" | "normal_llm";
+};
+
+async function writeDebugEvent(params: { db: any; trace: DebugTrace }) {
+  const { db, trace } = params;
+  try {
+    await db.from("chat_debug_events").insert({
+      user_id: trace.userId,
+      conversation_id: trace.convId || null,
+      message_head: trace.messageHead,
+      topics_now: trace.topicsNow,
+      inferred_topic: trace.inferredTopic,
+      lens: trace.lens,
+      followup: trace.followup,
+      shifted: trace.shifted,
+      path: trace.path,
+      used_knowledge: trace.usedKnowledge,
+      used_lines_pick: trace.usedLinesPick,
+      followup_phase: trace.followupPhase,
+      followup_explicit: trace.followupExplicit,
+      line_request: trace.lineRequest,
+      force_normal_answer: trace.forceNormalAnswer,
+      meta: {},
+    });
+  } catch (e) {
+    // ログ失敗では本処理を落とさない
+    console.error("[chat-debug-db-failed]", e);
+  }
+}
+
+function dbgHead(s: string, n = 80) {
+  const t = (s ?? "").replace(/\s+/g, " ").trim();
+  return t.length <= n ? t : t.slice(0, n) + "…";
+}
+
+function emitDebug(trace: DebugTrace) {
+  // 1行JSON（Vercel Logs用）
+  console.log(`[chat-trace] ${JSON.stringify(trace)}`);
+}
+
 
 type KnowledgeLine = {
   id: string;
@@ -359,20 +415,183 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
   return false;
 }
 
-function inferTopics(message: string): string[] {
+// ==== topic推定（リリース版）====
+
+type TopicSpec = {
+  topic: string;
+  patterns: Array<{ re: RegExp; score: number }>;
+};
+
+// スコア上位が先頭になる（followup時に topics[0] を使うため）
+const TOPIC_SPECS: TopicSpec[] = [
+  // ===== 交際費（商品券も含む）=====
+  {
+    topic: "交際費",
+    patterns: [
+      { re: /(交際費|接待|会食|会合|同伴|手土産|お土産|贈答|贈答品|中元|お中元|歳暮|お歳暮|慶弔|香典|祝儀|ゴルフ)/, score: 10 },
+      { re: /(商品券|ギフト券|ギフトカード|クオカード|QUOカード|図書カード|ビール券|プリペイド|商品券配布)/i, score: 9 },
+      { re: /(飲食|飲み会|飲み|食事|会議費)/, score: 3 },
+    ],
+  },
+
+  // ===== 出張手当（※文字クラス禁止！）=====
+  {
+    topic: "出張手当",
+    patterns: [
+      { re: /(出張手当|出張旅費|旅費交通費|旅費規程|旅費規定|日当|宿泊費|宿泊|ホテル|出張|交通費|新幹線|航空券|タクシー)/, score: 10 },
+      { re: /(規程|規定|精算|実費|領収|立替)/, score: 3 },
+    ],
+  },
+
+  // ===== 福利厚生 =====
+  {
+    topic: "福利厚生",
+    patterns: [
+      { re: /(福利厚生|懇親会|慰労会|社員旅行|社内イベント|レクリエーション|部活動|サークル|食事補助|ランチ補助|健康診断|予防接種)/, score: 10 },
+      { re: /(社員(飲み会|飲み|懇親)|社内飲み|チーム飲み)/, score: 8 },
+    ],
+  },
+
+  // ===== 外注 =====
+  {
+    topic: "外注",
+    patterns: [
+      { re: /(外注|外部委託|業務委託|委託|請負|準委任|委託料|業務委託費|フリーランス|個人事業主(の)?(委託|請負)|偽装(委託|請負))/i, score: 10 },
+      { re: /(指揮命令|拘束|常駐|出社|タイムカード|勤怠|勤務時間|成果物|納品|検収|請求書|契約書)/, score: 4 },
+    ],
+  },
+
+  // ===== 家事按分 =====
+  {
+    topic: "家事按分",
+    patterns: [
+      { re: /(家事按分|按分|自宅事務所|在宅|テレワーク)/, score: 10 },
+      { re: /(家賃|光熱費|電気代|ガス代|水道代|通信費|ネット|インターネット|携帯|スマホ|固定電話)/, score: 6 },
+    ],
+  },
+
+  // ===== 役員報酬 =====
+  {
+    topic: "役員報酬",
+    patterns: [
+      { re: /(役員報酬|役員給与|役員賞与|定期同額|事前確定賞与|取締役|役員|議事録)/, score: 10 },
+      { re: /(期中(変更|改定|減額|増額)|報酬改定|届出)/, score: 6 },
+    ],
+  },
+
+  // ===== 車両 =====
+  {
+    topic: "車両",
+    patterns: [
+      { re: /(社用車|車両|自動車|高級車|リース|ガソリン|駐車場|車検|ETC|走行記録|運行記録|ドライブレコーダー)/, score: 10 },
+      { re: /(私用|家族利用|通勤)/, score: 4 },
+    ],
+  },
+
+  // ===== 消費税 =====
+  {
+    topic: "消費税",
+    patterns: [
+      { re: /(消費税|インボイス|適格請求書|仕入税額控除|簡易課税|本則|課税事業者|免税事業者|2割特例|届出)/, score: 10 },
+      { re: /(控除|課税売上|課税仕入|納税)/, score: 4 },
+    ],
+  },
+
+  // ===== 税務調査 =====
+  {
+    topic: "税務調査",
+    patterns: [
+      { re: /(税務調査|国税|税務署|調査官|否認|修正申告|更正|追徴|加算税|重加算|反面調査|質問検査権)/, score: 10 },
+      { re: /(資料(全部|提出|要求)|提出リスト|雑談|高圧|同業他社)/, score: 6 },
+    ],
+  },
+
+  // ===== 退職金 =====
+  {
+    topic: "退職金",
+    patterns: [
+      { re: /(退職金|退職慰労金|分掌変更|退任|引退|相談役|会長|功績倍率|勤続年数)/, score: 10 },
+    ],
+  },
+
+  // ===== 不動産 =====
+  {
+    topic: "不動産",
+    patterns: [
+      { re: /(不動産|物件|土地|建物|マンション|アパート|賃貸|購入|売却|減価償却|路線価|評価)/, score: 10 },
+      { re: /(資産管理会社|節税不動産|借入)/, score: 4 },
+    ],
+  },
+
+  // ===== 相続・承継 =====
+  {
+    topic: "相続・承継",
+    patterns: [
+      { re: /(相続|贈与|事業承継|承継|相続税|贈与税|遺言|遺産|遺留分|自社株|株価|後継者|家族会議)/, score: 10 },
+    ],
+  },
+
+  // ===== ラク・管理 =====
+  {
+    topic: "ラク・管理",
+    patterns: [
+      { re: /(横領|不正|内部統制|チェック|承認|振込|権限|丸投げ|仕組み化|ルール化|自動化)/, score: 10 },
+    ],
+  },
+
+  // ===== 個人資産 =====
+  {
+    topic: "個人資産",
+    patterns: [
+      { re: /(手取り|資産形成|投資|運用|株|インデックス|積立|NISA|iDeCo|譲渡|配当)/i, score: 10 },
+    ],
+  },
+
+  // ===== 会社成長 =====
+  {
+    topic: "会社成長",
+    patterns: [
+      { re: /(成長|拡大|投資|採用|出店|多店舗|固定費|回収|スケール|借入|資金繰り)/, score: 10 },
+    ],
+  },
+
+  // （育成カード側にある将来トピック：先に入れておく。DB未投入でも害なし）
+  {
+    topic: "家族給与・家族役員",
+    patterns: [
+      { re: /(家族給与|家族に給与|家族役員|専従者|奥さん|妻|夫|子供|親|パート|アルバイト)/, score: 10 },
+    ],
+  },
+  {
+    topic: "M&A",
+    patterns: [
+      { re: /(M&A|会社売却|株式譲渡|譲渡益|デューデリ|DD|買い手|売り手|バリュエーション)/i, score: 10 },
+    ],
+  },
+];
+
+function inferTopics(message: string, opts?: { max?: number }): string[] {
   const m = (message ?? "").trim();
-  const topics: string[] = [];
+  if (!m) return [];
+  const max = Math.max(1, Math.min(6, opts?.max ?? 3));
 
-  if (/[出張旅費日当手当宿泊]/.test(m)) topics.push("出張手当");
-  if (/(交際費|接待|会食|飲み|飲食|飲み会|会合|手土産|お土産|贈答)/.test(m)) topics.push("交際費");
+  const scored = TOPIC_SPECS.map((spec) => {
+    let score = 0;
+    for (const p of spec.patterns) {
+      if (p.re.test(m)) score += p.score;
+    }
+    return { topic: spec.topic, score };
+  })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score);
 
-  return Array.from(new Set(topics));
+  return scored.slice(0, max).map((x) => x.topic);
 }
 
 function inferTopicFromHistory(prevUserMessage: string | null, prevAssistantMessage: string | null): string | null {
-  const u = prevUserMessage ? inferTopics(prevUserMessage)[0] : null;
+  const u = prevUserMessage ? inferTopics(prevUserMessage, { max: 1 })[0] : null;
   if (u) return u;
-  const a = prevAssistantMessage ? inferTopics(prevAssistantMessage)[0] : null;
+  const a = prevAssistantMessage ? inferTopics(prevAssistantMessage, { max: 1 })[0] : null;
   if (a) return a;
   return null;
 }
@@ -483,7 +702,7 @@ function fallbackAttackDefense(topic: string, lens: Lens): { attack: string; def
 async function retrieveKnowledge(params: { db: any; message: string }): Promise<KnowledgeItem[]> {
   const { db, message } = params;
 
-  const topics = inferTopics(message);
+  const topics = inferTopics(message, { max: 3 });
   if (topics.length === 0) return [];
 
   const { data, error } = await db
@@ -629,7 +848,7 @@ function collapseInquiryToSingleLine(askLines: string[]): string[] {
     .join(" ");
 
   if (!rest) {
-    return ["🔎確認 税務前提で答えた。前提が違うなら言うてな。"];
+    return ["🔎確認 税務・経営前提で答えた。前提が違うなら言うてな。"];
   }
   return [`${head} ${rest}`.trim()];
 }
@@ -705,12 +924,12 @@ function forceCasual(text: string, dialect: Dialect): string {
 
 function inquiryLine(dialect: Dialect, stance: Stance): string {
   if (dialect === "standard" && stance === "sanbo")
-    return "🔎確認 税務前提で回答しました。前提が違う場合はお知らせください。";
+    return "🔎確認 税務・経営前提で回答しました。前提が違う場合はお知らせください。";
   if (dialect === "standard" && stance === "zubatto")
-    return "🔎確認 税務前提で答えた。前提が違うなら言って。";
+    return "🔎確認 税務・経営前提で答えた。前提が違うなら言って。";
   if (dialect === "kansai" && stance === "sanbo")
-    return "🔎確認 税務前提でお答えしましたで。前提が違うなら言うてくださいな。";
-  return "🔎確認 税務前提で答えたで。前提が違うなら言うてな。";
+    return "🔎確認 税務・経営前提でお答えしましたで。前提が違うなら言うてくださいな。";
+  return "🔎確認 税務・経営前提で答えたで。前提が違うなら言うてな。";
 }
 
 function stripInternalLeaks(text: string): string {
@@ -965,121 +1184,175 @@ export async function POST(req: Request) {
     });
 
     let answer = "";
-    try {
-      const prevUserMessage = await (async () => {
-        const { data: prevRows } = await db
-          .from("messages")
-          .select("content")
-          .eq("conversation_id", convId)
-          .eq("role", "user")
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: false })
-          .limit(2);
+try {
+  const prevUserMessage = await (async () => {
+    const { data: prevRows } = await db
+      .from("messages")
+      .select("content")
+      .eq("conversation_id", convId)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(2);
 
-        return prevRows?.[1]?.content ?? prevRows?.[0]?.content ?? null;
-      })();
+    return prevRows?.[1]?.content ?? prevRows?.[0]?.content ?? null;
+  })();
 
-      const prevAssistantMessage = await (async () => {
-        const { data: prevRows } = await db
-          .from("messages")
-          .select("content")
-          .eq("conversation_id", convId)
-          .eq("role", "assistant")
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: false })
-          .limit(1);
+  const prevAssistantMessage = await (async () => {
+    const { data: prevRows } = await db
+      .from("messages")
+      .select("content")
+      .eq("conversation_id", convId)
+      .eq("role", "assistant")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(1);
 
-        return prevRows?.[0]?.content ?? null;
-      })();
+    return prevRows?.[0]?.content ?? null;
+  })();
 
-      const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
-      const followupPhase = isInFollowupPhase(prevAssistantMessage);
-      const lineRequest = isLineRequest(message);
-      const shifted = topicShiftLikelyLite(prevUserMessage, message);
+  const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
+  const followupPhase = isInFollowupPhase(prevAssistantMessage);
+  const lineRequest = isLineRequest(message);
+  const shifted = topicShiftLikelyLite(prevUserMessage, message);
 
-      const followup = followupExplicit || lineRequest || (followupPhase && !shifted);
-      const forceNormalAnswer = followupPhase && !followupExplicit && !lineRequest;
+  const followup = followupExplicit || lineRequest || (followupPhase && !shifted);
+  const forceNormalAnswer = followupPhase && !followupExplicit && !lineRequest;
 
-      const globalRules = await retrieveGlobalRules({ db });
+  const globalRules = await retrieveGlobalRules({ db });
 
-      let topicKbItems = await retrieveKnowledge({ db, message });
+  // ★ ここから topic/lens の確定と、経路ログ用の変数
+  const topicsNow = inferTopics(message, { max: 3 });
 
-      if (followup && topicKbItems.length === 0 && prevUserMessage) {
-        topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
+  // lens は followup/normal 共通で使うので先に確定
+  const lens: Lens = inferLens(isFollowupOnlyText(message) && prevUserMessage ? prevUserMessage : message);
+
+  let topicKbItems = await retrieveKnowledge({ db, message });
+
+  // followupでも、今メッセージでtopicが取れてるなら「前のtopic借り」はしない。
+  // 借りるのは「よろ」「続き」「もう少し」みたいな短文追撃だけに限定。
+  const shouldBorrowPrevTopic =
+    followup &&
+    topicKbItems.length === 0 &&
+    topicsNow.length === 0 &&
+    !shifted &&
+    Boolean(prevUserMessage) &&
+    (isFollowupOnlyText(message) || message.trim().length <= 6);
+
+  if (shouldBorrowPrevTopic && prevUserMessage) {
+    topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
+  }
+
+  // ★ デバッグ用の経路トラッキング
+  let usedLinesPick = false;
+  let path: DebugTrace["path"] = "normal_llm";
+
+  // followup経路で使う topic（ログにも使う）
+  const inferredTopicForFollowup =
+    topicsNow[0] ??
+    (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
+    (topicKbItems?.[0]?.topic ?? null) ??
+    "";
+
+  if (followup && !forceNormalAnswer) {
+    const header = "判断の軸だけ整理するで。";
+    const footer = "※ 税務調査は「形式より実態」「一貫性」を見られる。";
+
+    const topic = inferredTopicForFollowup;
+
+    if (topic) {
+      let built: string | null = null;
+
+      const picked = await retrieveKnowledgeLines({ db, topic, lens });
+      built = buildFollowupAnswerFromLines(picked);
+      if (built) {
+        usedLinesPick = true;
+        path = "followup_lines";
       }
 
-      if (followup && !forceNormalAnswer) {
-        const header = "判断の軸だけ整理するで。";
-        const footer = "※ 税務調査は「形式より実態」「一貫性」を見られる。";
-
-        const topic =
-          inferTopics(message)[0] ??
-          (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
-          (topicKbItems?.[0]?.topic ?? null) ??
-          "";
-
-        const lens: Lens = inferLens(isFollowupOnlyText(message) && prevUserMessage ? prevUserMessage : message);
-
-        if (topic) {
-          let built: string | null = null;
-
-          const picked = await retrieveKnowledgeLines({ db, topic, lens });
-          built = buildFollowupAnswerFromLines(picked);
-
-          if (!built) {
-            built = buildFollowupAnswerFromKb(topicKbItems);
-          }
-
-          if (!built) {
-            const fb = fallbackAttackDefense(topic, lens);
-            built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
-          }
-
-          answer = `${header}\n\n${built}\n\n${footer}`.trim();
-        }
+      if (!built) {
+        built = buildFollowupAnswerFromKb(topicKbItems);
+        if (built) path = "followup_kb";
       }
 
-      if (!answer) {
-        const usedKnowledge = topicKbItems.length > 0;
-        const allowAttackDefenseDetail = followup;
-
-        const kbGlobalBlock = formatKnowledgeBlock(globalRules);
-        const kbTopicBlock = formatKnowledgeBlock(topicKbItems);
-
-        const outputRules = buildOutputRules({ allowAttackDefenseDetail });
-        const ambiguityBoost = buildAmbiguityBoostRules(message);
-        const styleRules = buildStyleRules(dialect, stance);
-        const contextLines = await buildConversationContext({ db, convId });
-
-        const promptPartsBase: PromptParts = {
-          context: contextLines,
-          injectedRules: [
-            ...outputRules,
-            ...ambiguityBoost,
-            ...styleRules,
-            ...(kbGlobalBlock ? [kbGlobalBlock] : []),
-            ...(kbTopicBlock ? [kbTopicBlock] : []),
-          ],
-          guardrails: gr.action === "inject" ? gr.guardrailLines : [],
-        };
-
-        answer = await generateAnswerStrict({
-          message,
-          promptPartsBase,
-          dialect,
-          stance,
-          usedKnowledge,
-          allowAttackDefenseDetail,
-        });
+      if (!built) {
+        const fb = fallbackAttackDefense(topic, lens);
+        built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
+        path = "followup_fallback";
       }
 
-      // ✅ 最終安全弁（どの経路でも internal 語彙を落とす）
-      answer = stripInternalLeaks(answer);
-    } catch (e: any) {
-      return NextResponse.json({ ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes, {
-        status: 502,
-      });
+      answer = `${header}\n\n${built}\n\n${footer}`.trim();
     }
+  }
+
+  if (!answer) {
+    const usedKnowledge = topicKbItems.length > 0;
+    const allowAttackDefenseDetail = followup;
+
+    const kbGlobalBlock = formatKnowledgeBlock(globalRules);
+    const kbTopicBlock = formatKnowledgeBlock(topicKbItems);
+
+    const outputRules = buildOutputRules({ allowAttackDefenseDetail });
+    const ambiguityBoost = buildAmbiguityBoostRules(message);
+    const styleRules = buildStyleRules(dialect, stance);
+    const contextLines = await buildConversationContext({ db, convId });
+
+    const promptPartsBase: PromptParts = {
+      context: contextLines,
+      injectedRules: [
+        ...outputRules,
+        ...ambiguityBoost,
+        ...styleRules,
+        ...(kbGlobalBlock ? [kbGlobalBlock] : []),
+        ...(kbTopicBlock ? [kbTopicBlock] : []),
+      ],
+      guardrails: gr.action === "inject" ? gr.guardrailLines : [],
+    };
+
+    answer = await generateAnswerStrict({
+      message,
+      promptPartsBase,
+      dialect,
+      stance,
+      usedKnowledge,
+      allowAttackDefenseDetail,
+    });
+
+    path = "normal_llm";
+  }
+
+  // ✅ 最終安全弁（どの経路でも internal 語彙を落とす）
+  answer = stripInternalLeaks(answer);
+
+  // ✅ topic推定結果をログに吐く（Vercel Logs + DB）
+{
+  const trace: DebugTrace = {
+    convId,
+    userId: user.id,
+    messageHead: dbgHead(message, 120),
+    topicsNow,
+    inferredTopic: inferredTopicForFollowup || "",
+    lens,
+    followupExplicit,
+    followupPhase,
+    lineRequest,
+    shifted,
+    followup,
+    forceNormalAnswer,
+    usedKnowledge: topicKbItems.length > 0,
+    usedLinesPick,
+    path,
+  };
+
+  emitDebug(trace);                 // Vercel Logs
+  await writeDebugEvent({ db, trace }); // DB保存
+}
+} catch (e: any) {
+  return NextResponse.json({ ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes, {
+    status: 502,
+  });
+}
+
 
     const { data, error } = await db.rpc("consume_talk_v2", {
       p_user_id: user.id,
