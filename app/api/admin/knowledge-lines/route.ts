@@ -1,4 +1,4 @@
-// app/api/admin/knowledge-items/[id]/route.ts
+// app/api/admin/knowledge-lines/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -69,59 +69,89 @@ function safeBool(x: unknown, def: boolean): boolean {
   return typeof x === "boolean" ? x : def;
 }
 
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+type Role = "user" | "internal";
+type Stance = "attack" | "defense";
+type Lens = "amount" | "substance" | "system";
+
+function isRole(x: string): x is Role {
+  return x === "user" || x === "internal";
+}
+function isStance(x: string): x is Stance {
+  return x === "attack" || x === "defense";
+}
+function isLens(x: string): x is Lens {
+  return x === "amount" || x === "substance" || x === "system";
+}
+
+export async function GET(req: Request) {
   try {
     const supabase = adminSupabase();
     await requireAdmin(req, supabase);
 
-    const id = ctx.params.id;
-    if (!id) return NextResponse.json({ ok: false, error: "id is required" }, { status: 400 });
+    const u = new URL(req.url);
+    const topic = safeStr(u.searchParams.get("topic")).trim();
+    const stance = safeStr(u.searchParams.get("stance")).trim();
+    const lens = safeStr(u.searchParams.get("lens")).trim();
+    const active = safeStr(u.searchParams.get("active")).trim(); // "true"/"false"/""
+    const role = safeStr(u.searchParams.get("role")).trim(); // "user"/"internal"/""
 
-    const body = await req.json().catch(() => null);
+    let q = supabase
+      .from("knowledge_lines")
+      .select("id, topic, stance, lens, role, text, priority, is_active, created_at")
+      .order("topic", { ascending: true })
+      .order("lens", { ascending: true })
+      .order("stance", { ascending: true })
+      .order("role", { ascending: true })
+      .order("priority", { ascending: false });
 
-    const patch: any = {};
+    if (topic) q = q.eq("topic", topic);
+    if (stance) q = q.eq("stance", stance);
+    if (lens) q = q.eq("lens", lens);
+    if (active === "true") q = q.eq("is_active", true);
+    if (active === "false") q = q.eq("is_active", false);
+    if (role) q = q.eq("role", role);
 
-    if (body?.topic !== undefined) patch.topic = safeStr(body?.topic).trim();
-    if (body?.title !== undefined) patch.title = safeStr(body?.title).trim();
-    if (body?.content !== undefined) patch.content = safeStr(body?.content).trim();
-    if (body?.priority !== undefined) patch.priority = safeInt(body?.priority, 50);
-    if (body?.is_active !== undefined) patch.is_active = safeBool(body?.is_active, true);
-
-    if (patch.topic !== undefined && !patch.topic)
-      return NextResponse.json({ ok: false, error: "topic is required" }, { status: 400 });
-    if (patch.title !== undefined && !patch.title)
-      return NextResponse.json({ ok: false, error: "title is required" }, { status: 400 });
-    if (patch.content !== undefined && !patch.content)
-      return NextResponse.json({ ok: false, error: "content is required" }, { status: 400 });
-
-    const { data, error } = await supabase
-      .from("knowledge_items")
-      .update(patch)
-      .eq("id", id)
-      .select("id, kind, topic, title, content, priority, is_active, created_at, updated_at")
-      .single();
-
+    const { data, error } = await q;
     if (error) throw error;
 
-    return NextResponse.json({ ok: true, row: data }, { status: 200 });
+    return NextResponse.json({ ok: true, rows: data ?? [] }, { status: 200 });
   } catch (e: any) {
     const status = e?.status ?? 500;
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
   }
 }
 
-export async function DELETE(req: Request, ctx: { params: { id: string } }) {
+export async function POST(req: Request) {
   try {
     const supabase = adminSupabase();
     await requireAdmin(req, supabase);
 
-    const id = ctx.params.id;
-    if (!id) return NextResponse.json({ ok: false, error: "id is required" }, { status: 400 });
+    const body = await req.json().catch(() => null);
 
-    const { error } = await supabase.from("knowledge_items").delete().eq("id", id);
+    const topic = safeStr(body?.topic).trim();
+    const stanceRaw = safeStr(body?.stance).trim();
+    const lensRaw = safeStr(body?.lens).trim();
+    const roleRaw = safeStr(body?.role).trim();
+    const role: Role = isRole(roleRaw) ? roleRaw : "user";
+
+    const text = safeStr(body?.text).trim();
+    const priority = safeInt(body?.priority, 100);
+    const is_active = safeBool(body?.is_active, true);
+
+    if (!topic) return NextResponse.json({ ok: false, error: "topic is required" }, { status: 400 });
+    if (!text) return NextResponse.json({ ok: false, error: "text is required" }, { status: 400 });
+    if (!isStance(stanceRaw)) return NextResponse.json({ ok: false, error: "invalid stance" }, { status: 400 });
+    if (!isLens(lensRaw)) return NextResponse.json({ ok: false, error: "invalid lens" }, { status: 400 });
+
+    const { data, error } = await supabase
+      .from("knowledge_lines")
+      .insert({ topic, stance: stanceRaw, lens: lensRaw, role, text, priority, is_active })
+      .select("id, topic, stance, lens, role, text, priority, is_active, created_at")
+      .single();
+
     if (error) throw error;
 
-    return NextResponse.json({ ok: true }, { status: 200 });
+    return NextResponse.json({ ok: true, row: data }, { status: 200 });
   } catch (e: any) {
     const status = e?.status ?? 500;
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
