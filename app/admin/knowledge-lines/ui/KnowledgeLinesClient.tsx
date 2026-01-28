@@ -624,211 +624,194 @@ export default function KnowledgeLinesClient() {
         </>
       )}
 
-      {tab === "qa" && (
-        <>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-            <label>
-              topic&nbsp;
-              <select value={qTopic} onChange={(e) => setQTopic(e.target.value)}>
-                <option value="">(all)</option>
-                {qaTopics.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
+     {tab === "qa" && (
+  <>
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+      <label>
+        topic&nbsp;
+        <select value={qTopic} onChange={(e) => setQTopic(e.target.value)}>
+          <option value="">(all)</option>
+          {qaTopics.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </label>
 
-            <label>
-              active&nbsp;
-              <select value={qActive} onChange={(e) => setQActive(e.target.value)}>
-                <option value="">(all)</option>
-                <option value="true">true</option>
-                <option value="false">false</option>
-              </select>
-            </label>
+      <label>
+        active&nbsp;
+        <select value={qActive} onChange={(e) => setQActive(e.target.value)}>
+          <option value="">(all)</option>
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </select>
+      </label>
 
-            <label>
-              search&nbsp;
-              <input value={qQuery} onChange={(e) => setQQuery(e.target.value)} placeholder="title / content" />
-            </label>
+      <label>
+        search&nbsp;
+        <input value={qQuery} onChange={(e) => setQQuery(e.target.value)} placeholder="title / content" />
+      </label>
 
-            <button onClick={startNewQa} disabled={loading} style={{ padding: "6px 10px" }}>
-              ＋ 新規
-            </button>
+      <button onClick={startNewQa} disabled={loading} style={{ padding: "6px 10px" }}>
+        ＋ 新規
+      </button>
 
-            <button onClick={loadQa} disabled={loading} style={{ padding: "6px 10px" }}>
-              再読込
-            </button>
+      <button onClick={loadQa} disabled={loading} style={{ padding: "6px 10px" }}>
+        再読込
+      </button>
+    </div>
+
+    <TableScroller>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr style={{ background: "#f6f6f6" }}>
+            <th style={{ textAlign: "left", padding: 8 }}>topic</th>
+            <th style={{ textAlign: "left", padding: 8 }}>priority</th>
+            <th style={{ textAlign: "left", padding: 8 }}>active</th>
+            <th style={{ textAlign: "left", padding: 8 }}>title</th>
+            <th style={{ textAlign: "left", padding: 8 }}>content</th>
+            <th style={{ padding: 8 }} />
+          </tr>
+        </thead>
+        <tbody>
+          {qaRows.map((r) => (
+            <tr key={r.id} style={{ borderTop: "1px solid #eee" }}>
+              <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.topic}</td>
+              <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.priority}</td>
+              <td style={{ padding: 8, whiteSpace: "nowrap" }}>{String(r.is_active)}</td>
+              <td style={{ padding: 8, fontWeight: 700 }}>{r.title}</td>
+              <td style={{ padding: 8 }}>
+                <div
+                  style={{
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }}
+                >
+                  {r.content}
+                </div>
+              </td>
+              <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                <button onClick={() => startEditQa(r)} style={{ padding: "4px 8px" }}>
+                  編集
+                </button>
+              </td>
+            </tr>
+          ))}
+          {qaRows.length === 0 && (
+            <tr>
+              <td colSpan={6} style={{ padding: 12, color: "#666" }}>
+                No rows
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </TableScroller>
+
+    {qaEditing && (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.35)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 16,
+          zIndex: 9999,
+        }}
+        onClick={() => setQaEditing(null)}
+      >
+        <div
+          style={{
+            width: "min(980px, 100%)",
+            height: "min(92vh, 900px)",
+            background: "white",
+            borderRadius: 12,
+            padding: 14,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontWeight: 700 }}>{isNewQa ? "QA 新規作成" : "QA 編集"}</div>
+            <button onClick={() => setQaEditing(null)}>×</button>
           </div>
 
-          <TableScroller>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: "#f6f6f6" }}>
-                  <th style={{ textAlign: "left", padding: 8 }}>topic</th>
-                  <th style={{ textAlign: "left", padding: 8 }}>priority</th>
-                  <th style={{ textAlign: "left", padding: 8 }}>active</th>
-                  <th style={{ textAlign: "left", padding: 8 }}>title</th>
-                  <th style={{ textAlign: "left", padding: 8 }}>content</th>
-                  <th style={{ padding: 8 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {qaRows.map((r) => (
-                  <tr key={r.id} style={{ borderTop: "1px solid #eee" }}>
-                    <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.topic}</td>
-                    <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.priority}</td>
-                    <td style={{ padding: 8, whiteSpace: "nowrap" }}>{String(r.is_active)}</td>
-                    <td style={{ padding: 8, fontWeight: 700 }}>{r.title}</td>
-                    <td style={{ padding: 8 }}>
-                      <div
-                        style={{
-                          display: "-webkit-box",
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: "vertical",
-                          overflow: "hidden",
-                        }}
-                      >
-                        {r.content}
-                      </div>
-                    </td>
-                    <td style={{ padding: 8, whiteSpace: "nowrap" }}>
-                      <button onClick={() => startEditQa(r)} style={{ padding: "4px 8px" }}>
-                        編集
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {qaRows.length === 0 && (
-                  <tr>
-                    <td colSpan={6} style={{ padding: 12, color: "#666" }}>
-                      No rows
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </TableScroller>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: 10, marginBottom: 10 }}>
+            <label>
+              topic
+              <input
+                value={qaEditing.topic}
+                onChange={(e) => setQaEditing({ ...qaEditing, topic: e.target.value })}
+                style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
+              />
+            </label>
 
-          {qaEditing && (
-            <div
-  style={{
-    width: "min(980px, 100%)",
-    height: "min(92vh, 900px)",
-    background: "white",
-    borderRadius: 12,
-    padding: 14,
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-  }}
-  onClick={(e) => e.stopPropagation()}
->
-              <div
-                style={{
-                  width: "min(900px, 100%)",
-                  maxHeight: "min(86vh, 900px)",
-                  overflowY: "auto",
-                  background: "white",
-                  borderRadius: 12,
-                  padding: 14,
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                  <div style={{ fontWeight: 700 }}>{isNewQa ? "QA 新規作成" : "QA 編集"}</div>
-                  <button onClick={() => setQaEditing(null)}>×</button>
-                </div>
+            <label>
+              title
+              <input
+                value={qaEditing.title}
+                onChange={(e) => setQaEditing({ ...qaEditing, title: e.target.value })}
+                style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
+              />
+            </label>
 
-                <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: 10, marginBottom: 10 }}>
-                  <label>
-                    topic
-                    <input
-                      value={qaEditing.topic}
-                      onChange={(e) => setQaEditing({ ...qaEditing, topic: e.target.value })}
-                      style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
-                    />
-                  </label>
+            <label>
+              priority
+              <input
+                type="number"
+                value={qaEditing.priority}
+                onChange={(e) => setQaEditing({ ...qaEditing, priority: Number(e.target.value) })}
+                style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
+              />
+            </label>
+          </div>
 
-                  <label>
-                    title
-                    <input
-                      value={qaEditing.title}
-                      onChange={(e) => setQaEditing({ ...qaEditing, title: e.target.value })}
-                      style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
-                    />
-                  </label>
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            <label style={{ display: "block", marginBottom: 10 }}>
+              content
+              <textarea
+                value={qaEditing.content}
+                onChange={(e) => setQaEditing({ ...qaEditing, content: e.target.value })}
+                rows={14}
+                style={{ width: "100%", fontSize: 16, lineHeight: 1.6 }}
+              />
+            </label>
+          </div>
 
-                  <label>
-                    priority
-                    <input
-                      type="number"
-                      value={qaEditing.priority}
-                      onChange={(e) => setQaEditing({ ...qaEditing, priority: Number(e.target.value) })}
-                      style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
-                    />
-                  </label>
-                </div>
+          <div style={{ borderTop: "1px solid #eee", paddingTop: 10 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={qaEditing.is_active}
+                onChange={(e) => setQaEditing({ ...qaEditing, is_active: e.target.checked })}
+              />
+              is_active
+            </label>
 
-                <label style={{ display: "block", marginBottom: 10 }}>
-                  content
-                  <textarea
-  value={qaEditing.content}
-  onChange={(e) => setQaEditing({ ...qaEditing, content: e.target.value })}
-  rows={14}
-  style={{ width: "100%", fontSize: 16, lineHeight: 1.6 }}
-/>
-                </label>
-
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                  <input
-                    type="checkbox"
-                    checked={qaEditing.is_active}
-                    onChange={(e) => setQaEditing({ ...qaEditing, is_active: e.target.checked })}
-                  />
-                  is_active
-                </label>
-
-                <div style={{ flex: 1, overflowY: "auto" }}>
-  <label style={{ display: "block", marginBottom: 10 }}>
-    content
-    <textarea
-      value={qaEditing.content}
-      onChange={(e) => setQaEditing({ ...qaEditing, content: e.target.value })}
-      rows={14}
-      style={{ width: "100%", fontSize: 16, lineHeight: 1.6 }}
-    />
-  </label>
-</div>
-
-<div style={{ borderTop: "1px solid #eee", paddingTop: 10 }}>
-  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-    <input
-      type="checkbox"
-      checked={qaEditing.is_active}
-      onChange={(e) => setQaEditing({ ...qaEditing, is_active: e.target.checked })}
-    />
-    is_active
-  </label>
-
-  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-    {!isNewQa && (
-      <button onClick={() => removeQa(qaEditing.id)} disabled={loading} style={{ padding: "10px 12px" }}>
-        削除
-      </button>
-    )}
-    <button onClick={saveQa} disabled={loading} style={{ padding: "10px 12px" }}>
-      保存
-    </button>
-  </div>
-</div>
-
-              </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              {!isNewQa && (
+                <button onClick={() => removeQa(qaEditing.id)} disabled={loading} style={{ padding: "10px 12px" }}>
+                  削除
+                </button>
+              )}
+              <button onClick={saveQa} disabled={loading} style={{ padding: "10px 12px" }}>
+                保存
+              </button>
             </div>
-          )}
-        </>
-      )}
+          </div>
+        </div>
+      </div>
+    )}
+  </>
+)}
+
     </div>
   );
 }
