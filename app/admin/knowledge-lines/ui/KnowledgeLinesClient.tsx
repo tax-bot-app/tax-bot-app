@@ -713,17 +713,18 @@ export default function KnowledgeLinesClient() {
 
           {qaEditing && (
             <div
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0,0,0,0.35)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: 16,
-              }}
-              onClick={() => setQaEditing(null)}
-            >
+  style={{
+    width: "min(980px, 100%)",
+    height: "min(92vh, 900px)",
+    background: "white",
+    borderRadius: 12,
+    padding: 14,
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+  }}
+  onClick={(e) => e.stopPropagation()}
+>
               <div
                 style={{
                   width: "min(900px, 100%)",
@@ -746,7 +747,7 @@ export default function KnowledgeLinesClient() {
                     <input
                       value={qaEditing.topic}
                       onChange={(e) => setQaEditing({ ...qaEditing, topic: e.target.value })}
-                      style={{ width: "100%" }}
+                      style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
                     />
                   </label>
 
@@ -755,7 +756,7 @@ export default function KnowledgeLinesClient() {
                     <input
                       value={qaEditing.title}
                       onChange={(e) => setQaEditing({ ...qaEditing, title: e.target.value })}
-                      style={{ width: "100%" }}
+                      style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
                     />
                   </label>
 
@@ -765,7 +766,7 @@ export default function KnowledgeLinesClient() {
                       type="number"
                       value={qaEditing.priority}
                       onChange={(e) => setQaEditing({ ...qaEditing, priority: Number(e.target.value) })}
-                      style={{ width: "100%" }}
+                      style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
                     />
                   </label>
                 </div>
@@ -773,11 +774,11 @@ export default function KnowledgeLinesClient() {
                 <label style={{ display: "block", marginBottom: 10 }}>
                   content
                   <textarea
-                    value={qaEditing.content}
-                    onChange={(e) => setQaEditing({ ...qaEditing, content: e.target.value })}
-                    rows={10}
-                    style={{ width: "100%" }}
-                  />
+  value={qaEditing.content}
+  onChange={(e) => setQaEditing({ ...qaEditing, content: e.target.value })}
+  rows={14}
+  style={{ width: "100%", fontSize: 16, lineHeight: 1.6 }}
+/>
                 </label>
 
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
@@ -789,16 +790,40 @@ export default function KnowledgeLinesClient() {
                   is_active
                 </label>
 
-                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                  {!isNewQa && (
-                    <button onClick={() => removeQa(qaEditing.id)} disabled={loading} style={{ padding: "6px 10px" }}>
-                      削除
-                    </button>
-                  )}
-                  <button onClick={saveQa} disabled={loading} style={{ padding: "6px 10px" }}>
-                    保存
-                  </button>
-                </div>
+                <div style={{ flex: 1, overflowY: "auto" }}>
+  <label style={{ display: "block", marginBottom: 10 }}>
+    content
+    <textarea
+      value={qaEditing.content}
+      onChange={(e) => setQaEditing({ ...qaEditing, content: e.target.value })}
+      rows={14}
+      style={{ width: "100%", fontSize: 16, lineHeight: 1.6 }}
+    />
+  </label>
+</div>
+
+<div style={{ borderTop: "1px solid #eee", paddingTop: 10 }}>
+  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+    <input
+      type="checkbox"
+      checked={qaEditing.is_active}
+      onChange={(e) => setQaEditing({ ...qaEditing, is_active: e.target.checked })}
+    />
+    is_active
+  </label>
+
+  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+    {!isNewQa && (
+      <button onClick={() => removeQa(qaEditing.id)} disabled={loading} style={{ padding: "10px 12px" }}>
+        削除
+      </button>
+    )}
+    <button onClick={saveQa} disabled={loading} style={{ padding: "10px 12px" }}>
+      保存
+    </button>
+  </div>
+</div>
+
               </div>
             </div>
           )}
