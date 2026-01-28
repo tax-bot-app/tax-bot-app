@@ -754,13 +754,20 @@ export default function KnowledgeLinesClient() {
             </label>
 
             <label>
-              title
-              <input
-                value={qaEditing.title}
-                onChange={(e) => setQaEditing({ ...qaEditing, title: e.target.value })}
-                style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
-              />
-            </label>
+  title
+  <textarea
+    value={qaEditing.title}
+    onChange={(e) => setQaEditing({ ...qaEditing, title: e.target.value })}
+    rows={2}
+    style={{
+      width: "100%",
+      fontSize: 16,
+      lineHeight: 1.4,
+      padding: "8px 10px",
+      resize: "vertical",
+    }}
+  />
+</label>
 
             <label>
               priority
