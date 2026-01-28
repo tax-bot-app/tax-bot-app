@@ -581,15 +581,17 @@ const TOPIC_SPECS: TopicSpec[] = [
 ];
 
 function inferTopics(message: string, opts?: { max?: number }): string[] {
-  const familyRe = /(奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親|父|母|親戚|親族)/i;
-const payRe = /(給料|給与|報酬|賃金|人件費|手当|払|支払|振込)/i;
-
-const forced: string[] = [];
-if (familyRe.test(m) && payRe.test(m)) {
-  forced.push("家族給与・家族役員");
-}
-const m = (message ?? "").trim();
+  const m = (message ?? "").trim();
   if (!m) return [];
+
+  const familyRe = /(奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親|父|母|親戚|親族)/i;
+  const payRe = /(給料|給与|報酬|賃金|人件費|手当|払|支払|振込)/i;
+
+  const forced: string[] = [];
+  if (familyRe.test(m) && payRe.test(m)) {
+    forced.push("家族給与・家族役員");
+  }
+
   const max = Math.max(1, Math.min(6, opts?.max ?? 3));
 
   const scored = TOPIC_SPECS.map((spec) => {
@@ -601,10 +603,9 @@ const m = (message ?? "").trim();
   })
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score);
-const topics = scored.slice(0, max).map((x) => x.topic);
-return [...new Set([...forced, ...topics])];
 
-  return scored.slice(0, max).map((x) => x.topic);
+  const topics = scored.slice(0, max).map((x) => x.topic);
+  return [...new Set([...forced, ...topics])];
 }
 
 function inferTopicFromHistory(prevUserMessage: string | null, prevAssistantMessage: string | null): string | null {
