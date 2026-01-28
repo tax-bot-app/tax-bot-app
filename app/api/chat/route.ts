@@ -492,7 +492,7 @@ const TOPIC_SPECS: TopicSpec[] = [
   {
     topic: "車両",
     patterns: [
-      { re: /(社用車|車両|自動車|高級車|リース|ガソリン|駐車場|車検|ETC|走行記録|運行記録|ドライブレコーダー)/, score: 10 },
+      { re: /(外車|スポーツカー|輸入車|ベンツ|BMW|ポルシェ|フェラーリ|ランボルギーニ)/, score: 6 },
       { re: /(私用|家族利用|通勤)/, score: 4 },
     ],
   },
@@ -510,7 +510,7 @@ const TOPIC_SPECS: TopicSpec[] = [
   {
     topic: "税務調査",
     patterns: [
-      { re: /(税務調査|国税|税務署|調査官|否認|修正申告|更正|追徴|加算税|重加算|反面調査|質問検査権)/, score: 10 },
+      { re: /(税務調査|国税|税務署|調査官|反面調査|質問検査権|調査)/, score: 10 },
       { re: /(資料(全部|提出|要求)|提出リスト|雑談|高圧|同業他社)/, score: 6 },
     ],
   },
@@ -568,7 +568,8 @@ const TOPIC_SPECS: TopicSpec[] = [
   {
     topic: "家族給与・家族役員",
     patterns: [
-      { re: /(家族給与|家族に給与|家族役員|専従者|奥さん|妻|夫|子供|親|パート|アルバイト)/, score: 10 },
+      { 
+  re: /(家族給与|家族に給与|家族役員|専従者|奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親|父|母|親戚|親族|パート|アルバイト)/,score: 10 },
     ],
   },
   {
@@ -580,7 +581,14 @@ const TOPIC_SPECS: TopicSpec[] = [
 ];
 
 function inferTopics(message: string, opts?: { max?: number }): string[] {
-  const m = (message ?? "").trim();
+  const familyRe = /(奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親|父|母|親戚|親族)/i;
+const payRe = /(給料|給与|報酬|賃金|人件費|手当|払|支払|振込)/i;
+
+const forced: string[] = [];
+if (familyRe.test(m) && payRe.test(m)) {
+  forced.push("家族給与・家族役員");
+}
+const m = (message ?? "").trim();
   if (!m) return [];
   const max = Math.max(1, Math.min(6, opts?.max ?? 3));
 
@@ -593,6 +601,8 @@ function inferTopics(message: string, opts?: { max?: number }): string[] {
   })
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score);
+const topics = scored.slice(0, max).map((x) => x.topic);
+return [...new Set([...forced, ...topics])];
 
   return scored.slice(0, max).map((x) => x.topic);
 }
