@@ -134,9 +134,13 @@ function buildStyleRules(dialect: Dialect, stance: Stance): string[] {
 
   if (dialect === "kansai") {
     if (stance === "sanbo") {
-      rules.push("関西弁の参謀は“丁寧な関西弁”で統一する（例：〜でっせ／〜でっしゃろ／〜ですわ／〜してはります／〜しときなはれ／〜してもろて）。タメ口（や/で/やな/やろ/ちゃう）は極力使わない。");
+      rules.push(
+        "関西弁の参謀は“丁寧な関西弁”で統一する（例：〜でっせ／〜でっしゃろ／〜ですわ／〜してはります／〜しときなはれ／〜してもろて）。タメ口（や/で/やな/やろ/ちゃう）は極力使わない。"
+      );
       rules.push("標準語の敬語（〜です/〜ますの“標準語文体”）は禁止。丁寧語を使う場合も関西の言い回しで統一する。");
-      rules.push("丁寧語・謙譲語を積極的に使う：〜です／〜ます／〜まっせ／〜でございます（多用はせん）／恐れ入りますが／〜いただけますか／〜してもろてもよろしいですか。");
+      rules.push(
+        "丁寧語・謙譲語を積極的に使う：〜です／〜ます／〜まっせ／〜でございます（多用はせん）／恐れ入りますが／〜いただけますか／〜してもろてもよろしいですか。"
+      );
       rules.push("文末の7割以上を丁寧語で終える。『や・で』で終えるのは禁止に近い（例外はツッコミ1回まで）。");
       rules.push("語尾例：〜でっせ／〜でっしゃろ／〜ですわ／〜してはります／〜しときなはれ／〜してもろて／恐れ入りますが〜");
     } else {
@@ -195,11 +199,21 @@ function clampForContext(s: string, n: number) {
   const t = (s ?? "").replace(/\s+/g, " ").trim();
   return t.length <= n ? t : t.slice(0, n) + "…";
 }
+
 type MsgMini = { id: string; role: "user" | "assistant"; content: string; created_at: string };
 
 type Lens = "amount" | "substance" | "system";
 type StanceAD = "attack" | "defense";
 type RoleKL = "user" | "internal";
+
+// ===== Debug meta =====
+type PickedQaMeta = { id: string; title: string; priority: number; topic: string };
+type PickedLineMeta = { id: string; topic: string; lens: Lens; stance: StanceAD; priority: number; role?: RoleKL };
+type DebugMeta = {
+  picked_qa?: PickedQaMeta[];
+  picked_lines?: PickedLineMeta[];
+  borrowed_prev_topic?: boolean;
+};
 
 type DebugTrace = {
   convId: string;
@@ -217,6 +231,7 @@ type DebugTrace = {
   usedKnowledge: boolean;
   usedLinesPick: boolean;
   path: "followup_lines" | "followup_kb" | "followup_fallback" | "normal_llm";
+  meta?: DebugMeta;
 };
 
 async function writeDebugEvent(params: { db: any; trace: DebugTrace }) {
@@ -238,7 +253,7 @@ async function writeDebugEvent(params: { db: any; trace: DebugTrace }) {
       followup_explicit: trace.followupExplicit,
       line_request: trace.lineRequest,
       force_normal_answer: trace.forceNormalAnswer,
-      meta: {},
+      meta: trace.meta ?? {},
     });
   } catch (e) {
     // ログ失敗では本処理を落とさない
@@ -255,7 +270,6 @@ function emitDebug(trace: DebugTrace) {
   // 1行JSON（Vercel Logs用）
   console.log(`[chat-trace] ${JSON.stringify(trace)}`);
 }
-
 
 type KnowledgeLine = {
   id: string;
@@ -306,12 +320,14 @@ function topicShiftLikelyLite(prevUser: string | null, cur: string): boolean {
 function inferLens(message: string): Lens {
   const m = (message ?? "").trim();
 
+  // ✅ amount優先（“金額”が明示されなくてもライン/レンジ要求はamount寄せ）
   const hasMoney =
     /([0-9０-９]+)\s*(円|万円|万|千円)|¥\s*[0-9０-９]+|金額|上限|限度|相場|単価|目安|程度|レンジ|幅|ライン|いくら|いくらぐらい|どれぐらい|どれくらい|どのくらい|なんぼ|どんぐらい|くらい/.test(
       m
     );
+  const hasLineWords = /(上限|限界|どこまで|ギリ|グレー|安全ライン|レンジ|幅|アウト|セーフ|リスク|大丈夫|攻め|守り|攻守)/.test(m);
 
-  if (hasMoney) return "amount";
+  if (hasMoney || hasLineWords) return "amount";
 
   // 「書類」単体では system に倒さない（有料価値が落ちるため）
   // ただし「書類＋制度操作語」のセットは system
@@ -518,9 +534,7 @@ const TOPIC_SPECS: TopicSpec[] = [
   // ===== 退職金 =====
   {
     topic: "退職金",
-    patterns: [
-      { re: /(退職金|退職慰労金|分掌変更|退任|引退|相談役|会長|功績倍率|勤続年数)/, score: 10 },
-    ],
+    patterns: [{ re: /(退職金|退職慰労金|分掌変更|退任|引退|相談役|会長|功績倍率|勤続年数)/, score: 10 }],
   },
 
   // ===== 不動産 =====
@@ -535,48 +549,39 @@ const TOPIC_SPECS: TopicSpec[] = [
   // ===== 相続・承継 =====
   {
     topic: "相続・承継",
-    patterns: [
-      { re: /(相続|贈与|事業承継|承継|相続税|贈与税|遺言|遺産|遺留分|自社株|株価|後継者|家族会議)/, score: 10 },
-    ],
+    patterns: [{ re: /(相続|贈与|事業承継|承継|相続税|贈与税|遺言|遺産|遺留分|自社株|株価|後継者|家族会議)/, score: 10 }],
   },
 
   // ===== ラク・管理 =====
   {
     topic: "ラク・管理",
-    patterns: [
-      { re: /(横領|不正|内部統制|チェック|承認|振込|権限|丸投げ|仕組み化|ルール化|自動化)/, score: 10 },
-    ],
+    patterns: [{ re: /(横領|不正|内部統制|チェック|承認|振込|権限|丸投げ|仕組み化|ルール化|自動化)/, score: 10 }],
   },
 
   // ===== 個人資産 =====
   {
     topic: "個人資産",
-    patterns: [
-      { re: /(手取り|資産形成|投資|運用|株|インデックス|積立|NISA|iDeCo|譲渡|配当)/i, score: 10 },
-    ],
+    patterns: [{ re: /(手取り|資産形成|投資|運用|株|インデックス|積立|NISA|iDeCo|譲渡|配当)/i, score: 10 }],
   },
 
   // ===== 会社成長 =====
   {
     topic: "会社成長",
-    patterns: [
-      { re: /(成長|拡大|投資|採用|出店|多店舗|固定費|回収|スケール|借入|資金繰り)/, score: 10 },
-    ],
+    patterns: [{ re: /(成長|拡大|投資|採用|出店|多店舗|固定費|回収|スケール|借入|資金繰り)/, score: 10 }],
   },
 
-  // （育成カード側にある将来トピック：先に入れておく。DB未投入でも害なし）
   {
     topic: "家族給与・家族役員",
     patterns: [
-      { 
-  re: /(家族給与|家族に給与|家族役員|専従者|奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親|父|母|親戚|親族|パート|アルバイト)/,score: 10 },
+      {
+        re: /(家族給与|家族に給与|家族役員|専従者|奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親|父|母|親戚|親族|パート|アルバイト)/,
+        score: 10,
+      },
     ],
   },
   {
     topic: "M&A",
-    patterns: [
-      { re: /(M&A|会社売却|株式譲渡|譲渡益|デューデリ|DD|買い手|売り手|バリュエーション)/i, score: 10 },
-    ],
+    patterns: [{ re: /(M&A|会社売却|株式譲渡|譲渡益|デューデリ|DD|買い手|売り手|バリュエーション)/i, score: 10 }],
   },
 ];
 
@@ -671,7 +676,8 @@ function extractAttackDefenseFromContent(content: string): AttackDefensePick | n
   return { attack, defense, pitfall };
 }
 
-function buildFollowupAnswerFromKb(items: KnowledgeItem[]): string | null {
+// ✅ followup_kbで「どのQAが当たったか」を返す版
+function buildFollowupAnswerFromKbWithPick(items: KnowledgeItem[]): { text: string; picked: KnowledgeItem } | null {
   for (const it of items ?? []) {
     const ad = extractAttackDefenseFromContent(it.content);
     if (!ad) continue;
@@ -681,7 +687,7 @@ function buildFollowupAnswerFromKb(items: KnowledgeItem[]): string | null {
     lines.push(`🧂守り：${ad.defense}`);
     if (ad.pitfall) lines.push(`⚠️地雷メモ：${ad.pitfall}`);
 
-    return lines.join("\n").trim();
+    return { text: lines.join("\n").trim(), picked: it };
   }
   return null;
 }
@@ -784,8 +790,8 @@ async function buildConversationContext(params: { db: any; convId: string }): Pr
 }
 
 function hasThreePatterns(answer: string): boolean {
-  const hasAttack = answer.includes("🍚");
-  const hasDefense = answer.includes("🧂守り") || answer.includes("🧂🥄") || answer.includes("🧂 守り");
+  const hasAttack = answer.includes("🍚攻め");
+  const hasDefense = answer.includes("🧂守り") || answer.includes("🧂 守り");
   return hasAttack && hasDefense;
 }
 
@@ -799,16 +805,16 @@ function isCatchphraseLine(line: string): boolean {
 
 function hasAttackOrDefense(answer: string): boolean {
   const hasAttack = answer.includes("🍚");
-  const hasDefense = answer.includes("🧂守り") || answer.includes("🧂🥄") || answer.includes("🧂 守り");
+  const hasDefense = answer.includes("🧂守り") || answer.includes("🧂 守り");
   return hasAttack || hasDefense;
 }
 
-function extractSection(answer: string, head: "🧂" | "✅" | "⚠️" | "🔎"): string[] {
+function extractSection(answer: string, head: "🥄" | "✅" | "⚠️" | "🔎"): string[] {
   const lines = answer.replace(/\r\n/g, "\n").split("\n");
   const out: string[] = [];
   let inSec = false;
 
-  const markers = ["🧂", "✅", "⚠️", "🔎", "🍚"];
+  const markers = ["🥄", "✅", "⚠️", "🔎", "🍚", "🧂"];
 
   for (const line of lines) {
     const t = line.trimStart();
@@ -829,9 +835,9 @@ function extractSection(answer: string, head: "🧂" | "✅" | "⚠️" | "🔎"
   return out;
 }
 
-function ensureSaltBold(secSalt: string[]): string[] {
-  if (secSalt.length === 0) return secSalt;
-  const out = [...secSalt];
+function ensureLineBold(secLine: string[]): string[] {
+  if (secLine.length === 0) return secLine;
+  const out = [...secLine];
 
   if (out.some((l) => l.includes("**"))) return out;
 
@@ -877,14 +883,15 @@ function enforceTemplate(answer: string): string {
   const a = answer.replace(/\r\n/g, "\n").trim();
   if (!a) return a;
 
+  // 🍚/🧂が混ざる時はテンプレ強制しない（followup系や決めゼリフ）
   if (hasAttackOrDefense(a)) return a;
 
-  const salt = ensureSaltBold(extractSection(a, "🧂"));
+  const secLine = ensureLineBold(extractSection(a, "🥄"));
   const key = extractSection(a, "✅");
   const warn = extractSection(a, "⚠️");
   const ask = extractSection(a, "🔎");
 
-  if (salt.length === 0 || key.length === 0) return a;
+  if (secLine.length === 0 || key.length === 0) return a;
 
   let askFixed = ask;
   if (askFixed.length > 0) {
@@ -902,7 +909,7 @@ function enforceTemplate(answer: string): string {
   }
 
   const parts: string[] = [];
-  parts.push(...salt, "");
+  parts.push(...secLine, "");
   parts.push(...key);
 
   if (warn.length > 0) parts.push("", ...warn);
@@ -943,12 +950,9 @@ function forceCasual(text: string, dialect: Dialect): string {
 }
 
 function inquiryLine(dialect: Dialect, stance: Stance): string {
-  if (dialect === "standard" && stance === "sanbo")
-    return "🔎確認 税務・経営前提で回答しました。前提が違う場合はお知らせください。";
-  if (dialect === "standard" && stance === "zubatto")
-    return "🔎確認 税務・経営前提で答えた。前提が違うなら言って。";
-  if (dialect === "kansai" && stance === "sanbo")
-    return "🔎確認 税務・経営前提でお答えしましたで。前提が違うなら言うてくださいな。";
+  if (dialect === "standard" && stance === "sanbo") return "🔎確認 税務・経営前提で回答しました。前提が違う場合はお知らせください。";
+  if (dialect === "standard" && stance === "zubatto") return "🔎確認 税務・経営前提で答えた。前提が違うなら言って。";
+  if (dialect === "kansai" && stance === "sanbo") return "🔎確認 税務・経営前提でお答えしましたで。前提が違うなら言うてくださいな。";
   return "🔎確認 税務・経営前提で答えたで。前提が違うなら言うてな。";
 }
 
@@ -974,7 +978,7 @@ function stripInternalLeaks(text: string): string {
   s = out.join("\n").trim();
 
   // 空になったら最小の保険（破綻防止）
-  if (!s) s = "🧂ちょうど良いライン：**一般論で整理する**。必要なら条件を揃えて深掘りする。";
+  if (!s) s = "🥄ちょうど良いライン：**一般論で整理する**。必要なら条件を揃えて深掘りする。";
   return s;
 }
 
@@ -984,100 +988,103 @@ function postProcessAnswer(
   stance: Stance,
   opts: { usedKnowledge: boolean; allowAttackDefenseDetail: boolean; inquiryOverride?: string | null }
 ): string {
-  const { usedKnowledge, allowAttackDefenseDetail } = opts;
+  const usedKnowledge = opts.usedKnowledge;
+  const allowAttackDefenseDetail = opts.allowAttackDefenseDetail;
+  const inquiryOverride = (opts.inquiryOverride ?? "").trim();
 
   let a = String(raw ?? "").replace(/\r\n/g, "\n").trim();
 
+  // 「(最大〜)」みたいな断定臭い括弧は消す
   a = a.replace(/[\(（]最大[^)）]*[\)）]/g, "");
 
-  {
-  const override = (opts.inquiryOverride ?? "").trim();
-  const lines = a.split("\n");
-  const out: string[] = [];
-  let replaced = false;
-
-  for (const line of lines) {
-    const t = line.trimStart();
-    if (!t.startsWith("🔎")) {
-      out.push(line);
-      continue;
-    }
-    out.push(override ? override : inquiryLine(dialect, stance));
-    replaced = true;
-  }
-
-  // 🔎が元の回答に無い時でも、overrideがあれば末尾に1行だけ足す
-  if (!replaced && override) out.push(override);
-
-  a = out.join("\n").trim();
-}
-
+  // 🍚🧂が“両方”ある＝深掘りモードの完成形：決めゼリフだけ落とす
   if (hasThreePatterns(a)) {
     const lines = a.split("\n");
     const out = lines.filter((line) => !isCatchphraseLine(line));
-    a = out.join("\n").trim();
-    return stripInternalLeaks(a);
+    return stripInternalLeaks(out.join("\n").trim());
   }
 
+  // 通常テンプレ整形（🍚/🧂が混ざる場合は enforceTemplate が素通り）
   a = enforceTemplate(a);
 
+  // 初回は🍚🧂ブロック禁止（出ちゃったら落とす）
   if (!allowAttackDefenseDetail) {
-    const lines2 = a.split("\n");
-    const out: string[] = [];
-    for (const line of lines2) {
-      const t = line.trimStart();
-      if (t.startsWith("🍚攻め") || t.startsWith("🧂守り")) continue;
-      out.push(line);
-    }
-    a = out.join("\n").trim();
-  } else {
-    const lines2 = a.split("\n");
-    const out = lines2.filter((line) => !line.trimStart().startsWith("🥄"));
-    a = out.join("\n").trim();
-  }
-
-  const lines = a.split("\n");
-  const already = lines.some((line) => isCatchphraseLine(line));
-  if (usedKnowledge && !allowAttackDefenseDetail && !already) {
-    a = `${a}\n\n${catchphraseFor(dialect, stance)}`.trim();
-  }
-
-  {
-    const lines = a.split("\n");
-    a = lines
-      .map((line) => {
-        if (!line.trimStart().startsWith("🔎")) return line;
-        return line.replace(/[（(]\s*はい\s*\/\s*いいえ\s*[)）]/g, "").trimEnd();
+    a = a
+      .split("\n")
+      .filter((line) => {
+        const t = line.trimStart();
+        if (t.startsWith("🍚攻め") || t.startsWith("🧂守り")) return false;
+        return true;
       })
+      .join("\n")
+      .trim();
+  } else {
+    // 深掘りでは🥄ブロックは繰り返し扱いになりがちなので落とす
+    a = a
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("🥄"))
       .join("\n")
       .trim();
   }
 
+  // usedKnowledge かつ 初回なら決めゼリフを足す（既に入ってるなら足さない）
+  const alreadyCatch = a.split("\n").some((line) => isCatchphraseLine(line));
+  if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch) {
+    a = `${a}\n\n${catchphraseFor(dialect, stance)}`.trim();
+  }
+
+  // 🔎から(はい/いいえ)を消す
+  a = a
+    .split("\n")
+    .map((line) => {
+      if (!line.trimStart().startsWith("🔎")) return line;
+      return line.replace(/[（(]\s*はい\s*\/\s*いいえ\s*[)）]/g, "").trimEnd();
+    })
+    .join("\n")
+    .trim();
+
+  // 🔎は override があればそれを優先。無ければ標準の確認文。
+  const desiredInquiry = inquiryOverride ? inquiryOverride : inquiryLine(dialect, stance);
+
+  // 既存の🔎行を置換し、複数あれば1つにする。override があり、🔎が無ければ末尾に足す。
   {
     const lines = a.split("\n");
     const out: string[] = [];
+    let placed = false;
+
     for (const line of lines) {
       const t = line.trimStart();
       if (!t.startsWith("🔎")) {
         out.push(line);
         continue;
       }
-      out.push(inquiryLine(dialect, stance));
+      if (placed) continue;
+      out.push(desiredInquiry);
+      placed = true;
     }
+
+    if (!placed && inquiryOverride) {
+      if (out.length > 0 && out[out.length - 1].trim()) out.push("");
+      out.push(desiredInquiry);
+    }
+
     a = out.join("\n").trim();
   }
 
+  // 口調変換（最後にやる）
   if (stance === "zubatto") a = forceCasual(a, dialect);
 
+  // 🔎は1つだけ＆末尾に固定
   {
-    const lines2 = a.split("\n");
-    const askLines = lines2.filter((l) => l.trimStart().startsWith("🔎"));
-    if (askLines.length > 0) {
-      const rest = lines2.filter((l) => !l.trimStart().startsWith("🔎"));
-      a = [...rest, askLines[0]].join("\n").trim();
+    const lines = a.split("\n");
+    const inquiryLines = lines.filter((l) => l.trimStart().startsWith("🔎"));
+    if (inquiryLines.length > 0) {
+      const rest = lines.filter((l) => !l.trimStart().startsWith("🔎"));
+      a = [...rest, inquiryLines[0]].join("\n").trim();
     }
   }
 
+  // 変な残骸を消す
   a = a.replace(/^返事いらんメモ[:：].*$/gm, "").trim();
 
   return stripInternalLeaks(a);
@@ -1108,7 +1115,6 @@ async function generateAnswerStrict(params: {
             "書き直し後も禁止表現が1つでも含まれてたら不合格。",
           ];
 
-          
     const promptParts: PromptParts = {
       ...promptPartsBase,
       injectedRules: [...(promptPartsBase.injectedRules ?? []), ...extra],
@@ -1117,10 +1123,10 @@ async function generateAnswerStrict(params: {
     const result = await generateAnswer({ message, promptParts });
 
     last = postProcessAnswer(result.answer, dialect, stance, {
-  usedKnowledge: params.usedKnowledge,
-  allowAttackDefenseDetail: params.allowAttackDefenseDetail,
-  inquiryOverride: params.inquiryOverride ?? null,
-});
+      usedKnowledge: params.usedKnowledge,
+      allowAttackDefenseDetail: params.allowAttackDefenseDetail,
+      inquiryOverride: params.inquiryOverride ?? null,
+    });
 
     if (!forbidden) return last;
 
@@ -1130,6 +1136,40 @@ async function generateAnswerStrict(params: {
 
   if (stance === "zubatto") return forceCasual(last, dialect);
   return last;
+}
+
+// ===== meta builders =====
+function buildPickedQaMeta(items: KnowledgeItem[], limit = 3): PickedQaMeta[] {
+  const rows = (items ?? [])
+    .filter((it) => it.kind === "qa")
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+    .slice(0, Math.max(0, Math.min(10, limit)));
+  return rows.map((it) => ({ id: it.id, title: it.title, priority: it.priority, topic: it.topic }));
+}
+
+function buildPickedLinesMeta(picked: { attack: KnowledgeLine | null; defense: KnowledgeLine | null }): PickedLineMeta[] {
+  const out: PickedLineMeta[] = [];
+  if (picked.attack) {
+    out.push({
+      id: picked.attack.id,
+      topic: picked.attack.topic,
+      lens: picked.attack.lens,
+      stance: picked.attack.stance,
+      priority: picked.attack.priority,
+      role: picked.attack.role,
+    });
+  }
+  if (picked.defense) {
+    out.push({
+      id: picked.defense.id,
+      topic: picked.defense.topic,
+      lens: picked.defense.lens,
+      stance: picked.defense.stance,
+      priority: picked.defense.priority,
+      role: picked.defense.role,
+    });
+  }
+  return out.slice(0, 3);
 }
 
 export async function POST(req: Request) {
@@ -1214,193 +1254,214 @@ export async function POST(req: Request) {
     });
 
     let answer = "";
-try {
-  const prevUserMessage = await (async () => {
-    const { data: prevRows } = await db
-      .from("messages")
-      .select("content")
-      .eq("conversation_id", convId)
-      .eq("role", "user")
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(2);
 
-    return prevRows?.[1]?.content ?? prevRows?.[0]?.content ?? null;
-  })();
+    try {
+      const prevUserMessage = await (async () => {
+        const { data: prevRows } = await db
+          .from("messages")
+          .select("content")
+          .eq("conversation_id", convId)
+          .eq("role", "user")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .limit(2);
 
-  const prevAssistantMessage = await (async () => {
-    const { data: prevRows } = await db
-      .from("messages")
-      .select("content")
-      .eq("conversation_id", convId)
-      .eq("role", "assistant")
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(1);
+        return prevRows?.[1]?.content ?? prevRows?.[0]?.content ?? null;
+      })();
 
-    return prevRows?.[0]?.content ?? null;
-  })();
+      const prevAssistantMessage = await (async () => {
+        const { data: prevRows } = await db
+          .from("messages")
+          .select("content")
+          .eq("conversation_id", convId)
+          .eq("role", "assistant")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .limit(1);
 
-  const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
-  const followupPhase = isInFollowupPhase(prevAssistantMessage);
-  const lineRequest = isLineRequest(message);
-  const shifted = topicShiftLikelyLite(prevUserMessage, message);
+        return prevRows?.[0]?.content ?? null;
+      })();
 
-  const followup = followupExplicit || lineRequest || (followupPhase && !shifted);
-  const forceNormalAnswer = followupPhase && !followupExplicit && !lineRequest;
+      const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
+      const followupPhase = isInFollowupPhase(prevAssistantMessage);
+      const lineRequest = isLineRequest(message);
+      const shifted = topicShiftLikelyLite(prevUserMessage, message);
 
-  const globalRules = await retrieveGlobalRules({ db });
+      const followup = followupExplicit || lineRequest || (followupPhase && !shifted);
+      const forceNormalAnswer = followupPhase && !followupExplicit && !lineRequest;
 
-  // ★ ここから topic/lens の確定と、経路ログ用の変数
-  const topicsNow = inferTopics(message, { max: 3 });
+      const globalRules = await retrieveGlobalRules({ db });
 
-  // lens は followup/normal 共通で使うので先に確定
-  const lens: Lens = inferLens(isFollowupOnlyText(message) && prevUserMessage ? prevUserMessage : message);
+      // ★ ここから topic/lens の確定と、経路ログ用の変数
+      const topicsNow = inferTopics(message, { max: 3 });
 
-  let topicKbItems = await retrieveKnowledge({ db, message });
+      // lens は followup/normal 共通で使うので先に確定
+      const lens: Lens = inferLens(isFollowupOnlyText(message) && prevUserMessage ? prevUserMessage : message);
 
-  // followupでも、今メッセージでtopicが取れてるなら「前のtopic借り」はしない。
-  // 借りるのは「よろ」「続き」「もう少し」みたいな短文追撃だけに限定。
-  const shouldBorrowPrevTopic =
-    followup &&
-    topicKbItems.length === 0 &&
-    topicsNow.length === 0 &&
-    !shifted &&
-    Boolean(prevUserMessage) &&
-    (isFollowupOnlyText(message) || message.trim().length <= 6);
+      let topicKbItems = await retrieveKnowledge({ db, message });
 
-  if (shouldBorrowPrevTopic && prevUserMessage) {
-    topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
-  }
+      // followupでも、今メッセージでtopicが取れてるなら「前のtopic借り」はしない。
+      // 借りるのは「よろ」「続き」「もう少し」みたいな短文追撃だけに限定。
+      const shouldBorrowPrevTopic =
+        followup &&
+        topicKbItems.length === 0 &&
+        topicsNow.length === 0 &&
+        !shifted &&
+        Boolean(prevUserMessage) &&
+        (isFollowupOnlyText(message) || message.trim().length <= 6);
 
-  // ★ デバッグ用の経路トラッキング
-  let usedLinesPick = false;
-  let path: DebugTrace["path"] = "normal_llm";
-
-  // followup経路で使う topic（ログにも使う）
-  const inferredTopicForFollowup =
-    topicsNow[0] ??
-    (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
-    (topicKbItems?.[0]?.topic ?? null) ??
-    "";
-
-  if (followup && !forceNormalAnswer) {
-    const header = "判断の軸だけ整理するで。";
-    const footer = "※ 税務調査は「形式より実態」「一貫性」を見られる。";
-
-    const topic = inferredTopicForFollowup;
-
-    if (topic) {
-      let built: string | null = null;
-
-      const picked = await retrieveKnowledgeLines({ db, topic, lens });
-      built = buildFollowupAnswerFromLines(picked);
-      if (built) {
-        usedLinesPick = true;
-        path = "followup_lines";
+      if (shouldBorrowPrevTopic && prevUserMessage) {
+        topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
       }
 
-      if (!built) {
-        built = buildFollowupAnswerFromKb(topicKbItems);
-        if (built) path = "followup_kb";
+      // ✅ meta をここで作る（P0）
+      const meta: DebugMeta = {
+        picked_qa: buildPickedQaMeta(topicKbItems, 3),
+        picked_lines: [],
+        borrowed_prev_topic: shouldBorrowPrevTopic,
+      };
+
+      // ★ デバッグ用の経路トラッキング
+      let usedLinesPick = false;
+      let path: DebugTrace["path"] = "normal_llm";
+
+      // followup経路で使う topic（ログにも使う）
+      const inferredTopicForFollowup =
+        topicsNow[0] ??
+        (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
+        (topicKbItems?.[0]?.topic ?? null) ??
+        "";
+
+      if (followup && !forceNormalAnswer) {
+        const header = "判断の軸だけ整理するで。";
+        const footer = "※ 税務調査は「形式より実態」「一貫性」を見られる。";
+
+        const topic = inferredTopicForFollowup;
+
+        if (topic) {
+          let built: string | null = null;
+
+          const picked = await retrieveKnowledgeLines({ db, topic, lens });
+          built = buildFollowupAnswerFromLines(picked);
+          if (built) {
+            usedLinesPick = true;
+            path = "followup_lines";
+            meta.picked_lines = buildPickedLinesMeta(picked);
+          }
+
+          if (!built) {
+            const hit = buildFollowupAnswerFromKbWithPick(topicKbItems);
+            if (hit) {
+              built = hit.text;
+              path = "followup_kb";
+              meta.picked_qa = hit.picked.kind === "qa" ? [{ id: hit.picked.id, title: hit.picked.title, priority: hit.picked.priority, topic: hit.picked.topic }] : [];
+            }
+          }
+
+          if (!built) {
+            const fb = fallbackAttackDefense(topic, lens);
+            built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
+            path = "followup_fallback";
+          }
+
+          answer = `${header}\n\n${built}\n\n${footer}`.trim();
+        }
       }
 
-      if (!built) {
-        const fb = fallbackAttackDefense(topic, lens);
-        built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
-        path = "followup_fallback";
+      // B) topic未確定の時だけ、🔎を「topic確認」に差し替える（YES/NOでは聞かない）
+      const needTopicClarify = topicsNow.length === 0 && topicKbItems.length === 0;
+
+      const inquiryOverride = needTopicClarify
+        ? "🔎確認 どの話の相談かだけ教えて（例：交際費/出張手当/外注/家事按分/福利厚生/役員報酬/車両/消費税/税務調査/退職金/不動産/相続・承継）。"
+        : null;
+
+      if (!answer) {
+        const usedKnowledge = topicKbItems.length > 0;
+        const allowAttackDefenseDetail = followup;
+
+        const kbGlobalBlock = formatKnowledgeBlock(globalRules);
+        const kbTopicBlock = formatKnowledgeBlock(topicKbItems);
+
+        const outputRules = buildOutputRules({ allowAttackDefenseDetail });
+        const ambiguityBoost = buildAmbiguityBoostRules(message);
+        const styleRules = buildStyleRules(dialect, stance);
+        const contextLines = await buildConversationContext({ db, convId });
+
+        // ✅ systemでも実態バイアス
+        const systemBias =
+          lens === "system"
+            ? ["重要：制度（規程/届出/要件）の説明だけで終わらず、最初に『実態の地雷（運用のズレ）』を1つ提示してから制度の話に入る。ネットの一般論の羅列は禁止。"]
+            : [];
+
+        // ✅ amountは積極的に（ただし断定しない）
+        const amountBias =
+          lens === "amount"
+            ? [
+                allowAttackDefenseDetail
+                  ? "重要：金額/レンジの相談。🍚攻め・🧂守りの各行に、条件付きの目安レンジ（例：〜円〜〜円）を必ず入れる。断定しない。"
+                  : "重要：金額/レンジの相談。🥄ちょうど良いラインの中で『守り寄りの目安』『攻め寄りの目安』を2行で必ず出す。🍚攻め/🧂守りは初回は出さない。断定しない。",
+              ]
+            : [];
+
+        const promptPartsBase: PromptParts = {
+          context: contextLines,
+          injectedRules: [
+            ...outputRules,
+            ...amountBias,
+            ...systemBias,
+            ...ambiguityBoost,
+            ...styleRules,
+            ...(kbGlobalBlock ? [kbGlobalBlock] : []),
+            ...(kbTopicBlock ? [kbTopicBlock] : []),
+          ],
+          guardrails: gr.action === "inject" ? gr.guardrailLines : [],
+        };
+
+        answer = await generateAnswerStrict({
+          message,
+          promptPartsBase,
+          dialect,
+          stance,
+          usedKnowledge,
+          allowAttackDefenseDetail,
+          inquiryOverride,
+        });
+
+        path = "normal_llm";
       }
 
-      answer = `${header}\n\n${built}\n\n${footer}`.trim();
+      // 最終安全弁
+      answer = stripInternalLeaks(answer);
+
+      // ✅ topic推定結果をログに吐く（Vercel Logs + DB）
+      {
+        const trace: DebugTrace = {
+          convId,
+          userId: user.id,
+          messageHead: dbgHead(message, 120),
+          topicsNow,
+          inferredTopic: inferredTopicForFollowup || "",
+          lens,
+          followupExplicit,
+          followupPhase,
+          lineRequest,
+          shifted,
+          followup,
+          forceNormalAnswer,
+          usedKnowledge: topicKbItems.length > 0,
+          usedLinesPick,
+          path,
+          meta,
+        };
+
+        emitDebug(trace); // Vercel Logs
+        await writeDebugEvent({ db, trace }); // DB保存
+      }
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes, {
+        status: 502,
+      });
     }
-  }
-
-  // B) topic未確定の時だけ、🔎を「topic確認」に差し替える（YES/NOでは聞かない）
-const needTopicClarify = topicsNow.length === 0 && topicKbItems.length === 0;
-
-const inquiryOverride = needTopicClarify
-  ? "🔎確認 どの話の相談かだけ教えて（例：交際費/出張手当/外注/家事按分/福利厚生/役員報酬/車両/消費税/税務調査/退職金/不動産/相続・承継）。"
-  : null;
-
-  if (!answer) {
-  const usedKnowledge = topicKbItems.length > 0;
-  const allowAttackDefenseDetail = followup;
-
-  const kbGlobalBlock = formatKnowledgeBlock(globalRules);
-  const kbTopicBlock = formatKnowledgeBlock(topicKbItems);
-
-  const outputRules = buildOutputRules({ allowAttackDefenseDetail });
-  const ambiguityBoost = buildAmbiguityBoostRules(message);
-  const styleRules = buildStyleRules(dialect, stance);
-  const contextLines = await buildConversationContext({ db, convId });
-
-  // ✅ C) systemでも実態バイアス（ここでlensが見える）
-  const systemBias =
-    lens === "system"
-      ? [
-          "重要：制度（規程/届出/要件）の説明だけで終わらず、最初に『実態の地雷（運用のズレ）』を1つ提示してから制度の話に入る。ネットの一般論の羅列は禁止。",
-        ]
-      : [];
-
-  const promptPartsBase: PromptParts = {
-    context: contextLines,
-    injectedRules: [
-      ...outputRules,
-      ...systemBias,        // ←ここに入れる
-      ...ambiguityBoost,
-      ...styleRules,
-      ...(kbGlobalBlock ? [kbGlobalBlock] : []),
-      ...(kbTopicBlock ? [kbTopicBlock] : []),
-    ],
-    guardrails: gr.action === "inject" ? gr.guardrailLines : [],
-  };
-
-  answer = await generateAnswerStrict({
-    message,
-    promptPartsBase,
-    dialect,
-    stance,
-    usedKnowledge,
-    allowAttackDefenseDetail,
-    inquiryOverride, // Bで作ったやつ（ある場合）
-  });
-
-  path = "normal_llm";
-}
-
-
-  // ✅ 最終安全弁（どの経路でも internal 語彙を落とす）
-  answer = stripInternalLeaks(answer);
-
-  // ✅ topic推定結果をログに吐く（Vercel Logs + DB）
-{
-  const trace: DebugTrace = {
-    convId,
-    userId: user.id,
-    messageHead: dbgHead(message, 120),
-    topicsNow,
-    inferredTopic: inferredTopicForFollowup || "",
-    lens,
-    followupExplicit,
-    followupPhase,
-    lineRequest,
-    shifted,
-    followup,
-    forceNormalAnswer,
-    usedKnowledge: topicKbItems.length > 0,
-    usedLinesPick,
-    path,
-  };
-
-  emitDebug(trace);                 // Vercel Logs
-  await writeDebugEvent({ db, trace }); // DB保存
-}
-} catch (e: any) {
-  return NextResponse.json({ ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes, {
-    status: 502,
-  });
-}
-
 
     const { data, error } = await db.rpc("consume_talk_v2", {
       p_user_id: user.id,

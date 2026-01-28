@@ -19,9 +19,7 @@ export type GenerateAnswerResult = {
   answer: string;
 };
 
-export async function generateAnswer(
-  input: GenerateAnswerInput
-): Promise<GenerateAnswerResult> {
+export async function generateAnswer(input: GenerateAnswerInput): Promise<GenerateAnswerResult> {
   const openai = new OpenAI({
     apiKey: mustEnv("OPENAI_API_KEY"),
   });
@@ -37,10 +35,7 @@ export async function generateAnswer(
   });
 
   const answer = (ai.output_text && ai.output_text.trim()) || "";
-
-  if (!answer) {
-    throw new Error("AI returned empty response");
-  }
+  if (!answer) throw new Error("AI returned empty response");
 
   return { answer };
 }

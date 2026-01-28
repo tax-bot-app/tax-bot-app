@@ -37,8 +37,40 @@ type ApiRowLinesRes = { ok: true; row: LineRow } | { ok: false; error: string };
 type ApiListQaRes = { ok: true; rows: QaRow[] } | { ok: false; error: string };
 type ApiRowQaRes = { ok: true; row: QaRow } | { ok: false; error: string };
 
+// ===== Debug logs =====
+type DebugPath = "followup_lines" | "followup_kb" | "followup_fallback" | "normal_llm";
+type PickedQaMeta = { id: string; title: string; priority: number; topic: string };
+type PickedLineMeta = { id: string; topic: string; lens: Lens; stance: Stance; priority: number; role?: Role };
+type DebugMeta = {
+  picked_qa?: PickedQaMeta[];
+  picked_lines?: PickedLineMeta[];
+  borrowed_prev_topic?: boolean;
+  [k: string]: any;
+};
+type DebugRow = {
+  id: string;
+  created_at: string;
+  user_id: string;
+  conversation_id: string | null;
+  message_head: string;
+  topics_now: string[];
+  inferred_topic: string;
+  lens: Lens;
+  followup: boolean;
+  shifted: boolean;
+  path: DebugPath;
+  used_knowledge: boolean;
+  used_lines_pick: boolean;
+  followup_phase: boolean;
+  followup_explicit: boolean;
+  line_request: boolean;
+  force_normal_answer: boolean;
+  meta: DebugMeta;
+};
+type ApiListDebugRes = { ok: true; rows: DebugRow[] } | { ok: false; error: string };
+
 function uniq(xs: string[]) {
-  return Array.from(new Set(xs)).sort((a, b) => a.localeCompare(b, "ja"));
+  return Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, "ja"));
 }
 
 function TabButton(props: { active: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -62,31 +94,27 @@ function TabButton(props: { active: boolean; onClick: () => void; children: Reac
 // ★ 横スクロール用の共通ラッパー（スマホ/PC共通）
 function TableScroller(props: { children: React.ReactNode }) {
   return (
-    <div
-      style={{
-        border: "1px solid #ddd",
-        borderRadius: 8,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          overflowX: "auto",
-          overflowY: "hidden",
-          WebkitOverflowScrolling: "touch",
-          maxWidth: "100%",
-        }}
-      >
-        {/* テーブルが縮まないように minWidth を確保 */}
+    <div style={{ border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", maxWidth: "100%" }}>
         <div style={{ minWidth: 980 }}>{props.children}</div>
       </div>
     </div>
   );
 }
 
+function Chip(props: { label: string; tone?: "ok" | "ng" | "muted" }) {
+  const tone = props.tone ?? "muted";
+  const bg = tone === "ok" ? "#f6fff6" : tone === "ng" ? "#fff6f6" : "#f6f6f6";
+  return (
+    <span style={{ padding: "2px 8px", borderRadius: 999, border: "1px solid #ddd", background: bg, whiteSpace: "nowrap" }}>
+      {props.label}
+    </span>
+  );
+}
+
 export default function KnowledgeLinesClient() {
   const supabase = useMemo(() => getSupabaseClient(), []);
-  const [tab, setTab] = useState<"lines" | "qa">("lines");
+  const [tab, setTab] = useState<"lines" | "qa" | "debug">("lines");
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -369,18 +397,67 @@ export default function KnowledgeLinesClient() {
   }
 
   // =========================
+  // Debug tab state
+  // =========================
+  const [debugRows, setDebugRows] = useState<DebugRow[]>([]);
+  const [dTopic, setDTopic] = useState("");
+  const [dLens, setDLens] = useState("");
+  const [dPath, setDPath] = useState("");
+  const [dUsedKnowledge, setDUsedKnowledge] = useState(""); // "", "true", "false"
+  const [dUsedLinesPick, setDUsedLinesPick] = useState(""); // "", "true", "false"
+  const [dQuery, setDQuery] = useState("");
+  const [dLimit, setDLimit] = useState(50);
+  const [debugOpen, setDebugOpen] = useState<DebugRow | null>(null);
+
+  const debugTopics = useMemo(() => uniq(debugRows.map((r) => r.inferred_topic)), [debugRows]);
+  const allTopicsForDebug = useMemo(() => uniq([...lineTopics, ...qaTopics, ...debugTopics]), [lineTopics, qaTopics, debugTopics]);
+
+  async function loadDebug() {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const qs = new URLSearchParams();
+      qs.set("limit", String(Math.max(1, Math.min(200, dLimit || 50))));
+      if (dTopic) qs.set("topic", dTopic);
+      if (dLens) qs.set("lens", dLens);
+      if (dPath) qs.set("path", dPath);
+      if (dUsedKnowledge) qs.set("used_knowledge", dUsedKnowledge);
+      if (dUsedLinesPick) qs.set("used_lines_pick", dUsedLinesPick);
+      if (dQuery.trim()) qs.set("q", dQuery.trim());
+
+      const res = await apiFetch(`/api/admin/chat-debug?${qs.toString()}`);
+      const json = (await res.json()) as ApiListDebugRes;
+      if (!json.ok) throw new Error(json.error);
+      setDebugRows(json.rows);
+    } catch (e: any) {
+      setMsg(e?.message ?? "load failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab !== "debug") return;
+    loadDebug();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, dTopic, dLens, dPath, dUsedKnowledge, dUsedLinesPick, dQuery, dLimit]);
+
+  // =========================
   // render
   // =========================
   return (
     <div style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <h1 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Knowledge Admin</h1>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <TabButton active={tab === "lines"} onClick={() => setTab("lines")}>
             Lines
           </TabButton>
           <TabButton active={tab === "qa"} onClick={() => setTab("qa")}>
             QA
+          </TabButton>
+          <TabButton active={tab === "debug"} onClick={() => setTab("debug")}>
+            Debug Logs
           </TabButton>
         </div>
       </div>
@@ -388,6 +465,7 @@ export default function KnowledgeLinesClient() {
       {msg && <div style={{ marginBottom: 10, color: "crimson" }}>{msg}</div>}
       {loading && <div style={{ marginBottom: 10 }}>loading...</div>}
 
+      {/* ===== Lines tab ===== */}
       {tab === "lines" && (
         <>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -470,16 +548,7 @@ export default function KnowledgeLinesClient() {
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.lens}</td>
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.stance}</td>
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>
-                      <span
-                        style={{
-                          padding: "2px 8px",
-                          borderRadius: 999,
-                          border: "1px solid #ddd",
-                          background: r.role === "user" ? "#f6fff6" : "#fff6f6",
-                        }}
-                      >
-                        {r.role}
-                      </span>
+                      <Chip label={r.role} tone={r.role === "user" ? "ok" : "ng"} />
                     </td>
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.priority}</td>
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>{String(r.is_active)}</td>
@@ -512,6 +581,7 @@ export default function KnowledgeLinesClient() {
                 alignItems: "center",
                 justifyContent: "center",
                 padding: 16,
+                zIndex: 9999,
               }}
               onClick={() => setEditingLine(null)}
             >
@@ -624,201 +694,402 @@ export default function KnowledgeLinesClient() {
         </>
       )}
 
-     {tab === "qa" && (
-  <>
-    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-      <label>
-        topic&nbsp;
-        <select value={qTopic} onChange={(e) => setQTopic(e.target.value)}>
-          <option value="">(all)</option>
-          {qaTopics.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label>
-        active&nbsp;
-        <select value={qActive} onChange={(e) => setQActive(e.target.value)}>
-          <option value="">(all)</option>
-          <option value="true">true</option>
-          <option value="false">false</option>
-        </select>
-      </label>
-
-      <label>
-        search&nbsp;
-        <input value={qQuery} onChange={(e) => setQQuery(e.target.value)} placeholder="title / content" />
-      </label>
-
-      <button onClick={startNewQa} disabled={loading} style={{ padding: "6px 10px" }}>
-        ＋ 新規
-      </button>
-
-      <button onClick={loadQa} disabled={loading} style={{ padding: "6px 10px" }}>
-        再読込
-      </button>
-    </div>
-
-    <TableScroller>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ background: "#f6f6f6" }}>
-            <th style={{ textAlign: "left", padding: 8 }}>topic</th>
-            <th style={{ textAlign: "left", padding: 8 }}>priority</th>
-            <th style={{ textAlign: "left", padding: 8 }}>active</th>
-            <th style={{ textAlign: "left", padding: 8 }}>title</th>
-            <th style={{ textAlign: "left", padding: 8 }}>content</th>
-            <th style={{ padding: 8 }} />
-          </tr>
-        </thead>
-        <tbody>
-          {qaRows.map((r) => (
-            <tr key={r.id} style={{ borderTop: "1px solid #eee" }}>
-              <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.topic}</td>
-              <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.priority}</td>
-              <td style={{ padding: 8, whiteSpace: "nowrap" }}>{String(r.is_active)}</td>
-              <td style={{ padding: 8, fontWeight: 700 }}>{r.title}</td>
-              <td style={{ padding: 8 }}>
-                <div
-                  style={{
-                    display: "-webkit-box",
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: "vertical",
-                    overflow: "hidden",
-                  }}
-                >
-                  {r.content}
-                </div>
-              </td>
-              <td style={{ padding: 8, whiteSpace: "nowrap" }}>
-                <button onClick={() => startEditQa(r)} style={{ padding: "4px 8px" }}>
-                  編集
-                </button>
-              </td>
-            </tr>
-          ))}
-          {qaRows.length === 0 && (
-            <tr>
-              <td colSpan={6} style={{ padding: 12, color: "#666" }}>
-                No rows
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </TableScroller>
-
-    {qaEditing && (
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(0,0,0,0.35)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 16,
-          zIndex: 9999,
-        }}
-        onClick={() => setQaEditing(null)}
-      >
-        <div
-          style={{
-            width: "min(980px, 100%)",
-            height: "min(92vh, 900px)",
-            background: "white",
-            borderRadius: 12,
-            padding: 14,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <div style={{ fontWeight: 700 }}>{isNewQa ? "QA 新規作成" : "QA 編集"}</div>
-            <button onClick={() => setQaEditing(null)}>×</button>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: 10, marginBottom: 10 }}>
+      {/* ===== QA tab ===== */}
+      {tab === "qa" && (
+        <>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
             <label>
-              topic
-              <input
-                value={qaEditing.topic}
-                onChange={(e) => setQaEditing({ ...qaEditing, topic: e.target.value })}
-                style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
-              />
+              topic&nbsp;
+              <select value={qTopic} onChange={(e) => setQTopic(e.target.value)}>
+                <option value="">(all)</option>
+                {qaTopics.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label>
-  title
-  <textarea
-    value={qaEditing.title}
-    onChange={(e) => setQaEditing({ ...qaEditing, title: e.target.value })}
-    rows={2}
-    style={{
-      width: "100%",
-      fontSize: 16,
-      lineHeight: 1.4,
-      padding: "8px 10px",
-      resize: "vertical",
-    }}
-  />
-</label>
+              active&nbsp;
+              <select value={qActive} onChange={(e) => setQActive(e.target.value)}>
+                <option value="">(all)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
 
             <label>
-              priority
+              search&nbsp;
+              <input value={qQuery} onChange={(e) => setQQuery(e.target.value)} placeholder="title / content" />
+            </label>
+
+            <button onClick={startNewQa} disabled={loading} style={{ padding: "6px 10px" }}>
+              ＋ 新規
+            </button>
+
+            <button onClick={loadQa} disabled={loading} style={{ padding: "6px 10px" }}>
+              再読込
+            </button>
+          </div>
+
+          <TableScroller>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "#f6f6f6" }}>
+                  <th style={{ textAlign: "left", padding: 8 }}>topic</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>priority</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>active</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>title</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>content</th>
+                  <th style={{ padding: 8 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {qaRows.map((r) => (
+                  <tr key={r.id} style={{ borderTop: "1px solid #eee" }}>
+                    <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.topic}</td>
+                    <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.priority}</td>
+                    <td style={{ padding: 8, whiteSpace: "nowrap" }}>{String(r.is_active)}</td>
+                    <td style={{ padding: 8, fontWeight: 700 }}>{r.title}</td>
+                    <td style={{ padding: 8 }}>
+                      <div style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.content}</div>
+                    </td>
+                    <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                      <button onClick={() => startEditQa(r)} style={{ padding: "4px 8px" }}>
+                        編集
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {qaRows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 12, color: "#666" }}>
+                      No rows
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </TableScroller>
+
+          {qaEditing && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.35)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 16,
+                zIndex: 9999,
+              }}
+              onClick={() => setQaEditing(null)}
+            >
+              <div
+                style={{
+                  width: "min(980px, 100%)",
+                  height: "min(92vh, 900px)",
+                  background: "white",
+                  borderRadius: 12,
+                  padding: 14,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <div style={{ fontWeight: 700 }}>{isNewQa ? "QA 新規作成" : "QA 編集"}</div>
+                  <button onClick={() => setQaEditing(null)}>×</button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: 10, marginBottom: 10 }}>
+                  <label>
+                    topic
+                    <input
+                      value={qaEditing.topic}
+                      onChange={(e) => setQaEditing({ ...qaEditing, topic: e.target.value })}
+                      style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
+                    />
+                  </label>
+
+                  <label>
+                    title
+                    <textarea
+                      value={qaEditing.title}
+                      onChange={(e) => setQaEditing({ ...qaEditing, title: e.target.value })}
+                      rows={2}
+                      style={{ width: "100%", fontSize: 16, lineHeight: 1.4, padding: "8px 10px", resize: "vertical" }}
+                    />
+                  </label>
+
+                  <label>
+                    priority
+                    <input
+                      type="number"
+                      value={qaEditing.priority}
+                      onChange={(e) => setQaEditing({ ...qaEditing, priority: Number(e.target.value) })}
+                      style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
+                    />
+                  </label>
+                </div>
+
+                <div style={{ flex: 1, overflowY: "auto" }}>
+                  <label style={{ display: "block", marginBottom: 10 }}>
+                    content
+                    <textarea
+                      value={qaEditing.content}
+                      onChange={(e) => setQaEditing({ ...qaEditing, content: e.target.value })}
+                      rows={14}
+                      style={{ width: "100%", fontSize: 16, lineHeight: 1.6 }}
+                    />
+                  </label>
+                </div>
+
+                <div style={{ borderTop: "1px solid #eee", paddingTop: 10 }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <input type="checkbox" checked={qaEditing.is_active} onChange={(e) => setQaEditing({ ...qaEditing, is_active: e.target.checked })} />
+                    is_active
+                  </label>
+
+                  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                    {!isNewQa && (
+                      <button onClick={() => removeQa(qaEditing.id)} disabled={loading} style={{ padding: "10px 12px" }}>
+                        削除
+                      </button>
+                    )}
+                    <button onClick={saveQa} disabled={loading} style={{ padding: "10px 12px" }}>
+                      保存
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ===== Debug tab ===== */}
+      {tab === "debug" && (
+        <>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "flex-end" }}>
+            <label>
+              topic&nbsp;
+              <select value={dTopic} onChange={(e) => setDTopic(e.target.value)}>
+                <option value="">(all)</option>
+                {allTopicsForDebug.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              lens&nbsp;
+              <select value={dLens} onChange={(e) => setDLens(e.target.value)}>
+                <option value="">(all)</option>
+                <option value="amount">amount</option>
+                <option value="substance">substance</option>
+                <option value="system">system</option>
+              </select>
+            </label>
+
+            <label>
+              path&nbsp;
+              <select value={dPath} onChange={(e) => setDPath(e.target.value)}>
+                <option value="">(all)</option>
+                <option value="normal_llm">normal_llm</option>
+                <option value="followup_lines">followup_lines</option>
+                <option value="followup_kb">followup_kb</option>
+                <option value="followup_fallback">followup_fallback</option>
+              </select>
+            </label>
+
+            <label>
+              used_knowledge&nbsp;
+              <select value={dUsedKnowledge} onChange={(e) => setDUsedKnowledge(e.target.value)}>
+                <option value="">(all)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+
+            <label>
+              used_lines_pick&nbsp;
+              <select value={dUsedLinesPick} onChange={(e) => setDUsedLinesPick(e.target.value)}>
+                <option value="">(all)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+
+            <label>
+              search&nbsp;
+              <input value={dQuery} onChange={(e) => setDQuery(e.target.value)} placeholder="message_head" />
+            </label>
+
+            <label>
+              limit&nbsp;
               <input
                 type="number"
-                value={qaEditing.priority}
-                onChange={(e) => setQaEditing({ ...qaEditing, priority: Number(e.target.value) })}
-                style={{ width: "100%", fontSize: 16, padding: "8px 10px" }}
+                value={dLimit}
+                onChange={(e) => setDLimit(Number(e.target.value))}
+                style={{ width: 90 }}
               />
             </label>
+
+            <button onClick={loadDebug} disabled={loading} style={{ padding: "6px 10px" }}>
+              再読込
+            </button>
           </div>
 
-          <div style={{ flex: 1, overflowY: "auto" }}>
-            <label style={{ display: "block", marginBottom: 10 }}>
-              content
-              <textarea
-                value={qaEditing.content}
-                onChange={(e) => setQaEditing({ ...qaEditing, content: e.target.value })}
-                rows={14}
-                style={{ width: "100%", fontSize: 16, lineHeight: 1.6 }}
-              />
-            </label>
-          </div>
+          <TableScroller>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "#f6f6f6" }}>
+                  <th style={{ textAlign: "left", padding: 8 }}>created</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>topic</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>lens</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>path</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>K</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>L</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>picked_qa</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>picked_lines</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>message</th>
+                  <th style={{ padding: 8 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {debugRows.map((r) => {
+                  const pq = (r.meta?.picked_qa ?? []) as PickedQaMeta[];
+                  const pl = (r.meta?.picked_lines ?? []) as PickedLineMeta[];
 
-          <div style={{ borderTop: "1px solid #eee", paddingTop: 10 }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <input
-                type="checkbox"
-                checked={qaEditing.is_active}
-                onChange={(e) => setQaEditing({ ...qaEditing, is_active: e.target.checked })}
-              />
-              is_active
-            </label>
+                  return (
+                    <tr key={r.id} style={{ borderTop: "1px solid #eee" }}>
+                      <td style={{ padding: 8, whiteSpace: "nowrap", color: "#555" }}>{(r.created_at ?? "").replace("T", " ").slice(0, 19)}</td>
+                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.inferred_topic}</td>
+                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.lens}</td>
+                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                        <Chip label={r.path} />
+                      </td>
+                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                        <Chip label={String(r.used_knowledge)} tone={r.used_knowledge ? "ok" : "muted"} />
+                      </td>
+                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                        <Chip label={String(r.used_lines_pick)} tone={r.used_lines_pick ? "ok" : "muted"} />
+                      </td>
+                      <td style={{ padding: 8 }}>
+                        {pq.length === 0 ? (
+                          <span style={{ color: "#888" }}>-</span>
+                        ) : (
+                          <div style={{ display: "grid", gap: 2 }}>
+                            {pq.slice(0, 3).map((q) => (
+                              <div key={q.id} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 320 }}>
+                                <Chip label={`p${q.priority}`} />&nbsp;<span style={{ fontWeight: 700 }}>{q.title}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: 8 }}>
+                        {pl.length === 0 ? (
+                          <span style={{ color: "#888" }}>-</span>
+                        ) : (
+                          <div style={{ display: "grid", gap: 2 }}>
+                            {pl.slice(0, 2).map((ln) => (
+                              <div key={ln.id} style={{ whiteSpace: "nowrap" }}>
+                                <Chip label={ln.stance} /> <Chip label={ln.lens} /> <Chip label={`p${ln.priority}`} />{" "}
+                                <span style={{ color: "#666" }}>{ln.topic}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: 8, maxWidth: 420 }}>
+                        <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.message_head}</div>
+                      </td>
+                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                        <button onClick={() => setDebugOpen(r)} style={{ padding: "4px 8px" }}>
+                          詳細
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
 
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              {!isNewQa && (
-                <button onClick={() => removeQa(qaEditing.id)} disabled={loading} style={{ padding: "10px 12px" }}>
-                  削除
-                </button>
-              )}
-              <button onClick={saveQa} disabled={loading} style={{ padding: "10px 12px" }}>
-                保存
-              </button>
+                {debugRows.length === 0 && (
+                  <tr>
+                    <td colSpan={10} style={{ padding: 12, color: "#666" }}>
+                      No rows
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </TableScroller>
+
+          {debugOpen && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.35)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 16,
+                zIndex: 9999,
+              }}
+              onClick={() => setDebugOpen(null)}
+            >
+              <div
+                style={{
+                  width: "min(980px, 100%)",
+                  maxHeight: "min(92vh, 900px)",
+                  overflowY: "auto",
+                  background: "white",
+                  borderRadius: 12,
+                  padding: 14,
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <div style={{ fontWeight: 700 }}>Debug Event</div>
+                  <button onClick={() => setDebugOpen(null)}>×</button>
+                </div>
+
+                <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+                  <div>
+                    <Chip label={(debugOpen.created_at ?? "").replace("T", " ").slice(0, 19)} />{" "}
+                    <Chip label={`topic: ${debugOpen.inferred_topic || "-"}`} /> <Chip label={`lens: ${debugOpen.lens}`} />{" "}
+                    <Chip label={`path: ${debugOpen.path}`} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Chip label={`used_knowledge: ${String(debugOpen.used_knowledge)}`} tone={debugOpen.used_knowledge ? "ok" : "muted"} />
+                    <Chip label={`used_lines_pick: ${String(debugOpen.used_lines_pick)}`} tone={debugOpen.used_lines_pick ? "ok" : "muted"} />
+                    <Chip label={`followup: ${String(debugOpen.followup)}`} />
+                    <Chip label={`shifted: ${String(debugOpen.shifted)}`} />
+                    <Chip label={`borrowed_prev_topic: ${String(Boolean(debugOpen.meta?.borrowed_prev_topic))}`} />
+                  </div>
+
+                  <div style={{ padding: 10, border: "1px solid #eee", borderRadius: 10 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>message_head</div>
+                    <div style={{ whiteSpace: "pre-wrap" }}>{debugOpen.message_head}</div>
+                  </div>
+
+                  <div style={{ padding: 10, border: "1px solid #eee", borderRadius: 10 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>meta</div>
+                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(debugOpen.meta ?? {}, null, 2)}</pre>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      </div>
-    )}
-  </>
-)}
-
+          )}
+        </>
+      )}
     </div>
   );
 }
