@@ -59,6 +59,31 @@ function TabButton(props: { active: boolean; onClick: () => void; children: Reac
   );
 }
 
+// ★ 横スクロール用の共通ラッパー（スマホ/PC共通）
+function TableScroller(props: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: 8,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          overflowX: "auto",
+          overflowY: "hidden",
+          WebkitOverflowScrolling: "touch",
+          maxWidth: "100%",
+        }}
+      >
+        {/* テーブルが縮まないように minWidth を確保 */}
+        <div style={{ minWidth: 980 }}>{props.children}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function KnowledgeLinesClient() {
   const supabase = useMemo(() => getSupabaseClient(), []);
   const [tab, setTab] = useState<"lines" | "qa">("lines");
@@ -66,7 +91,6 @@ export default function KnowledgeLinesClient() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // ===== auth helper =====
   async function tokenOrThrow(): Promise<string> {
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
@@ -425,7 +449,7 @@ export default function KnowledgeLinesClient() {
             </button>
           </div>
 
-          <div style={{ border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
+          <TableScroller>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: "#f6f6f6" }}>
@@ -476,7 +500,7 @@ export default function KnowledgeLinesClient() {
                 )}
               </tbody>
             </table>
-          </div>
+          </TableScroller>
 
           {editingLine && (
             <div
@@ -492,7 +516,14 @@ export default function KnowledgeLinesClient() {
               onClick={() => setEditingLine(null)}
             >
               <div
-                style={{ width: "min(900px, 100%)", background: "white", borderRadius: 12, padding: 14 }}
+                style={{
+                  width: "min(900px, 100%)",
+                  maxHeight: "min(86vh, 900px)",
+                  overflowY: "auto",
+                  background: "white",
+                  borderRadius: 12,
+                  padding: 14,
+                }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -500,12 +531,22 @@ export default function KnowledgeLinesClient() {
                   <button onClick={() => setEditingLine(null)}>×</button>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
                   <label>
                     topic
                     <input
                       value={editingLine.topic}
                       onChange={(e) => setEditingLine({ ...editingLine, topic: e.target.value })}
+                      style={{ width: "100%" }}
+                    />
+                  </label>
+
+                  <label>
+                    priority
+                    <input
+                      type="number"
+                      value={editingLine.priority}
+                      onChange={(e) => setEditingLine({ ...editingLine, priority: Number(e.target.value) })}
                       style={{ width: "100%" }}
                     />
                   </label>
@@ -546,16 +587,6 @@ export default function KnowledgeLinesClient() {
                       <option value="internal">internal（管理用・絶対出さない）</option>
                     </select>
                   </label>
-
-                  <label>
-                    priority
-                    <input
-                      type="number"
-                      value={editingLine.priority}
-                      onChange={(e) => setEditingLine({ ...editingLine, priority: Number(e.target.value) })}
-                      style={{ width: "100%" }}
-                    />
-                  </label>
                 </div>
 
                 <label style={{ display: "block", marginBottom: 10 }}>
@@ -563,7 +594,7 @@ export default function KnowledgeLinesClient() {
                   <textarea
                     value={editingLine.text}
                     onChange={(e) => setEditingLine({ ...editingLine, text: e.target.value })}
-                    rows={6}
+                    rows={8}
                     style={{ width: "100%" }}
                   />
                 </label>
@@ -631,7 +662,7 @@ export default function KnowledgeLinesClient() {
             </button>
           </div>
 
-          <div style={{ border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
+          <TableScroller>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: "#f6f6f6" }}>
@@ -678,7 +709,7 @@ export default function KnowledgeLinesClient() {
                 )}
               </tbody>
             </table>
-          </div>
+          </TableScroller>
 
           {qaEditing && (
             <div
@@ -694,7 +725,14 @@ export default function KnowledgeLinesClient() {
               onClick={() => setQaEditing(null)}
             >
               <div
-                style={{ width: "min(900px, 100%)", background: "white", borderRadius: 12, padding: 14 }}
+                style={{
+                  width: "min(900px, 100%)",
+                  maxHeight: "min(86vh, 900px)",
+                  overflowY: "auto",
+                  background: "white",
+                  borderRadius: 12,
+                  padding: 14,
+                }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -737,7 +775,7 @@ export default function KnowledgeLinesClient() {
                   <textarea
                     value={qaEditing.content}
                     onChange={(e) => setQaEditing({ ...qaEditing, content: e.target.value })}
-                    rows={8}
+                    rows={10}
                     style={{ width: "100%" }}
                   />
                 </label>
