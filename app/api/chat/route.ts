@@ -1332,10 +1332,11 @@ const forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly &&
 
       // followup経路で使う topic（ログにも使う）
       const inferredTopicForFollowup =
-        topicsNow[0] ??
-        (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
-        (topicKbItems?.[0]?.topic ?? null) ??
-        "";
+  (followupOnly && prevUserMessage ? inferTopics(prevUserMessage, { max: 1 })[0] : null) ??
+  topicsNow[0] ??
+  (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
+  (topicKbItems?.[0]?.topic ?? null) ??
+  "";
 
       if (followup && !forceNormalAnswer) {
         const header = "判断の軸だけ整理するで。";
