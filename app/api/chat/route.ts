@@ -1308,12 +1308,12 @@ const forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly &&
       // followupでも、今メッセージでtopicが取れてるなら「前のtopic借り」はしない。
       // 借りるのは「よろ」「続き」「もう少し」みたいな短文追撃だけに限定。
       const shouldBorrowPrevTopic =
-        followup &&
-        topicKbItems.length === 0 &&
-        topicsNow.length === 0 &&
-        !shifted &&
-        Boolean(prevUserMessage) &&
-        (isFollowupOnlyText(message) || message.trim().length <= 6);
+  followup &&
+  topicKbItems.length === 0 &&
+  topicsNow.length === 0 &&
+  !shifted &&
+  Boolean(prevUserMessage) &&
+  (followupOnly || message.trim().length <= 6);
 
       if (shouldBorrowPrevTopic && prevUserMessage) {
         topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
