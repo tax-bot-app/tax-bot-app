@@ -213,6 +213,7 @@ type DebugMeta = {
   picked_qa?: PickedQaMeta[];
   picked_lines?: PickedLineMeta[];
   borrowed_prev_topic?: boolean;
+  weak_utterance?: boolean;
 };
 
 type DebugTrace = {
@@ -600,6 +601,24 @@ const TOPIC_SPECS: TopicSpec[] = [
     patterns: [{ re: /(M&A|会社売却|株式譲渡|譲渡益|デューデリ|DD|買い手|売り手|バリュエーション)/i, score: 10 }],
   },
 ];
+
+function isWeakUtterance(s: string): boolean {
+  const t0 = (s ?? "").trim();
+  if (!t0) return true;
+
+  // 記号・伸ばしを落として短文化（方言/ノイズ耐性）
+  const t = t0
+    .replace(/[！!。．…]+$/g, "")
+    .replace(/[ー〜～]+$/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+
+  // 主役：短文（方言も吸収）
+  if (t.length <= 10) return true;
+
+  // 保険：よろしゅう系だけ（増殖させない）
+  return /^(?:よろしゅう|よろしゅー)$/i.test(t);
+}
 
 function inferTopics(message: string, opts?: { max?: number }): string[] {
   const m = (message ?? "").trim();
@@ -1298,10 +1317,11 @@ export async function POST(req: Request) {
         return prevRows?.[0]?.content ?? null;
       })();
 
-const followupOnly = isFollowupOnlyText(message); // 既に上で定義済みなら重複させない
+const followupOnly = isFollowupOnlyText(message);
+const weakUtterance = isWeakUtterance(message);
+
 const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
 
-// 先に作る（ここが赤線の原因を潰す）
 const lineRequest = isLineRequest(message);
 const shifted = topicShiftLikelyLite(prevUserMessage, message);
 
@@ -1309,20 +1329,21 @@ const followupPhaseRaw = isInFollowupPhase(prevAssistantMessage);
 
 // 「続きっぽい入力」だけ followup_phase を立てる
 const continuationLike =
-  followupOnly ||                      // よろ/続き/もう少し
-  lineRequest ||                       // 攻め守り/いくら/上限 etc
-  followupExplicit ||                  // wantsAttackDefenseDetail が true
-  /^((それ|その|じゃあ|ほな|で|なら|今の|さっき|続き|つづき)\b)/.test(message.trim()) ||
-  message.trim().length <= 12;         // 短文は続き扱い
+  followupOnly ||
+  weakUtterance || // ★追加：短文/方言相づち救済
+  lineRequest ||
+  followupExplicit ||
+  /^((それ|その|じゃあ|ほな|で|なら|今の|さっき|続き|つづき)\b)/.test(message.trim());
 
+// followupPhaseは continuationLike を通った時だけ有効
 const followupPhase = followupPhaseRaw && continuationLike;
 
-// followup 判定（followupPhaseは continuationLike を通った時だけ有効）
+// followup 判定（weakUtterance自体は followup を強制しない。借用の“保険”として使う）
 const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shifted);
 
 // forceNormalAnswer（短文追撃では発動させない）
 const forceNormalAnswer =
-  followupPhase && !followupExplicit && !followupOnly && !lineRequest;
+  followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance; // ★weak除外
 
 
       const globalRules = await retrieveGlobalRules({ db });
@@ -1331,18 +1352,20 @@ const forceNormalAnswer =
       const topicsNow = inferTopics(message, { max: 3 });
 
       // lens は followup/normal 共通で使うので先に確定
-      const lens: Lens = inferLens(isFollowupOnlyText(message) && prevUserMessage ? prevUserMessage : message);
+      const lens: Lens = inferLens(
+  (followupOnly || weakUtterance) && prevUserMessage ? prevUserMessage : message
+);
 
       let topicKbItems = await retrieveKnowledge({ db, message });
 
       // followupでも、今メッセージでtopicが取れてるなら「前のtopic借り」はしない。
       // 借りるのは「よろ」「続き」「もう少し」みたいな短文追撃だけに限定。
       const shouldBorrowPrevTopic =
-  followup &&
+  (followup || weakUtterance) &&
   topicKbItems.length === 0 &&
   topicsNow.length === 0 &&
   Boolean(prevUserMessage) &&
-  (followupOnly || followupExplicit || message.trim().length <= 12);
+  (weakUtterance || !shifted); // ★ここが重要（weakならshifted見ない）
 
       if (shouldBorrowPrevTopic && prevUserMessage) {
         topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
@@ -1353,6 +1376,7 @@ const forceNormalAnswer =
         picked_qa: buildPickedQaMeta(topicKbItems, 3),
         picked_lines: [],
         borrowed_prev_topic: shouldBorrowPrevTopic,
+        weak_utterance: weakUtterance,
       };
 
       // ★ デバッグ用の経路トラッキング
@@ -1360,8 +1384,8 @@ const forceNormalAnswer =
       let path: DebugTrace["path"] = "normal_llm";
 
       // followup経路で使う topic（ログにも使う）
-      const inferredTopicForFollowup =
-  ((followup && prevUserMessage) ? inferTopics(prevUserMessage, { max: 1 })[0] : null) ??
+     const inferredTopicForFollowup =
+  (((followup || weakUtterance) && prevUserMessage) ? inferTopics(prevUserMessage, { max: 1 })[0] : null) ??
   topicsNow[0] ??
   (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
   (topicKbItems?.[0]?.topic ?? null) ??
