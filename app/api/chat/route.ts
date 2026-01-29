@@ -1493,12 +1493,25 @@ const inferredTopicForFollowup =
               ]
             : [];
 
+const isPivotQuestion =
+  /税務調査の方|税務調査のほう|そっち|税務調査で言うと|税務調査なら|調査の方/.test(message);
+
+const pivotGuard: string[] =
+  prevUserMessage && isPivotQuestion
+    ? [
+        "重要：ユーザーが「税務調査の方やとどうなる？」のように聞き返した場合、直前のユーザー文に含まれる論点（例：売上・外注など）を優先して具体化し、無関係な論点（例：家族給与など）に飛ばさない。直前文の論点が特定できない場合だけ、一般的な論点を2〜3個に絞って提示する。",
+      ]
+    : [];
+
+
+
         const promptPartsBase: PromptParts = {
           context: contextLines,
           injectedRules: [
             ...outputRules,
             ...amountBias,
             ...systemBias,
+            ...pivotGuard,     // ←追加
             ...ambiguityBoost,
             ...styleRules,
             ...(kbGlobalBlock ? [kbGlobalBlock] : []),
@@ -1506,6 +1519,8 @@ const inferredTopicForFollowup =
           ],
           guardrails: gr.action === "inject" ? gr.guardrailLines : [],
         };
+
+        
 
         answer = await generateAnswerStrict({
           message,
