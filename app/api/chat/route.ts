@@ -214,6 +214,9 @@ type DebugMeta = {
   picked_lines?: PickedLineMeta[];
   borrowed_prev_topic?: boolean;
   weak_utterance?: boolean;
+
+  prev_user_head?: string;
+  prev_user_len?: number;
 };
 
 type DebugTrace = {
@@ -255,6 +258,7 @@ async function writeDebugEvent(params: { db: any; trace: DebugTrace }) {
       line_request: trace.lineRequest,
       force_normal_answer: trace.forceNormalAnswer,
       meta: trace.meta ?? {},
+      
     });
   } catch (e) {
     // ログ失敗では本処理を落とさない
@@ -1373,11 +1377,16 @@ const forceNormalAnswer =
 
       // ✅ meta をここで作る（P0）
       const meta: DebugMeta = {
-        picked_qa: buildPickedQaMeta(topicKbItems, 3),
-        picked_lines: [],
-        borrowed_prev_topic: shouldBorrowPrevTopic,
-        weak_utterance: weakUtterance,
-      };
+  picked_qa: buildPickedQaMeta(topicKbItems, 3),
+  picked_lines: [],
+  borrowed_prev_topic: shouldBorrowPrevTopic,
+  weak_utterance: weakUtterance,
+
+  // ★追加：原因切り分け用（ここが最重要）
+  prev_user_head: dbgHead(prevUserMessage ?? "", 80),
+  prev_user_len: (prevUserMessage ?? "").length,
+};
+
 
       // ★ デバッグ用の経路トラッキング
       let usedLinesPick = false;
