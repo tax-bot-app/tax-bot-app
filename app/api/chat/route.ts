@@ -1282,13 +1282,18 @@ export async function POST(req: Request) {
         return prevRows?.[0]?.content ?? null;
       })();
 
-      const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
-      const followupPhase = isInFollowupPhase(prevAssistantMessage);
-      const lineRequest = isLineRequest(message);
-      const shifted = topicShiftLikelyLite(prevUserMessage, message);
+      const followupOnly = isFollowupOnlyText(message); // ★追加：短文追撃（よろ/よろしく/続き…）
 
-      const followup = followupExplicit || lineRequest || (followupPhase && !shifted);
-      const forceNormalAnswer = followupPhase && !followupExplicit && !lineRequest;
+const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
+const followupPhase = isInFollowupPhase(prevAssistantMessage);
+const lineRequest = isLineRequest(message);
+const shifted = topicShiftLikelyLite(prevUserMessage, message);
+
+// ★ followupOnly を followup 判定に組み込む
+const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shifted);
+
+// ★ forceNormalAnswer は「短文追撃」では発動させない（通常回答に落とさない）
+const forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest;
 
       const globalRules = await retrieveGlobalRules({ db });
 
