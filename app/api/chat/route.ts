@@ -282,11 +282,27 @@ type KnowledgeLine = {
 };
 
 function isFollowupOnlyText(m: string): boolean {
-  if (!m) return false;
-  const s = m.trim();
-  return /^(よろしく|お願い|おねがい|続き|つづき|詳しく|詳細|もう少し|もうちょい|再度|教えて|教えてください|お願いします|お願いできますか|よろしくお願いします|よろしこ|よろ)$/.test(
-    s
-  );
+  const s0 = (m ?? "").trim();
+  if (!s0) return false;
+
+  // 末尾記号・伸ばし・空白を吸収（「よろしく！」「よろー」「お願いします！！」等）
+  const s = s0
+    .replace(/[！!。．…]+$/g, "")
+    .replace(/[ー〜～]+$/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+
+  // ① 短文ルール（方言・誤字・スタンプ系をまとめて拾う）
+  // 記号だけ/スタンプだけも拾いたいので、記号を落とした core を見る
+  const core = s.replace(/[!?！？…。．]+/g, "");
+  if (!core) return true;          // 記号だけ
+  if (core.length <= 10) return true;
+
+  // ② 丁寧定型（長くても「よろしくお願いします」系は拾う）
+  // 方言じゃなく全国共通の定型だけに限定して増殖を防ぐ
+  if (/^(よろしく|お願い).*(します|いたします|しますね|いたしますね)$/.test(core)) return true;
+
+  return false;
 }
 
 function isInFollowupPhase(prevAssistantMessage: string | null): boolean {
