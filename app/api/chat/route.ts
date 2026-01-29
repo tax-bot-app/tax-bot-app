@@ -1323,7 +1323,6 @@ export async function POST(req: Request) {
   return candidates[0] ?? null;
 })();
 
-
       const prevAssistantMessage = await (async () => {
         const { data: prevRows } = await db
           .from("messages")
@@ -1409,8 +1408,15 @@ const forceNormalAnswer =
       let path: DebugTrace["path"] = "normal_llm";
 
       // followup経路で使う topic（ログにも使う）
-     const inferredTopicForFollowup =
-  (((followup || weakUtterance) && prevUserMessage) ? inferTopics(prevUserMessage, { max: 1 })[0] : null) ??
+const prevTopics = prevUserMessage ? inferTopics(prevUserMessage, { max: 3 }) : [];
+const primaryTopicForFollowup =
+  // ★ 親トピック優先（メイントピック）
+  (prevTopics.includes("税務調査") || topicsNow.includes("税務調査")) ? "税務調査"
+  : (prevTopics[0] ?? topicsNow[0] ?? null);
+
+const inferredTopicForFollowup =
+  // followup/weak のときは primary を優先
+  ((followup || weakUtterance) ? primaryTopicForFollowup : null) ??
   topicsNow[0] ??
   (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
   (topicKbItems?.[0]?.topic ?? null) ??
