@@ -1341,9 +1341,11 @@ const forceNormalAnswer =
   followup &&
   topicKbItems.length === 0 &&
   topicsNow.length === 0 &&
-  !shifted &&
   Boolean(prevUserMessage) &&
-  (followupOnly || message.trim().length <= 6);
+  (
+    followupOnly ||                   // ★短文追撃は shifted を無視して借りる
+    (!shifted && message.trim().length <= 6) // ★短文でも followupOnly じゃない時だけ shifted ガード
+  );
 
       if (shouldBorrowPrevTopic && prevUserMessage) {
         topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
