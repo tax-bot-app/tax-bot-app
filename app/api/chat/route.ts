@@ -1282,18 +1282,32 @@ export async function POST(req: Request) {
         return prevRows?.[0]?.content ?? null;
       })();
 
-      const followupOnly = isFollowupOnlyText(message); // ★追加：短文追撃（よろ/よろしく/続き…）
-
+const followupOnly = isFollowupOnlyText(message); // 既に上で定義済みなら重複させない
 const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
-const followupPhase = isInFollowupPhase(prevAssistantMessage);
+
+// 先に作る（ここが赤線の原因を潰す）
 const lineRequest = isLineRequest(message);
 const shifted = topicShiftLikelyLite(prevUserMessage, message);
 
-// ★ followupOnly を followup 判定に組み込む
+const followupPhaseRaw = isInFollowupPhase(prevAssistantMessage);
+
+// 「続きっぽい入力」だけ followup_phase を立てる
+const continuationLike =
+  followupOnly ||                      // よろ/続き/もう少し
+  lineRequest ||                       // 攻め守り/いくら/上限 etc
+  followupExplicit ||                  // wantsAttackDefenseDetail が true
+  /^((それ|その|じゃあ|ほな|で|なら|今の|さっき|続き|つづき)\b)/.test(message.trim()) ||
+  message.trim().length <= 12;         // 短文は続き扱い
+
+const followupPhase = followupPhaseRaw && continuationLike;
+
+// followup 判定（followupPhaseは continuationLike を通った時だけ有効）
 const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shifted);
 
-// ★ forceNormalAnswer は「短文追撃」では発動させない（通常回答に落とさない）
-const forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest;
+// forceNormalAnswer（短文追撃では発動させない）
+const forceNormalAnswer =
+  followupPhase && !followupExplicit && !followupOnly && !lineRequest;
+
 
       const globalRules = await retrieveGlobalRules({ db });
 
