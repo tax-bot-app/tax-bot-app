@@ -1342,10 +1342,7 @@ const forceNormalAnswer =
   topicKbItems.length === 0 &&
   topicsNow.length === 0 &&
   Boolean(prevUserMessage) &&
-  (
-    followupOnly ||                   // ★短文追撃は shifted を無視して借りる
-    (!shifted && message.trim().length <= 6) // ★短文でも followupOnly じゃない時だけ shifted ガード
-  );
+  (followupOnly || followupExplicit || message.trim().length <= 12);
 
       if (shouldBorrowPrevTopic && prevUserMessage) {
         topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage });
@@ -1364,7 +1361,7 @@ const forceNormalAnswer =
 
       // followup経路で使う topic（ログにも使う）
       const inferredTopicForFollowup =
-  (followupOnly && prevUserMessage ? inferTopics(prevUserMessage, { max: 1 })[0] : null) ??
+  ((followup && prevUserMessage) ? inferTopics(prevUserMessage, { max: 1 })[0] : null) ??
   topicsNow[0] ??
   (!shifted ? inferTopicFromHistory(prevUserMessage, prevAssistantMessage) : null) ??
   (topicKbItems?.[0]?.topic ?? null) ??
