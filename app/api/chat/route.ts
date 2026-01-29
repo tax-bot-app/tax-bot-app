@@ -1296,17 +1296,33 @@ export async function POST(req: Request) {
 
     try {
       const prevUserMessage = await (async () => {
-        const { data: prevRows } = await db
-          .from("messages")
-          .select("content")
-          .eq("conversation_id", convId)
-          .eq("role", "user")
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: false })
-          .limit(2);
+  const { data: rows } = await db
+    .from("messages")
+    .select("content")
+    .eq("conversation_id", convId)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(8); // ← 少し多めに見る（弱発話連打対策）
 
-        return prevRows?.[1]?.content ?? prevRows?.[0]?.content ?? null;
-      })();
+  if (!rows || rows.length === 0) return null;
+
+  const current = message.trim();
+
+  // ★ 自己参照（今回の入力）を除外
+  const candidates = rows
+    .map((r) => (r.content ?? "").trim())
+    .filter((c) => c && c !== current);
+
+  // ★ 直近から「weakじゃない」発話を探す
+  for (const c of candidates) {
+    if (!isWeakUtterance(c)) return c;
+  }
+
+  // ★ 全部 weak なら、直近（自己参照除外済み）を返す
+  return candidates[0] ?? null;
+})();
+
 
       const prevAssistantMessage = await (async () => {
         const { data: prevRows } = await db
