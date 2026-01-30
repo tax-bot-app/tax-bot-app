@@ -125,6 +125,15 @@ type DebugMeta = {
   prev_user_len?: number;
   qa_keypoint_used_title?: string;
   qa_keypoint_used?: string;
+    // NEW: picked KB items (up to 10)
+  picked_kb_items?: Array<{
+    id: string;
+    kind: "rule" | "qa" | "example";
+    topic: string;
+    title: string;
+    priority: number;
+  }>;
+
 
   // NEW: why sticky/overlay happened
   tax_audit_sticky_reason?: string;
@@ -1232,7 +1241,7 @@ export async function POST(req: Request) {
 
       // ===== debug meta =====
       const meta: DebugMeta = {
-        picked_qa: buildPickedQaMeta(topicKbItems, 3),
+        picked_qa: buildPickedQaMeta(topicKbItems, 10),
         picked_lines: [],
         axis_topic: axisTopic,
         subject_topic: subjectTopic,
@@ -1243,6 +1252,14 @@ export async function POST(req: Request) {
         prev_user_len: (prevUserMessage ?? "").length,
         tax_audit_sticky_reason: decision.reason,
       };
+
+      meta.picked_kb_items = (topicKbItemsForPrompt ?? []).slice(0, 10).map((it) => ({
+  id: it.id,
+  kind: it.kind,
+  topic: it.topic,
+  title: it.title,
+  priority: it.priority,
+}));
 
       let usedLinesPick = false;
       let path: DebugTrace["path"] = "normal_llm";
