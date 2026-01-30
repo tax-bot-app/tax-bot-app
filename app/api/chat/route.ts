@@ -14,6 +14,12 @@ export const runtime = "nodejs";
 /** ===== constants ===== */
 const LINES_PREFACE_TAG = "【Lines前置き】"; // knowledge_items(kind=qa) の title に入れると followup_lines 前置きに使われる
 
+const SERVICE_ASSUMPTION_RULES: string[] = [
+  "重要：このサービスは『顧問税理士がいる前提』で答える。顧問税理士がいない前提の案内（例：税理士の有無確認・選任の勧め・無い場合の段取り）は原則書かない。",
+  "税務調査の対応は『顧問税理士と連携して進める前提』で、社長がやること/税理士がやることを分けて書く。",
+  "例外：ユーザーが明示的に『顧問税理士がいない』と言った場合だけ、その前提で答える。",
+];
+
 /** ===== small utils ===== */
 function mustEnv(name: string): string {
   const v = process.env[name];
@@ -1305,6 +1311,7 @@ export async function POST(req: Request) {
           context: contextLines,
           injectedRules: [
             ...outputRules,
+            ...SERVICE_ASSUMPTION_RULES,
             ...doubleTopicRule,
             ...amountBias,
             ...systemBias,
