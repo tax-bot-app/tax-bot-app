@@ -481,6 +481,47 @@ async function retrieveKnowledgeLines(params: {
   return { attack: null, defense: null };
 }
 
+function pickBestQaForMessage(items: KnowledgeItem[], message: string): KnowledgeItem | null {
+  const m = (message ?? "").trim();
+  const qas = (items ?? []).filter((x) => x.kind === "qa");
+  if (qas.length === 0) return null;
+
+  // 初動系は「電話/連絡/窓口」を含むQAを優先
+  const intakeHit = /(最初|初動|電話|連絡|窓口|誰に)/.test(m);
+  if (intakeHit) {
+    const hit = qas.find((q) => /(最初|連絡|電話|窓口|誰に)/.test((q.title ?? "") + " " + (q.content ?? "")));
+    if (hit) return hit;
+  }
+
+  // それ以外は priority 最大
+  const sorted = [...qas].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+  return sorted[0] ?? null;
+}
+
+function qaToKeyPointRule(qa: KnowledgeItem, maxLines = 2): string {
+  const text = (qa?.content ?? "").replace(/\r\n/g, "\n");
+  const lines = text
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // 先頭から短い行を優先して最大2行だけ抜く（長文は切る）
+  const picked: string[] = [];
+  for (const l of lines) {
+    const t = l.replace(/^[-・]\s*/, "").trim();
+    if (!t) continue;
+    if (t.length > 140) continue; // 長すぎる行は飛ばす
+    picked.push(t);
+    if (picked.length >= maxLines) break;
+  }
+
+  const body = picked.length ? picked : [lines[0]?.slice(0, 120) ?? ""].filter(Boolean);
+  const joined = body.join(" / ").trim();
+
+  // LLMに「この要点を必ず反映しろ」と命令する
+  return `重要：以下の実務要点を必ず反映する（出典：QA「${qa.title}」）。→ ${joined}`;
+}
+
 /** ===== knowledge formatting ===== */
 function formatKnowledgeBlock(items: KnowledgeItem[]): string {
   if (!items || items.length === 0) return "";
