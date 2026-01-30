@@ -125,7 +125,7 @@ type DebugMeta = {
   prev_user_len?: number;
   qa_keypoint_used_title?: string;
   qa_keypoint_used?: string;
-    // NEW: picked KB items (up to 10)
+    kb_bucket_counts?: { subject: number; audit: number; other: number };
   picked_kb_items?: Array<{
     id: string;
     kind: "rule" | "qa" | "example";
@@ -407,6 +407,95 @@ async function retrieveKnowledge(params: { db: any; message: string; topicsOverr
 
 function messageTokens3(s: string): string[] {
   return Array.from((s ?? "").matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((m) => m[0]);
+}
+
+async function retrieveKnowledgeByBuckets(params: {
+  db: any;
+  message: string;
+  auditAxis: boolean;
+  subjectTopic: string;
+  topicsNow: string[];
+  maxTotal?: number;
+}): Promise<KnowledgeItem[]> {
+  const { db, auditAxis, subjectTopic, topicsNow } = params;
+
+  const maxTotal = Math.max(1, Math.min(20, params.maxTotal ?? 10));
+
+  // 配分（auditAxis=true & subjectありの時だけ効かせる）
+  const wantsBuckets = auditAxis && Boolean(subjectTopic);
+
+  const quotaSubject = wantsBuckets ? 4 : 0;
+  const quotaAudit = wantsBuckets ? 3 : 0;
+  const quotaOther = wantsBuckets ? Math.max(0, maxTotal - quotaSubject - quotaAudit) : maxTotal;
+
+  const uniqById = (xs: KnowledgeItem[]) => {
+    const seen = new Set<string>();
+    const out: KnowledgeItem[] = [];
+    for (const it of xs) {
+      if (!it?.id) continue;
+      if (seen.has(it.id)) continue;
+      seen.add(it.id);
+      out.push(it);
+    }
+    return out;
+  };
+
+  const fetchTopic = async (topic: string, limit: number): Promise<KnowledgeItem[]> => {
+    if (!topic || limit <= 0) return [];
+    const { data, error } = await db
+      .from("knowledge_items")
+      .select("id, kind, topic, title, content, amounts, conditions, priority")
+      .eq("is_active", true)
+      .eq("topic", topic)
+      .order("priority", { ascending: false })
+      .limit(limit);
+    if (error) return [];
+    return (data ?? []) as KnowledgeItem[];
+  };
+
+  const fetchTopics = async (topics: string[], limit: number): Promise<KnowledgeItem[]> => {
+    const ts = Array.from(new Set((topics ?? []).filter(Boolean)));
+    if (ts.length === 0 || limit <= 0) return [];
+    const { data, error } = await db
+      .from("knowledge_items")
+      .select("id, kind, topic, title, content, amounts, conditions, priority")
+      .eq("is_active", true)
+      .in("topic", ts)
+      .order("priority", { ascending: false })
+      .limit(limit);
+    if (error) return [];
+    return (data ?? []) as KnowledgeItem[];
+  };
+
+  // 1) subject（主題）
+  const subjectItems = wantsBuckets ? await fetchTopic(subjectTopic, quotaSubject) : [];
+
+  // 2) audit（税務調査）
+  const auditItems = wantsBuckets ? await fetchTopic(TOPIC_TAX_AUDIT, quotaAudit) : [];
+
+  // 3) other（topicsNow等。ただし subject/audit は除外）
+  const otherTopics = (topicsNow ?? []).filter((t) => t && t !== subjectTopic && t !== TOPIC_TAX_AUDIT);
+
+  let otherItems: KnowledgeItem[] = [];
+  if (wantsBuckets) {
+    otherItems = await fetchTopics(otherTopics, quotaOther);
+  } else {
+    // 従来互換：topicsNow から最大maxTotal
+    const inferred = inferTopics(params.message, { max: 3 });
+    otherItems = await fetchTopics(inferred, maxTotal);
+  }
+
+  // マージして10件に収める（subject→audit→otherの順で優先）
+  let merged = uniqById([...subjectItems, ...auditItems, ...otherItems]).slice(0, maxTotal);
+
+  // 余り枠があるなら「subject+audit+otherTopics」全体から埋める（fallback）
+  if (merged.length < maxTotal) {
+    const poolTopics = Array.from(new Set([subjectTopic, ...(auditAxis ? [TOPIC_TAX_AUDIT] : []), ...otherTopics].filter(Boolean)));
+    const fill = await fetchTopics(poolTopics, maxTotal - merged.length);
+    merged = uniqById([...merged, ...fill]).slice(0, maxTotal);
+  }
+
+  return merged;
 }
 
 async function retrieveKnowledgeLines(params: {
@@ -1249,7 +1338,14 @@ export async function POST(req: Request) {
         )
       );
 
-      let topicKbItems = await retrieveKnowledge({ db, message, topicsOverride: kbTopics });
+      let topicKbItems = await retrieveKnowledgeByBuckets({
+  db,
+  message,
+  auditAxis,
+  subjectTopic,
+  topicsNow: topicsNow0,
+  maxTotal: 10,
+});
 
       // 追撃短文で topic が取れない時だけ prev 借り（subject優先でKB拾う）
       const shouldBorrowPrevTopic =
@@ -1260,7 +1356,14 @@ export async function POST(req: Request) {
         (weakUtterance || !shifted);
 
       if (shouldBorrowPrevTopic && prevUserMessage) {
-        topicKbItems = await retrieveKnowledge({ db, message: prevUserMessage, topicsOverride: kbTopics });
+        topicKbItems = await retrieveKnowledgeByBuckets({
+  db,
+  message: prevUserMessage,
+  auditAxis,
+  subjectTopic,
+  topicsNow: topicsNow0,
+  maxTotal: 10,
+});
       }
 
       const linesPrefaceQa = pickLinesPrefaceQa(topicKbItems);
