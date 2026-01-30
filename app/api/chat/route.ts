@@ -133,9 +133,7 @@ type DebugMeta = {
     title: string;
     priority: number;
   }>;
-
-
-  // NEW: why sticky/overlay happened
+qa_pick_reason?: string;
   tax_audit_sticky_reason?: string;
 };
 
@@ -507,6 +505,37 @@ function pickBestQaForMessage(items: KnowledgeItem[], message: string): Knowledg
   // それ以外は priority 最大
   const sorted = [...qas].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
   return sorted[0] ?? null;
+}
+
+function pickBestQaPreferSubject(params: {
+  items: KnowledgeItem[];
+  message: string;
+  subjectTopic?: string | null;
+  axisTopic?: string | null;
+}): { qa: KnowledgeItem | null; reason: string } {
+  const { items, message, subjectTopic, axisTopic } = params;
+  const qas = (items ?? []).filter((x) => x.kind === "qa");
+  if (qas.length === 0) return { qa: null, reason: "no_qas" };
+
+  const subject = (subjectTopic ?? "").trim();
+  const axis = (axisTopic ?? "").trim();
+
+  // 1) subjectTopic のQAを最優先
+  if (subject) {
+    const subjectItems = qas.filter((q) => q.topic === subject);
+    const qa = pickBestQaForMessage(subjectItems, message);
+    if (qa) return { qa, reason: `prefer_subject:${subject}` };
+  }
+
+  // 2) 次に axisTopic（税務調査など）
+  if (axis) {
+    const axisItems = qas.filter((q) => q.topic === axis);
+    const qa = pickBestQaForMessage(axisItems, message);
+    if (qa) return { qa, reason: `fallback_axis:${axis}` };
+  }
+
+  // 3) 最後に全体（従来どおり priority 最大）
+  return { qa: pickBestQaForMessage(qas, message), reason: "fallback_any" };
 }
 
 function qaToKeyPointRule(qa: KnowledgeItem, maxLines = 2): string {
@@ -1327,8 +1356,22 @@ export async function POST(req: Request) {
 
       const topicClarifyInquiry = "🔎確認 どの話の相談かだけ教えて（例：交際費/出張手当/外注/家事按分/福利厚生/役員報酬/車両/消費税/税務調査/退職金/不動産/相続・承継）。";
 
-      const bestQa = pickBestQaForMessage(topicKbItemsForPrompt, message);
+      const pickedQa = pickBestQaPreferSubject({
+  items: topicKbItemsForPrompt,
+  message,
+  subjectTopic,
+  axisTopic,
+});
+
+const bestQa = pickedQa.qa;
 const qaKeyPointRule = bestQa ? qaToKeyPointRule(bestQa, 2) : null;
+
+if (qaKeyPointRule && bestQa) {
+  meta.qa_keypoint_used_title = bestQa.title;
+  meta.qa_keypoint_used = qaKeyPointRule;
+  meta.qa_pick_reason = pickedQa.reason;
+}
+
 
 // ★ debug
 if (bestQa && qaKeyPointRule) {
