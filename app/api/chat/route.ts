@@ -571,22 +571,50 @@ function buildLinesPreamble(params: {
 }): { text: string; usedQaId?: string } {
   const { topic, axisTopic, qa } = params;
 
+  // ✅ Lines前置きQAがあるなら、上から最大3行を“そのまま3行”で使う（潰さない）
   if (qa && qa.content) {
-    const first2 = qa.content.replace(/\r\n/g, "\n").split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 3).join(" ");
-    return { text: `✅要点 ${first2}`.trim(), usedQaId: qa.id };
+    const lines = qa.content
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+
+    // 先頭に✅要点、以降は - で揃える
+    const out: string[] = [];
+    if (lines[0]) out.push(`✅要点 ${lines[0]}`);
+    for (const l of lines.slice(1)) out.push(`- ${l}`);
+    return { text: out.join("\n").trim(), usedQaId: qa.id };
   }
 
   const isAuditAxis = axisTopic === TOPIC_TAX_AUDIT;
 
+  // fallback（2〜3行）
   if (topic === "交際費" && isAuditAxis) {
     return {
-      text: "✅要点 🍚は通す条件、🧂は地雷回避。交際費は調査で「相手・目的・証拠」を突かれる。現金手渡し/領収書無しは地雷。",
+      text: [
+        "✅要点 🍚は通す条件、🧂は地雷回避。",
+        "- 調査は「相手・目的・成果・証拠」の整合性を突く。",
+        "- 現金手渡し/領収書なし/私的混在は一発で揉める。",
+      ].join("\n"),
     };
   }
   if (isAuditAxis) {
-    return { text: "✅要点 🍚は強気で攻める条件、🧂は揉めない守り。税務調査は「一貫性」と「実態」を見られる。", usedQaId: undefined };
+    return {
+      text: [
+        "✅要点 🍚は主張が通る条件、🧂は揉めない守り。",
+        "- 税務調査は「形式より実態」「一貫性」を見る。",
+        "- 聞かれた範囲で勝つ（余計な情報は出さない）。",
+      ].join("\n"),
+    };
   }
-  return { text: "✅要点 🍚は強気で通す条件、🧂は地雷回避の守り。質問の範囲だけ答えるのが基本。", usedQaId: undefined };
+  return {
+    text: [
+      "✅要点 🍚は通す条件、🧂は地雷回避。",
+      "- 相手・目的・成果をメモで残すと説明が強い。",
+      "- 迷ったら少額×一貫性で守る。",
+    ].join("\n"),
+  };
 }
 
 /** ===== output shaping / postprocess ===== */
@@ -747,14 +775,21 @@ function inquiryLine(dialect: Dialect, stance: Stance): string {
 
 // 交際費などで “税務調査追撃” を誘導する inquiry
 function inquiryLineWithAuditCTA(dialect: Dialect, stance: Stance, subjectTopic: string): string {
-  const ex = `${subjectTopic}したいけど、税務調査でどうなる？`;
-  if (dialect === "standard" && stance === "sanbo")
-    return `🔎確認 税務・経営前提で回答しました。続けて「${ex}」も投げていただくと調査目線で詰められます。`;
-  if (dialect === "standard" && stance === "zubatto")
-    return `🔎確認 税務・経営前提で答えた。次は「${ex}」って投げて。調査官目線で詰める。`;
-  if (dialect === "kansai" && stance === "sanbo")
-    return `🔎確認 税務・経営前提でお答えしましたで。続けて「${ex}」も投げてもろたら調査目線で詰められますわ。`;
-  return `🔎確認 税務・経営前提で答えたで。次は「${ex}」って投げて。調査官目線で詰めるで。`;
+  const ex = `${subjectTopic}は税務調査で何を突かれやすい？`;
+
+  // sanbo（丁寧）
+  if (stance === "sanbo") {
+    if (dialect === "kansai") {
+      return `🔎確認 税務・経営前提でお答えしましたで。必要でしたら「${ex}」みたいに投げてもろたら、調査目線のポイントも整理しますわ。`;
+    }
+    return `🔎確認 税務・経営前提で回答しました。必要でしたら「${ex}」の形でもう一段、税務調査目線のポイントを整理します。`;
+  }
+
+  // zubatto（タメ口だけど“誘導控えめ”）
+  if (dialect === "kansai") {
+    return `🔎確認 税務・経営前提で答えたで。もし「${ex}」まで知りたかったら言うて。調査で刺さるポイントだけ整理する。`;
+  }
+  return `🔎確認 税務・経営前提で答えた。もし「${ex}」まで知りたければ言って。調査で刺さるポイントだけ整理する。`;
 }
 
 function stripInternalLeaks(text: string): string {
