@@ -123,6 +123,8 @@ type DebugMeta = {
   weak_utterance?: boolean;
   prev_user_head?: string;
   prev_user_len?: number;
+  qa_keypoint_used_title?: string;
+  qa_keypoint_used?: string;
 
   // NEW: why sticky/overlay happened
   tax_audit_sticky_reason?: string;
@@ -1308,6 +1310,21 @@ export async function POST(req: Request) {
 
       const topicClarifyInquiry = "🔎確認 どの話の相談かだけ教えて（例：交際費/出張手当/外注/家事按分/福利厚生/役員報酬/車両/消費税/税務調査/退職金/不動産/相続・承継）。";
 
+      const bestQa = pickBestQaForMessage(topicKbItemsForPrompt, message);
+const qaKeyPointRule = bestQa ? qaToKeyPointRule(bestQa, 2) : null;
+
+// ★ debug
+if (bestQa && qaKeyPointRule) {
+  meta.qa_keypoint_used_title = bestQa.title;
+  meta.qa_keypoint_used = qaKeyPointRule;
+}
+
+      // ★ debug: QA keypoint injection visibility
+if (bestQa && qaKeyPointRule) {
+  meta.qa_keypoint_used_title = bestQa.title;
+  meta.qa_keypoint_used = qaKeyPointRule;
+}
+
       // ===== C) normal_llm =====
       if (!answer) {
         const usedKnowledge = topicKbItemsForPrompt.length > 0;
@@ -1347,6 +1364,16 @@ export async function POST(req: Request) {
                   : "重要：金額/レンジの相談。🥄ちょうど良いラインの中で『守り寄りの目安』『攻め寄りの目安』を2行で必ず出す。🍚攻め/🧂守りは初回は出さない。断定しない。",
               ]
             : [];
+
+            // QAを「要点1つ」に圧縮して injectedRules に差し込む（薄い問題の解消）
+const bestQa = pickBestQaForMessage(topicKbItemsForPrompt, message);
+const qaKeyPointRule = bestQa ? qaToKeyPointRule(bestQa, 2) : null;
+
+// 初動の誤解は条件付きで1行補正（QAに無くても止める）
+const auditIntakeHint =
+  axisTopic === TOPIC_TAX_AUDIT && /(最初|初動|電話|連絡|窓口|誰に)/.test(message)
+    ? ["重要：顧問税理士がいる前提。税務調査の初動連絡は税理士宛/会社宛どちらもあり得るが、社長が単独で抱えない。「税理士に確認して折り返す」でOK。"]
+    : [];
 
         const promptPartsBase: PromptParts = {
           context: contextLines,
