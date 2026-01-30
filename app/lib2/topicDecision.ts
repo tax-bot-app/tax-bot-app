@@ -5,6 +5,35 @@ export type Lens = "amount" | "substance" | "system";
 
 export const TOPIC_TAX_AUDIT = "税務調査";
 
+// ===== 新規：紹介料 vs 外注の差し戻し用 =====
+const TOPIC_REFERRAL = "紹介料"; // topicSignals 側の topic 名に合わせる
+const TOPIC_OUTSOURCE = "外注";
+
+function buildRecentText(message: string, recentUserMsgs: string[]): string {
+  const tail = (recentUserMsgs ?? []).slice(-4).join("\n");
+  return `${message ?? ""}\n${tail}`.trim();
+}
+
+// “純外注”の匂い：外注topicに戻したい
+function looksPureOutsource(text: string): boolean {
+  return (
+    /(成果物|納品|検収|制作|デザイン|開発|コーディング|実装|原稿|記事|ライティング|編集|運用|保守|テスト|仕様|要件|工数|見積)/.test(
+      text
+    ) ||
+    /(指揮命令|常駐|出社|勤怠|タイムカード|勤務時間|シフト|席|PC支給|社用メール|社内システム|上司|評価|業務指示)/.test(
+      text
+    ) ||
+    /(偽装(委託|請負)|偽装請負|準委任|請負|派遣|労働者派遣)/.test(text)
+  );
+}
+
+// “紹介料/口利き”の匂い：紹介料topicを維持したい
+function looksReferral(text: string): boolean {
+  return /(紹介|仲介|成功報酬|口利き|リファラル|マージン|コミッション|バック|キックバック|謝礼|協力費)/.test(
+    text
+  );
+}
+
 // 「この主題が出たら “税務調査軸” を自然に重ねる」対象
 export const AUDIT_OVERLAY_TOPICS = new Set<string>([
   "交際費",
@@ -17,16 +46,22 @@ export const AUDIT_OVERLAY_TOPICS = new Set<string>([
   "消費税",
   "家族給与・家族役員",
   "退職金",
+  "紹介料"
+  // TOPIC_REFERRAL,
 ]);
 
 export function isExplicitTopicShiftPhrase(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(別件|話(を)?変え|話題(を)?変え|ところで|それはそうと|次の相談|別の相談|一旦置いといて)/.test(m);
+  return /(別件|話(を)?変え|話題(を)?変え|ところで|それはそうと|次の相談|別の相談|一旦置いといて)/.test(
+    m
+  );
 }
 
 export function isExplicitTaxAuditOff(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(調査は関係ない|税務調査は関係ない|税務調査じゃない|調査の話はもういい|調査はもういい|調査は一旦)/.test(m);
+  return /(調査は関係ない|税務調査は関係ない|税務調査じゃない|調査の話はもういい|調査はもういい|調査は一旦)/.test(
+    m
+  );
 }
 
 export type DecideAxisSubjectInput = {
@@ -60,7 +95,9 @@ export type DecideAxisSubjectOutput = {
  * axis = 税務調査（sticky/overlay）
  * subject = 交際費/外注など（主題）
  */
-export function decideAxisSubject(input: DecideAxisSubjectInput): DecideAxisSubjectOutput {
+export function decideAxisSubject(
+  input: DecideAxisSubjectInput
+): DecideAxisSubjectOutput {
   const {
     message,
     topicsNow,
@@ -72,30 +109,47 @@ export function decideAxisSubject(input: DecideAxisSubjectInput): DecideAxisSubj
     explicitTaxOff: explicitTaxOffIn,
   } = input;
 
-  const explicitTopicShift = explicitTopicShiftIn ?? isExplicitTopicShiftPhrase(message);
+  const explicitTopicShift =
+    explicitTopicShiftIn ?? isExplicitTopicShiftPhrase(message);
   const explicitTaxOff = explicitTaxOffIn ?? isExplicitTaxAuditOff(message);
 
   // subject候補：今→前（税務調査は除外）
   const subjectNow = topicsNow.find((t) => t !== TOPIC_TAX_AUDIT) ?? "";
   const subjectPrev = topicsPrev.find((t) => t !== TOPIC_TAX_AUDIT) ?? "";
-  const subjectTopic = subjectNow || (continuationLike ? subjectPrev : "") || "";
+  let subjectTopic = subjectNow || (continuationLike ? subjectPrev : "") || "";
+
+  // --- 37.4+：紹介料 ⇄ 外注の差し戻し（“雑な業務委託費”問題の回収） ---
+  // topicSignalsが「業務委託費」を紹介料寄せにしている前提で、
+  // “純外注”っぽいときだけ外注へ戻す。
+  if (subjectTopic === TOPIC_REFERRAL) {
+    const text = buildRecentText(message, recentUserMsgs);
+    // 紹介/仲介ワードが明確なら紹介料を維持
+    if (!looksReferral(text) && looksPureOutsource(text)) {
+      subjectTopic = TOPIC_OUTSOURCE;
+    }
+  }
 
   // tax audit 文脈が近いか（イベント型）
   const taxAuditContextActive =
     topicsNow.includes(TOPIC_TAX_AUDIT) ||
     topicsPrev.includes(TOPIC_TAX_AUDIT) ||
     (prevAssistantMessage ?? "").includes(TOPIC_TAX_AUDIT) ||
-    (recentUserMsgs ?? []).some((m) => (m ?? "").includes(TOPIC_TAX_AUDIT));
+    (recentUserMsgs ?? []).some((m) =>
+      (m ?? "").includes(TOPIC_TAX_AUDIT)
+    );
 
   // sticky：明示オフ/明示話題転換でだけ解除
-  const taxAuditSticky = taxAuditContextActive && !explicitTaxOff && !explicitTopicShift;
+  const taxAuditSticky =
+    taxAuditContextActive && !explicitTaxOff && !explicitTopicShift;
 
-  // overlay：主題が対象なら軸に税務調査を重ねる（追撃CTAしたい）
-  // overlay：主題が対象なら軸に税務調査を重ねる（追撃CTAしたい）
-const overlayWanted = !explicitTaxOff && Boolean(subjectTopic) && AUDIT_OVERLAY_TOPICS.has(subjectTopic);
+  // overlay：主題が対象なら軸に税務調査を重ねる
+  const overlayWanted =
+    !explicitTaxOff && Boolean(subjectTopic) && AUDIT_OVERLAY_TOPICS.has(subjectTopic);
 
-// auditAxis も boolean 確定
-const auditAxis = (!explicitTaxOff) && (taxAuditSticky || topicsNow.includes(TOPIC_TAX_AUDIT) || overlayWanted);
+  // auditAxis も boolean 確定
+  const auditAxis =
+    !explicitTaxOff &&
+    (taxAuditSticky || topicsNow.includes(TOPIC_TAX_AUDIT) || overlayWanted);
 
   // axisTopic：auditAxisなら税務調査、それ以外は topicsNow 先頭（無ければ空）
   const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : (topicsNow[0] ?? "");
@@ -112,7 +166,7 @@ const auditAxis = (!explicitTaxOff) && (taxAuditSticky || topicsNow.includes(TOP
 }
 
 /**
- * lens補正（税務調査だけ）
+ * lens補正
  * - 「どこまで」「安全？」「大丈夫？」が amount に倒れすぎるのを抑制
  * - 税務調査は scope 系を substance/system に寄せる
  */
@@ -127,7 +181,10 @@ export function inferLensWithContext(params: {
   const m = (m0 ?? "").trim();
 
   // amount優先：金額やレンジが明確
-  const hasMoney = /([0-9０-９]+)\s*(円|万円|万|千円)|¥\s*[0-9０-９]+|金額|上限|限度|相場|単価|目安|程度|レンジ|幅|いくら|なんぼ/.test(m);
+  const hasMoney =
+    /([0-9０-９]+)\s*(円|万円|万|千円)|¥\s*[0-9０-９]+|金額|上限|限度|相場|単価|目安|程度|レンジ|幅|いくら|なんぼ/.test(
+      m
+    );
 
   const hasLineWords = /(上限|限界|ギリ|グレー|安全ライン|アウト|セーフ|攻め|守り|攻守)/.test(m);
   const hasScopeWords = /(どこまで|大丈夫|リスク|安全度|安全性)/.test(m);
@@ -138,7 +195,9 @@ export function inferLensWithContext(params: {
     (/(書類|資料)/.test(m) && /(届出|規程|規定|要件|帳簿|契約書)/.test(m));
 
   // 税務調査：運用/対応の話は substance 寄り
-  const isAuditOps = /(雑談|反面調査|高圧|態度|圧|雰囲気|資料(全部|提出|要求)|提出リスト|ヒアリング|質問|調査官|国税|税務署)/.test(m);
+  const isAuditOps = /(雑談|反面調査|高圧|態度|圧|雰囲気|資料(全部|提出|要求)|提出リスト|ヒアリング|質問|調査官|国税|税務署)/.test(
+    m
+  );
 
   if (axis === TOPIC_TAX_AUDIT) {
     // 金額が明確なら amount
@@ -158,13 +217,13 @@ export function inferLensWithContext(params: {
   }
 
   // 通常時：金額が明確なら amount
-if (hasMoney) return "amount";
+  if (hasMoney) return "amount";
 
-// 「どこまで/安全/リスク」系は、金額が無いなら amount に倒さない
-if (hasScopeWords || hasLineWords) {
-  return isSystem ? "system" : "substance";
-}
+  // 「どこまで/安全/リスク」系は、金額が無いなら amount に倒さない
+  if (hasScopeWords || hasLineWords) {
+    return isSystem ? "system" : "substance";
+  }
 
-if (isSystem) return "system";
-return "substance";
+  if (isSystem) return "system";
+  return "substance";
 }
