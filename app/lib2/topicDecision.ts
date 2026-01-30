@@ -157,8 +157,14 @@ export function inferLensWithContext(params: {
     return "substance";
   }
 
-  // 通常時：金額/レンジワードで amount
-  if (hasMoney || hasLineWords) return "amount";
-  if (isSystem) return "system";
-  return "substance";
+  // 通常時：金額が明確なら amount
+if (hasMoney) return "amount";
+
+// 「どこまで/安全/リスク」系は、金額が無いなら amount に倒さない
+if (hasScopeWords || hasLineWords) {
+  return isSystem ? "system" : "substance";
+}
+
+if (isSystem) return "system";
+return "substance";
 }
