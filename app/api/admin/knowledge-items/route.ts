@@ -28,18 +28,13 @@ async function requireAdmin(
   supabase: ReturnType<typeof adminSupabase>
 ): Promise<{ uid: string; email: string }> {
   const token = bearerToken(req);
-  if (!token) {
-    throw Object.assign(new Error("Missing Authorization Bearer token"), { status: 401 });
-  }
+  if (!token) throw Object.assign(new Error("Missing Authorization Bearer token"), { status: 401 });
 
   const { data: userRes, error: userErr } = await supabase.auth.getUser(token);
-  if (userErr || !userRes?.user) {
-    throw Object.assign(new Error("Invalid session"), { status: 401 });
-  }
+  if (userErr || !userRes?.user) throw Object.assign(new Error("Invalid session"), { status: 401 });
 
   const uid = userRes.user.id;
   const email = (userRes.user.email ?? "").toLowerCase();
-
   if (!uid) throw Object.assign(new Error("No user id on session"), { status: 401 });
   if (!email) throw Object.assign(new Error("No email on session"), { status: 401 });
 
@@ -50,10 +45,7 @@ async function requireAdmin(
     .maybeSingle();
 
   if (adminErr) throw adminErr;
-
-  if (!adminRow?.is_admin) {
-    throw Object.assign(new Error(`Forbidden (admin only): ${email}`), { status: 403 });
-  }
+  if (!adminRow?.is_admin) throw Object.assign(new Error(`Forbidden (admin only): ${email}`), { status: 403 });
 
   return { uid, email };
 }
@@ -67,6 +59,19 @@ function safeInt(x: unknown, def: number): number {
 }
 function safeBool(x: unknown, def: boolean): boolean {
   return typeof x === "boolean" ? x : def;
+}
+
+// ===== CSV helpers =====
+function csvEscape(v: unknown): string {
+  const s = v === null || v === undefined ? "" : String(v);
+  const needs = /[",\r\n]/.test(s);
+  const escaped = s.replace(/"/g, '""');
+  return needs ? `"${escaped}"` : escaped;
+}
+function toCsv(rows: Record<string, unknown>[], headers: string[]): string {
+  const head = headers.map(csvEscape).join(",");
+  const body = rows.map((r) => headers.map((h) => csvEscape((r as any)[h])).join(",")).join("\n");
+  return `${head}\n${body}\n`;
 }
 
 type Kind = "qa";
@@ -86,6 +91,7 @@ export async function GET(req: Request) {
     const topic = safeStr(u.searchParams.get("topic")).trim();
     const active = safeStr(u.searchParams.get("active")).trim(); // "true"/"false"/""
     const q = safeStr(u.searchParams.get("q")).trim(); // title/content keyword
+    const format = safeStr(u.searchParams.get("format")).trim().toLowerCase();
 
     let query = supabase
       .from("knowledge_items")
@@ -106,7 +112,31 @@ export async function GET(req: Request) {
     const { data, error } = await query;
     if (error) throw error;
 
-    return NextResponse.json({ ok: true, rows: data ?? [] }, { status: 200 });
+    const rows = data ?? [];
+
+    if (format === "csv") {
+      const csvRows = rows.map((r: any) => ({
+        topic: safeStr(r?.topic),
+        priority: r?.priority ?? "",
+        active: String(Boolean(r?.is_active)),
+        title: safeStr(r?.title),
+        content: safeStr(r?.content),
+      }));
+
+      const headers = ["topic", "priority", "active", "title", "content"];
+      const csv = toCsv(csvRows, headers);
+
+      return new NextResponse(csv, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="knowledge_items_${kind}.csv"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    return NextResponse.json({ ok: true, rows }, { status: 200 });
   } catch (e: any) {
     const status = e?.status ?? 500;
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });

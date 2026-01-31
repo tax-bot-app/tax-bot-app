@@ -96,7 +96,7 @@ function TableScroller(props: { children: React.ReactNode }) {
   return (
     <div style={{ border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
       <div style={{ overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", maxWidth: "100%" }}>
-        <div style={{ minWidth: 980 }}>{props.children}</div>
+        <div style={{ minWidth: 1180 }}>{props.children}</div>
       </div>
     </div>
   );
@@ -137,6 +137,43 @@ export default function KnowledgeLinesClient() {
         "Content-Type": "application/json",
       },
     });
+  }
+
+  // ===== CSV download helper (Authorization付きでBlob DL) =====
+  async function downloadCsv(apiPath: string, qs: URLSearchParams, filenameBase: string) {
+    setLoading(true);
+    setMsg(null);
+    try {
+      qs.set("format", "csv");
+      const token = await tokenOrThrow();
+
+      const res = await fetch(`${apiPath}?${qs.toString()}`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        throw new Error(`CSV download failed: ${res.status} ${t}`);
+      }
+
+      // 念のため text で受ける（API実装によっては text/csv）
+      const text = await res.text();
+      const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${filenameBase}_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setMsg(e?.message ?? "csv download failed");
+    } finally {
+      setLoading(false);
+    }
   }
 
   // =========================
@@ -525,6 +562,22 @@ export default function KnowledgeLinesClient() {
             <button onClick={loadLines} disabled={loading} style={{ padding: "6px 10px" }}>
               再読込
             </button>
+
+            <button
+              onClick={() => {
+                const qs = new URLSearchParams();
+                if (fTopic) qs.set("topic", fTopic);
+                if (fLens) qs.set("lens", fLens);
+                if (fStance) qs.set("stance", fStance);
+                if (fActive) qs.set("active", fActive);
+                if (fRole) qs.set("role", fRole);
+                downloadCsv("/api/admin/knowledge-lines", qs, "knowledge_lines");
+              }}
+              disabled={loading}
+              style={{ padding: "6px 10px" }}
+            >
+              CSV
+            </button>
           </div>
 
           <TableScroller>
@@ -731,6 +784,21 @@ export default function KnowledgeLinesClient() {
             <button onClick={loadQa} disabled={loading} style={{ padding: "6px 10px" }}>
               再読込
             </button>
+
+            <button
+              onClick={() => {
+                const qs = new URLSearchParams();
+                qs.set("kind", "qa");
+                if (qTopic) qs.set("topic", qTopic);
+                if (qActive) qs.set("active", qActive);
+                if (qQuery.trim()) qs.set("q", qQuery.trim());
+                downloadCsv("/api/admin/knowledge-items", qs, "knowledge_items_qa");
+              }}
+              disabled={loading}
+              style={{ padding: "6px 10px" }}
+            >
+              CSV
+            </button>
           </div>
 
           <TableScroller>
@@ -753,7 +821,9 @@ export default function KnowledgeLinesClient() {
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>{String(r.is_active)}</td>
                     <td style={{ padding: 8, fontWeight: 700 }}>{r.title}</td>
                     <td style={{ padding: 8 }}>
-                      <div style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.content}</div>
+                      <div style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                        {r.content}
+                      </div>
                     </td>
                     <td style={{ padding: 8, whiteSpace: "nowrap" }}>
                       <button onClick={() => startEditQa(r)} style={{ padding: "4px 8px" }}>
@@ -850,7 +920,11 @@ export default function KnowledgeLinesClient() {
 
                 <div style={{ borderTop: "1px solid #eee", paddingTop: 10 }}>
                   <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                    <input type="checkbox" checked={qaEditing.is_active} onChange={(e) => setQaEditing({ ...qaEditing, is_active: e.target.checked })} />
+                    <input
+                      type="checkbox"
+                      checked={qaEditing.is_active}
+                      onChange={(e) => setQaEditing({ ...qaEditing, is_active: e.target.checked })}
+                    />
                     is_active
                   </label>
 
@@ -933,16 +1007,29 @@ export default function KnowledgeLinesClient() {
 
             <label>
               limit&nbsp;
-              <input
-                type="number"
-                value={dLimit}
-                onChange={(e) => setDLimit(Number(e.target.value))}
-                style={{ width: 90 }}
-              />
+              <input type="number" value={dLimit} onChange={(e) => setDLimit(Number(e.target.value))} style={{ width: 90 }} />
             </label>
 
             <button onClick={loadDebug} disabled={loading} style={{ padding: "6px 10px" }}>
               再読込
+            </button>
+
+            <button
+              onClick={() => {
+                const qs = new URLSearchParams();
+                qs.set("limit", String(Math.max(1, Math.min(200, dLimit || 50))));
+                if (dTopic) qs.set("topic", dTopic);
+                if (dLens) qs.set("lens", dLens);
+                if (dPath) qs.set("path", dPath);
+                if (dUsedKnowledge) qs.set("used_knowledge", dUsedKnowledge);
+                if (dUsedLinesPick) qs.set("used_lines_pick", dUsedLinesPick);
+                if (dQuery.trim()) qs.set("q", dQuery.trim());
+                downloadCsv("/api/admin/chat-debug", qs, "chat_debug_events");
+              }}
+              disabled={loading}
+              style={{ padding: "6px 10px" }}
+            >
+              CSV
             </button>
           </div>
 
@@ -952,6 +1039,7 @@ export default function KnowledgeLinesClient() {
                 <tr style={{ background: "#f6f6f6" }}>
                   <th style={{ textAlign: "left", padding: 8 }}>created</th>
                   <th style={{ textAlign: "left", padding: 8 }}>topic</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>topics_now</th>
                   <th style={{ textAlign: "left", padding: 8 }}>lens</th>
                   <th style={{ textAlign: "left", padding: 8 }}>path</th>
                   <th style={{ textAlign: "left", padding: 8 }}>K</th>
@@ -971,6 +1059,20 @@ export default function KnowledgeLinesClient() {
                     <tr key={r.id} style={{ borderTop: "1px solid #eee" }}>
                       <td style={{ padding: 8, whiteSpace: "nowrap", color: "#555" }}>{(r.created_at ?? "").replace("T", " ").slice(0, 19)}</td>
                       <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.inferred_topic}</td>
+
+                      <td style={{ padding: 8, minWidth: 260 }}>
+                        {Array.isArray(r.topics_now) && r.topics_now.length > 0 ? (
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {r.topics_now.slice(0, 6).map((t) => (
+                              <Chip key={t} label={t} />
+                            ))}
+                            {r.topics_now.length > 6 && <Chip label={`+${r.topics_now.length - 6}`} tone="muted" />}
+                          </div>
+                        ) : (
+                          <span style={{ color: "#888" }}>-</span>
+                        )}
+                      </td>
+
                       <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.lens}</td>
                       <td style={{ padding: 8, whiteSpace: "nowrap" }}>
                         <Chip label={r.path} />
@@ -1022,7 +1124,7 @@ export default function KnowledgeLinesClient() {
 
                 {debugRows.length === 0 && (
                   <tr>
-                    <td colSpan={10} style={{ padding: 12, color: "#666" }}>
+                    <td colSpan={11} style={{ padding: 12, color: "#666" }}>
                       No rows
                     </td>
                   </tr>
@@ -1067,12 +1169,18 @@ export default function KnowledgeLinesClient() {
                     <Chip label={`topic: ${debugOpen.inferred_topic || "-"}`} /> <Chip label={`lens: ${debugOpen.lens}`} />{" "}
                     <Chip label={`path: ${debugOpen.path}`} />
                   </div>
+
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <Chip label={`used_knowledge: ${String(debugOpen.used_knowledge)}`} tone={debugOpen.used_knowledge ? "ok" : "muted"} />
                     <Chip label={`used_lines_pick: ${String(debugOpen.used_lines_pick)}`} tone={debugOpen.used_lines_pick ? "ok" : "muted"} />
                     <Chip label={`followup: ${String(debugOpen.followup)}`} />
                     <Chip label={`shifted: ${String(debugOpen.shifted)}`} />
                     <Chip label={`borrowed_prev_topic: ${String(Boolean(debugOpen.meta?.borrowed_prev_topic))}`} />
+                  </div>
+
+                  <div style={{ padding: 10, border: "1px solid #eee", borderRadius: 10 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>topics_now</div>
+                    <div style={{ whiteSpace: "pre-wrap" }}>{(debugOpen.topics_now ?? []).join(", ") || "-"}</div>
                   </div>
 
                   <div style={{ padding: 10, border: "1px solid #eee", borderRadius: 10 }}>
