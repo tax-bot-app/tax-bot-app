@@ -71,7 +71,7 @@ function pickedLinesSimple(meta: any): string {
       return topic ? `${core}:${topic}` : core;
     })
     .filter(Boolean)
-    .join(" | ");
+    .join("\n");
 }
 
 type ApiRes = { ok: true; rows: any[] } | { ok: false; error: string };
@@ -137,6 +137,8 @@ export async function GET(req: Request) {
           inferred_topic: safeStr(r?.inferred_topic),
           subject_topic: safeStr(meta?.subject_topic ?? ""),
           axis_topic: safeStr(meta?.axis_topic ?? ""),
+
+audit_axis: String(Boolean(meta?.audit_axis)),
           lens: safeStr(r?.lens),
           qa_pick_reason: safeStr(meta?.qa_pick_reason ?? meta?.pick_reason ?? ""),
           picked_lines: pickedLinesSimple(meta),
@@ -151,13 +153,15 @@ export async function GET(req: Request) {
         "inferred_topic",
         "subject_topic",
         "axis_topic",
+        "audit_axis", 
         "lens",
         "qa_pick_reason",
         "picked_lines",
         "picked_qa",
       ];
 
-      const csv = toCsv(csvRows, headers);
+      const csvBody = toCsv(csvRows, headers);
+const csv = "\uFEFF" + csvBody; // ★BOM付与（Excel文字化け対策）
       return new NextResponse(csv, {
         status: 200,
         headers: {

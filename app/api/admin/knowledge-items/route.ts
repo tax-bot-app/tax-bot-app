@@ -124,8 +124,8 @@ export async function GET(req: Request) {
       }));
 
       const headers = ["topic", "priority", "active", "title", "content"];
-      const csv = toCsv(csvRows, headers);
-
+      const csvBody = toCsv(csvRows, headers);
+const csv = "\uFEFF" + csvBody; // ★BOM付与（Excel文字化け対策）
       return new NextResponse(csv, {
         status: 200,
         headers: {
