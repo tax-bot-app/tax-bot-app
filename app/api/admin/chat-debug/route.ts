@@ -137,6 +137,8 @@ export async function GET(req: Request) {
           inferred_topic: safeStr(r?.inferred_topic),
           subject_topic: safeStr(meta?.subject_topic ?? ""),
           axis_topic: safeStr(meta?.axis_topic ?? ""),
+          topic_normalized: safeStr(meta?.topic_normalized ?? ""),
+topic_hits: meta?.topic_hits ? JSON.stringify(meta.topic_hits) : "",
 
 audit_axis: String(Boolean(meta?.audit_axis)),
           lens: safeStr(r?.lens),
@@ -158,6 +160,8 @@ audit_axis: String(Boolean(meta?.audit_axis)),
         "qa_pick_reason",
         "picked_lines",
         "picked_qa",
+        "topic_normalized",
+"topic_hits",
       ];
 
       const csvBody = toCsv(csvRows, headers);

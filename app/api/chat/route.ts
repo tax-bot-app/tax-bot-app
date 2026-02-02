@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 // NEW: 37.2 split
-import { inferTopics, inferTopicFromHistory, isWeakUtterance, isFollowupOnlyText } from "../../lib2/topicSignals";
+import { inferTopics, inferTopicsDebug, inferTopicFromHistory, isWeakUtterance, isFollowupOnlyText } from "../../lib2/topicSignals";
 import { decideAxisSubject, inferLensWithContext, TOPIC_TAX_AUDIT, AUDIT_OVERLAY_TOPICS, type Lens } from "../../lib2/topicDecision";
 
 export const runtime = "nodejs";
@@ -134,6 +134,8 @@ type DebugMeta = {
     priority: number;
   }>;
 qa_pick_reason?: string;
+  topic_normalized?: string;
+  topic_hits?: any; // ちゃんと型付けするなら TopicHit[] だが循環防止でanyでもOK
   tax_audit_sticky_reason?: string;
 };
 
@@ -1381,8 +1383,12 @@ export async function POST(req: Request) {
       const forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance;
 
       // ===== topic / axis / subject (37.2: topicDecision) =====
-      const topicsNow0 = inferTopics(message, { max: 3 });
-      const topicsPrev = prevUserMessage ? inferTopics(prevUserMessage, { max: 3 }) : [];
+      const topicsNowDbg = inferTopicsDebug(message, { max: 3 });
+const topicsNow0 = topicsNowDbg.topics;
+
+const topicsPrevDbg = prevUserMessage ? inferTopicsDebug(prevUserMessage, { max: 3 }) : null;
+const topicsPrev = topicsPrevDbg?.topics ?? [];
+
 
       const recentUserMsgs = await (async () => {
         const { data: rows } = await db
@@ -1497,6 +1503,8 @@ const cOther = qaLimited.bucketCounts.other;
         weak_utterance: weakUtterance,
         prev_user_head: dbgHead(prevUserMessage ?? "", 80),
         prev_user_len: (prevUserMessage ?? "").length,
+          topic_normalized: topicsNowDbg.normalized,
+  topic_hits: topicsNowDbg.hits,
         tax_audit_sticky_reason: decision.reason,
       };
 

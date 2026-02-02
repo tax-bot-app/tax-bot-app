@@ -1,5 +1,23 @@
 // app/lib2/topicSignals.ts
 // 匂い検知・正規化・topic辞書（TOPIC_SPECS）を集約
+export type TopicHit = {
+  topic: string;
+  score: number;
+  matched: Array<{
+    re: string;      // regex source
+    flags: string;   // regex flags
+    score: number;   // points added
+    match: string;   // matched substring (first)
+  }>;
+};
+
+export type InferTopicsDebugResult = {
+  normalized: string;
+  topics: string[];
+  forced: string[];
+  scored: Array<{ topic: string; score: number }>;
+  hits: TopicHit[];
+};
 
 export type TopicSpec = { topic: string; patterns: Array<{ re: RegExp; score: number }> };
 
@@ -298,30 +316,55 @@ export const TOPIC_SPECS: TopicSpec[] = [
 ];
 
 export function inferTopics(message: string, opts?: { max?: number }): string[] {
-  const m0 = normalizeText(message);
-  if (!m0) return [];
+  return inferTopicsDebug(message, opts).topics;
+}
 
-  // 家族給与だけは “合わせ技” を優先
+
+export function inferTopicsDebug(message: string, opts?: { max?: number }): InferTopicsDebugResult {
+  const m0 = normalizeText(message);
+  const max = Math.max(1, Math.min(6, opts?.max ?? 3));
+
+  if (!m0) {
+    return { normalized: "", topics: [], forced: [], scored: [], hits: [] };
+  }
+
+  // 家族給与だけは “合わせ技” を優先（既存と同じ）
   const familyRe = /(奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親|父|母|親戚|親族)/i;
   const payRe = /(給料|給与|報酬|賃金|人件費|手当|払|支払|振込)/i;
 
   const forced: string[] = [];
   if (familyRe.test(m0) && payRe.test(m0)) forced.push("家族給与・家族役員");
 
-  const max = Math.max(1, Math.min(6, opts?.max ?? 3));
-
+  const hits: TopicHit[] = [];
   const scored = TOPIC_SPECS.map((spec) => {
     let score = 0;
+    const matched: TopicHit["matched"] = [];
+
     for (const p of spec.patterns) {
-      if (p.re.test(m0)) score += p.score;
+      const mm = m0.match(p.re);
+      if (mm) {
+        score += p.score;
+        matched.push({
+          re: p.re.source,
+          flags: (p.re.flags ?? ""),
+          score: p.score,
+          match: mm[0] ?? "",
+        });
+      }
     }
+
+    if (score > 0) hits.push({ topic: spec.topic, score, matched });
     return { topic: spec.topic, score };
   })
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score);
 
-  const topics = scored.slice(0, max).map((x) => x.topic);
-  return [...new Set([...forced, ...topics])];
+  const topics = [...new Set([...forced, ...scored.slice(0, max).map((x) => x.topic)])];
+
+  // hits はスコア順（見やすさ）
+  hits.sort((a, b) => b.score - a.score);
+
+  return { normalized: m0, topics, forced, scored, hits };
 }
 
 export function inferTopicFromHistory(prevUserMessage: string | null, prevAssistantMessage: string | null): string | null {
