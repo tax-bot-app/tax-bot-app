@@ -1124,6 +1124,105 @@ async function generateAnswerStrict(params: {
   return last;
 }
 
+/** ===== QA limit (max 6) ===== */
+function sortByPriorityDesc(qas: KnowledgeItem[]): KnowledgeItem[] {
+  return [...qas].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+}
+
+function pickTwoBy70and50Preference(qas: KnowledgeItem[]): KnowledgeItem[] {
+  const sorted = sortByPriorityDesc(qas);
+  if (sorted.length === 0) return [];
+
+  const picked: KnowledgeItem[] = [];
+  const used = new Set<string>();
+
+  const pick = (pred: (x: KnowledgeItem) => boolean) => {
+    const x = sorted.find((it) => !used.has(it.id) && pred(it));
+    if (!x) return null;
+    used.add(x.id);
+    picked.push(x);
+    return x;
+  };
+
+  // 1枚目：70(OS)優先（>=70）。無ければ最上位
+  pick((it) => (it.priority ?? 0) >= 70) ?? pick(() => true);
+
+  // 2枚目：50(場面)優先（<70）。無ければ残り最上位
+  pick((it) => (it.priority ?? 0) < 70) ?? pick(() => true);
+
+  return picked.slice(0, 2);
+}
+
+function pickOtherUpTo2Prefer50(qas: KnowledgeItem[], alreadyPickedIds: Set<string>): KnowledgeItem[] {
+  const sorted = sortByPriorityDesc(qas).filter((it) => !alreadyPickedIds.has(it.id));
+  if (sorted.length === 0) return [];
+
+  const picked: KnowledgeItem[] = [];
+  const used = new Set<string>(alreadyPickedIds);
+
+  const pick = (pred: (x: KnowledgeItem) => boolean) => {
+    const x = sorted.find((it) => !used.has(it.id) && pred(it));
+    if (!x) return null;
+    used.add(x.id);
+    picked.push(x);
+    return x;
+  };
+
+  // otherは基本 50(= <70) を2枚
+  pick((it) => (it.priority ?? 0) < 70);
+  pick((it) => (it.priority ?? 0) < 70);
+
+  // 足りなければ残りで埋める（※変なtopicから強制はしない＝候補の中から）
+  while (picked.length < 2) {
+    const x = sorted.find((it) => !used.has(it.id));
+    if (!x) break;
+    used.add(x.id);
+    picked.push(x);
+  }
+
+  return picked.slice(0, 2);
+}
+
+function limitQaMax6(params: {
+  itemsForPrompt: KnowledgeItem[];
+  subjectTopic: string;
+  auditAxis: boolean;
+}): { limitedItemsForPrompt: KnowledgeItem[]; pickedQa: KnowledgeItem[]; bucketCounts: { subject: number; audit: number; other: number } } {
+  const { itemsForPrompt, subjectTopic, auditAxis } = params;
+
+  // QA以外はそのまま（example/rule は対象外：今回の要件がQA制限のため）
+  const nonQa = (itemsForPrompt ?? []).filter((it) => it.kind !== "qa");
+  const qasAll = (itemsForPrompt ?? []).filter((it) => it.kind === "qa");
+
+  // bucket候補
+  const qasSubject = subjectTopic ? qasAll.filter((q) => q.topic === subjectTopic) : [];
+  const qasAudit = auditAxis ? qasAll.filter((q) => q.topic === TOPIC_TAX_AUDIT) : [];
+
+  // subject最大2（70x1 + 50x1）
+  const pickedSubject = pickTwoBy70and50Preference(qasSubject);
+
+  // audit最大2（70x1 + 50x1）
+  const pickedAudit = pickTwoBy70and50Preference(qasAudit);
+
+  const usedIds = new Set<string>([...pickedSubject, ...pickedAudit].map((x) => x.id));
+
+  // other最大2（50x2優先）
+  // ★重要：otherは「別topic強制」じゃない。残り候補から上位順で埋める。subject/auditと同topicでもOK。
+  const pickedOther = pickOtherUpTo2Prefer50(qasAll, usedIds);
+
+  const pickedQa = [...pickedSubject, ...pickedAudit, ...pickedOther].slice(0, 6);
+  const pickedQaIds = new Set(pickedQa.map((x) => x.id));
+
+  // 元のitemsの順序は維持しつつ、QAだけ絞る
+  const limitedItemsForPrompt = [...nonQa, ...qasAll.filter((q) => pickedQaIds.has(q.id))];
+
+  const cSubject = pickedQa.filter((x) => x.topic === subjectTopic).length;
+  const cAudit = pickedQa.filter((x) => x.topic === TOPIC_TAX_AUDIT).length;
+  const cOther = pickedQa.length - cSubject - cAudit;
+
+  return { limitedItemsForPrompt, pickedQa, bucketCounts: { subject: cSubject, audit: cAudit, other: cOther } };
+}
+
 /** ===== meta builders ===== */
 function buildPickedQaMeta(items: KnowledgeItem[], limit = 3): PickedQaMeta[] {
   const rows = (items ?? [])
@@ -1369,11 +1468,27 @@ export async function POST(req: Request) {
       const linesPrefaceQa = pickLinesPrefaceQa(topicKbItems);
 
       // 初回回答には “Lines前置きQA” を混ぜない（followup時だけ使う）
-      const topicKbItemsForPrompt = followup ? topicKbItems : topicKbItems.filter((x) => !(x.kind === "qa" && (x.title ?? "").includes(LINES_PREFACE_TAG)));
+      const topicKbItemsForPrompt0 = followup
+  ? topicKbItems
+  : topicKbItems.filter((x) => !(x.kind === "qa" && (x.title ?? "").includes(LINES_PREFACE_TAG)));
 
-      // ===== debug meta =====
+// ★ QA最大6枚（subject2 + audit2 + other2）
+const qaLimited = limitQaMax6({
+  itemsForPrompt: topicKbItemsForPrompt0,
+  subjectTopic,
+  auditAxis,
+});
+
+const topicKbItemsForPrompt = qaLimited.limitedItemsForPrompt;
+const pickedQaForPrompt = qaLimited.pickedQa;
+const cSubject = qaLimited.bucketCounts.subject;
+const cAudit = qaLimited.bucketCounts.audit;
+const cOther = qaLimited.bucketCounts.other;
+
+
+// ===== debug meta =====
       const meta: DebugMeta = {
-        picked_qa: buildPickedQaMeta(topicKbItems, 10),
+        picked_qa: buildPickedQaMeta(pickedQaForPrompt, 10), // ★実際に採用したQAだけ
         picked_lines: [],
         axis_topic: axisTopic,
         subject_topic: subjectTopic,
@@ -1384,6 +1499,10 @@ export async function POST(req: Request) {
         prev_user_len: (prevUserMessage ?? "").length,
         tax_audit_sticky_reason: decision.reason,
       };
+
+meta.kb_bucket_counts = { subject: cSubject, audit: cAudit, other: cOther };
+
+    
 
       meta.picked_kb_items = (topicKbItemsForPrompt ?? []).slice(0, 10).map((it) => ({
   id: it.id,
