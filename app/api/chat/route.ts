@@ -59,6 +59,20 @@ function dbgHead(s: string, n = 80) {
   return t.length <= n ? t : t.slice(0, n) + "…";
 }
 
+function codepointsTail(s: string, n = 24): string {
+  const arr = Array.from(String(s ?? ""));
+  const tail = arr.slice(Math.max(0, arr.length - n));
+  return tail
+    .map((ch) => {
+      const cp = ch.codePointAt(0);
+      const hex = cp === undefined ? "??" : "U+" + cp.toString(16).toUpperCase().padStart(4, "0");
+      // 見やすさ：空白や改行も判別できるように
+      const visible = ch === " " ? "␠" : ch === "\n" ? "␤" : ch === "\t" ? "␉" : ch;
+      return `${visible}:${hex}`;
+    })
+    .join(" ");
+}
+
 /** ===== types ===== */
 type ConsumeTalkV2Result = {
   month_key: string;
@@ -136,6 +150,14 @@ type DebugMeta = {
 qa_pick_reason?: string;
   topic_normalized?: string;
   topic_hits?: any; // ちゃんと型付けするなら TopicHit[] だが循環防止でanyでもOK
+    topic_raw?: string;
+  topic_raw_json?: string;
+  topic_codepoints_tail?: string;
+
+  prev_debug_path?: string;
+  prev_debug_lens?: string;
+  lines_cooldown_applied?: boolean;
+  lines_keep_reason?: string;
   tax_audit_sticky_reason?: string;
 };
 
@@ -1270,6 +1292,24 @@ function emitDebug(trace: DebugTrace) {
   console.log(`[chat-trace] ${JSON.stringify(trace)}`);
 }
 
+async function fetchPrevDebugLite(db: any, convId: string): Promise<{ path: string; lens: string } | null> {
+  try {
+    const { data } = await db
+      .from("chat_debug_events")
+      .select("path, lens")
+      .eq("conversation_id", convId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    const r = Array.isArray(data) ? data[0] : null;
+    if (!r) return null;
+
+    return { path: String(r.path ?? ""), lens: String(r.lens ?? "") };
+  } catch {
+    return null;
+  }
+}
+
 /** ===== footer (tax audit axis) ===== */
 function followupFooter(axisTopic: string, dialect: Dialect, stance: Stance): string | null {
   if (axisTopic !== TOPIC_TAX_AUDIT) return null;
@@ -1378,9 +1418,11 @@ export async function POST(req: Request) {
         /^((それ|その|じゃあ|ほな|で|なら|今の|さっき|続き|つづき)\b)/.test(message.trim());
 
       const followupPhase = followupPhaseRaw && continuationLike;
-      const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shiftedRaw);
+const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shiftedRaw);
 
-      const forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance;
+// ★ 後でクールダウンで上書きするので let
+let forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance;
+
 
       // ===== topic / axis / subject (37.2: topicDecision) =====
       const topicsNowDbg = inferTopicsDebug(message, { max: 3 });
@@ -1429,6 +1471,33 @@ const topicsPrev = topicsPrevDbg?.topics ?? [];
         fallbackPrevUser: prevUserMessage ?? null,
         usePrevInstead: lensInputUsePrev,
       });
+
+      // ===== followup_lines クールダウン（1回出したら基本リセット）=====
+const prevDebug = await fetchPrevDebugLite(db, convId);
+const prevWasLines = prevDebug?.path === "followup_lines";
+const prevLens = (prevDebug?.lens ?? "").trim();
+const lensChanged = Boolean(prevLens) && prevLens !== lens;
+
+// 「維持してOK」条件：lineRequest / followupExplicit / lens変化
+const keepLines =
+  lineRequest || followupExplicit || lensChanged;
+
+const linesKeepReason = keepLines
+  ? lineRequest
+    ? "keep:line_request"
+    : followupExplicit
+    ? "keep:explicit_followup"
+    : lensChanged
+    ? `keep:lens_changed:${prevLens}->${lens}`
+    : "keep:other"
+  : "cooldown:prev_was_lines";
+
+const linesCooldown = prevWasLines && !keepLines;
+
+// クールダウン中は followup_lines に入れない（= forceNormalAnswer を強制）
+if (linesCooldown) {
+  forceNormalAnswer = true;
+}
 
       // ===== knowledge fetch（主題 + 税務調査 を同時に拾う）=====
       const globalRules = await retrieveGlobalRules({ db });
@@ -1498,6 +1567,14 @@ const cOther = qaLimited.bucketCounts.other;
         picked_lines: [],
         axis_topic: axisTopic,
         subject_topic: subjectTopic,
+                topic_raw: message,
+        topic_raw_json: JSON.stringify(message),
+        topic_codepoints_tail: codepointsTail(message, 30),
+
+        prev_debug_path: prevDebug?.path ?? "",
+        prev_debug_lens: prevDebug?.lens ?? "",
+        lines_cooldown_applied: Boolean(linesCooldown),
+        lines_keep_reason: linesKeepReason,
         audit_axis: auditAxis,
         borrowed_prev_topic: shouldBorrowPrevTopic,
         weak_utterance: weakUtterance,
@@ -1618,7 +1695,7 @@ if (bestQa && qaKeyPointRule) {
       // ===== C) normal_llm =====
       if (!answer) {
         const usedKnowledge = topicKbItemsForPrompt.length > 0;
-        const allowAttackDefenseDetail = followup;
+        const allowAttackDefenseDetail = followup && !linesCooldown;
 
         const kbGlobalBlock = formatKnowledgeBlock(globalRules);
         const kbTopicBlock = formatKnowledgeBlock(topicKbItemsForPrompt);
