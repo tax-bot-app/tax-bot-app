@@ -1260,11 +1260,14 @@ function emitDebug(trace: DebugTrace) {
   console.log(`[chat-trace] ${JSON.stringify(trace)}`);
 }
 
-async function fetchPrevDebugLite(db: any, convId: string): Promise<{ path: string; lens: string } | null> {
+async function fetchPrevDebugLite(
+  db: any,
+  convId: string
+): Promise<{ path: string; lens: string; subjectTopic: string; axisTopic: string } | null> {
   try {
     const { data } = await db
       .from("chat_debug_events")
-      .select("path, lens")
+      .select("path, lens, meta")
       .eq("conversation_id", convId)
       .order("created_at", { ascending: false })
       .limit(1);
@@ -1272,11 +1275,18 @@ async function fetchPrevDebugLite(db: any, convId: string): Promise<{ path: stri
     const r = Array.isArray(data) ? data[0] : null;
     if (!r) return null;
 
-    return { path: String(r.path ?? ""), lens: String(r.lens ?? "") };
+    const meta = (r.meta ?? {}) as any;
+    return {
+      path: String(r.path ?? ""),
+      lens: String(r.lens ?? ""),
+      subjectTopic: String(meta.subject_topic ?? ""),
+      axisTopic: String(meta.axis_topic ?? ""),
+    };
   } catch {
     return null;
   }
 }
+
 
 /** ===== footer (tax audit axis) ===== */
 function followupFooter(axisTopic: string, dialect: Dialect, stance: Stance): string | null {
@@ -1419,18 +1429,29 @@ export async function POST(req: Request) {
         continuationLike,
       });
 
+      const prevDebug = await fetchPrevDebugLite(db, convId);
+
       let subjectTopic = decision.subjectTopic || "";
 const auditAxis = decision.auditAxis;
 
-// ★ lineRequest なのに subject が空なら、直前ユーザー発話から主題を借りる
+// ★ lineRequest なのに subject が空なら、直前の「確定主題」を最優先で借りる
 if (!subjectTopic && lineRequest) {
-  const prevTopics = topicsPrev.filter((t) => t !== TOPIC_TAX_AUDIT);
-  subjectTopic = prevTopics[0] || "";
+  const prevSubject = (prevDebug?.subjectTopic ?? "").trim();
+
+  // ① 直前の確定主題があればそれ（税務調査は除外）
+  if (prevSubject && prevSubject !== TOPIC_TAX_AUDIT) {
+    subjectTopic = prevSubject;
+  } else {
+    // ② fallback：直前ユーザー発話のtopic推定（匂い検知）
+    const prevTopics = topicsPrev.filter((t) => t !== TOPIC_TAX_AUDIT);
+    subjectTopic = prevTopics[0] || "";
+  }
 }
 
 // auditAxis=true なら税務調査、そうじゃなければ subjectTopic を軸に寄せる
 const axisTopic =
   auditAxis ? TOPIC_TAX_AUDIT : (subjectTopic || decision.axisTopic || inferTopicFromHistory(prevUserMessage, prevAssistantMessage) || "");
+
 
 
 
@@ -1447,7 +1468,7 @@ const axisTopic =
       });
 
       // ===== followup_lines クールダウン（1回出したら基本リセット）=====
-      const prevDebug = await fetchPrevDebugLite(db, convId);
+      
       const prevWasLines = prevDebug?.path === "followup_lines";
       const prevLens = (prevDebug?.lens ?? "").trim();
       const lensChanged = Boolean(prevLens) && prevLens !== lens;
