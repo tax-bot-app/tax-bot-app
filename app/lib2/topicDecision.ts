@@ -50,6 +50,24 @@ export const AUDIT_OVERLAY_TOPICS = new Set<string>([
   // TOPIC_REFERRAL,
 ]);
 
+// ===== 税務調査を「原則重ねたくない」topic =====
+// 方針：経営/運用/設計の抽象話は、惰性stickyで auditAxis=true にしない（ただし明示税務調査/lineRequest/overlayなら例外）
+export const AUDIT_STICKY_EXEMPT_TOPICS = new Set<string>([
+  "会社成長",
+  "個人資産",
+  "ラク・管理",
+
+  // 「節税・設計・投資」系の実体
+  "余剰資金運用",
+  "資金戦略",
+  "資金移転",
+
+  // 長期・抽象・経営判断寄り
+  "M&A",
+  "相続・承継",
+]);
+
+
 export function isExplicitTopicShiftPhrase(message: string): boolean {
   const m = (message ?? "").trim();
   return /(別件|話(を)?変え|話題(を)?変え|ところで|それはそうと|次の相談|別の相談|一旦置いといて)/.test(
@@ -61,6 +79,21 @@ export function isExplicitTaxAuditOff(message: string): boolean {
   const m = (message ?? "").trim();
   return /(調査は関係ない|税務調査は関係ない|税務調査じゃない|調査の話はもういい|調査はもういい|調査は一旦)/.test(
     m
+  );
+}
+
+function hasTaxAuditWords(text: string): boolean {
+  const t = (text ?? "").trim();
+  return /(税務調査|調査官|国税|税務署|反面調査|更正|修正申告|過少申告|重加算|質問検査|任意調査|臨場|調査(対応|対策|で)|税務署(から|来)|国税(から|来))/i.test(
+    t
+  );
+}
+
+function looksLineRequest(text: string): boolean {
+  const t = (text ?? "").trim();
+  // 「どこまで」「大丈夫？」が amount に倒れるのを抑えたい → ここでは “lineRequest” としてsticky維持側に回す
+  return /(安全ライン|どこまで|大丈夫|リスク|グレー|アウト|セーフ|上限|限界|ギリ|攻め|守り|攻守|詰められ|バレ|突っ込まれ|否認)/.test(
+    t
   );
 }
 
@@ -129,22 +162,45 @@ export function decideAxisSubject(
     }
   }
 
-  // tax audit 文脈が近いか（イベント型）
+    // tax audit 文脈が近いか（イベント型）
+  const recentText = buildRecentText(message, recentUserMsgs);
+
+  const hasAuditNow =
+    topicsNow.includes(TOPIC_TAX_AUDIT) || hasTaxAuditWords(message);
+
+  const hasAuditRecent =
+    hasTaxAuditWords(recentText) || hasTaxAuditWords(prevAssistantMessage ?? "");
+
   const taxAuditContextActive =
-    topicsNow.includes(TOPIC_TAX_AUDIT) ||
+    hasAuditNow ||
     topicsPrev.includes(TOPIC_TAX_AUDIT) ||
-    (prevAssistantMessage ?? "").includes(TOPIC_TAX_AUDIT) ||
-    (recentUserMsgs ?? []).some((m) =>
-      (m ?? "").includes(TOPIC_TAX_AUDIT)
-    );
+    hasAuditRecent;
 
-  // sticky：明示オフ/明示話題転換でだけ解除
-  const taxAuditSticky =
-    taxAuditContextActive && !explicitTaxOff && !explicitTopicShift;
-
-  // overlay：主題が対象なら軸に税務調査を重ねる
+  // overlay：主題が対象なら軸に税務調査を重ねる（ここは現行仕様）
   const overlayWanted =
-    !explicitTaxOff && Boolean(subjectTopic) && AUDIT_OVERLAY_TOPICS.has(subjectTopic);
+    !explicitTaxOff &&
+    Boolean(subjectTopic) &&
+    AUDIT_OVERLAY_TOPICS.has(subjectTopic);
+
+  // ★ sticky解除条件（リリース仕様：exempt topics は惰性で audit にしない）
+  const lineRequest = looksLineRequest(message);
+  const subjectIsExempt =
+    Boolean(subjectTopic) && AUDIT_STICKY_EXEMPT_TOPICS.has(subjectTopic);
+
+  const shouldUnstickForExempt =
+    subjectIsExempt &&
+    !hasTaxAuditWords(message) &&          // 今の発話に税務調査ワードなし
+    !lineRequest &&                        // 安全ライン/詰められ系じゃない
+    !overlayWanted &&                      // overlay でもない
+    !topicsNow.includes(TOPIC_TAX_AUDIT);  // 今topicとして税務調査が立ってない
+
+  // sticky：明示オフ/明示話題転換で解除 ＋ exempt topic のときも解除
+  const taxAuditSticky =
+    taxAuditContextActive &&
+    !explicitTaxOff &&
+    !explicitTopicShift &&
+    !shouldUnstickForExempt;
+
 
   // auditAxis も boolean 確定
   const auditAxis =
