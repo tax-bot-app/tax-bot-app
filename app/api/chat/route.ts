@@ -1419,12 +1419,19 @@ export async function POST(req: Request) {
         continuationLike,
       });
 
-      const subjectTopic = decision.subjectTopic || "";
+      let subjectTopic = decision.subjectTopic || "";
 const auditAxis = decision.auditAxis;
 
-// auditAxis=true なら税務調査、そうじゃないなら subjectTopic を軸に寄せる
+// ★ lineRequest なのに subject が空なら、直前ユーザー発話から主題を借りる
+if (!subjectTopic && lineRequest) {
+  const prevTopics = topicsPrev.filter((t) => t !== TOPIC_TAX_AUDIT);
+  subjectTopic = prevTopics[0] || "";
+}
+
+// auditAxis=true なら税務調査、そうじゃなければ subjectTopic を軸に寄せる
 const axisTopic =
   auditAxis ? TOPIC_TAX_AUDIT : (subjectTopic || decision.axisTopic || inferTopicFromHistory(prevUserMessage, prevAssistantMessage) || "");
+
 
 
       const topicsNow = topicsNow0;
