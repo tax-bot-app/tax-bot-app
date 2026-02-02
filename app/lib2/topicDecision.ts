@@ -97,6 +97,28 @@ function looksLineRequest(text: string): boolean {
   );
 }
 
+function hasFamilyContext(text: string): boolean {
+  const t = (text ?? "").trim();
+  // 家族給与・家族役員を主題にするなら、最低限これらのどれかが本文に必要
+  return /(奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親戚|親族|家族給与|家族役員|専従者)/.test(t);
+}
+
+function hasCashConcern(text: string): boolean {
+  const t = (text ?? "").trim();
+  // 「手元の現金/資金繰りが不安」系の雑質問を拾う（会社成長へ寄せる）
+  return (
+    /(手元資金|手元の現金|現金|キャッシュ|資金繰り|運転資金).*(大丈夫|足り|不足|不安|心配|回る|回らん|きつい|詰)/.test(t) ||
+    /(大丈夫|足り|不足|不安|心配|回る|回らん|きつい|詰).*(手元資金|手元の現金|現金|キャッシュ|資金繰り|運転資金)/.test(t)
+  );
+}
+
+function hasOpsPain(text: string): boolean {
+  const t = (text ?? "").trim();
+  // ラク・管理に寄せたい “社長の詰まり/属人化/混乱” 系
+  return /(回らん|追いつか|パンク|忙しすぎ|時間ない|属人化|あの人おらん|誰が何|同じミス|バタバタ)/.test(t);
+}
+
+
 export type DecideAxisSubjectInput = {
   message: string;
 
@@ -164,6 +186,25 @@ export function decideAxisSubject(
 
     // tax audit 文脈が近いか（イベント型）
   const recentText = buildRecentText(message, recentUserMsgs);
+
+    // ===== 妥当性ゲート：高リスクtopicの誤爆を根絶 =====
+  // 「家族給与・家族役員」は本文に家族文脈が無いなら主題採用しない
+  if (subjectTopic === "家族給与・家族役員" && !hasFamilyContext(recentText)) {
+    // 1) topicsNow の次候補へ落とす
+    const altNow =
+      topicsNow.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ?? "";
+    // 2) continuationLike なら prev も候補
+    const altPrev =
+      topicsPrev.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ?? "";
+
+    subjectTopic = altNow || (continuationLike ? altPrev : "") || "";
+
+    // 3) それでも空なら文脈フォールバック
+    if (!subjectTopic) {
+      if (hasCashConcern(recentText)) subjectTopic = "会社成長";
+      else if (hasOpsPain(recentText)) subjectTopic = "ラク・管理";
+    }
+  }
 
   const hasAuditNow =
     topicsNow.includes(TOPIC_TAX_AUDIT) || hasTaxAuditWords(message);
