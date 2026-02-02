@@ -75,7 +75,10 @@ function hasTaxAuditWords(text: string): boolean {
 function looksLineRequest(text: string): boolean {
   const t = (text ?? "").trim();
   // NOTE: 「大丈夫」を入れると followup_lines 維持が強くなる。必要なら後で削る。
-  return /(安全ライン|ここまで|リスク|グレー|アウト|セーフ|上限|限界|ギリ|攻め|守り|攻守|詰められ|バレ|突っ込まれ|否認)/.test(t);
+  return /(安全ライン|どこまで|安全度|安全性|リスク|グレー|アウト|セーフ|上限|限界|ギリ|攻め|守り|攻守|詰められ|バレ|突っ込まれ|否認)/.test(
+  t
+);
+
 }
 
 /**
