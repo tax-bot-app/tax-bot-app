@@ -97,6 +97,41 @@ function looksLineRequest(text: string): boolean {
   );
 }
 
+function hasFamilyNow(text: string): boolean {
+  const t = (text ?? "").trim();
+  // “完全一致じゃない”家族表現も拾う（身内/家のもん 等）
+  return /(奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親戚|親族|身内|家のもん|家の者|家族|専従者|家族給与|家族役員)/.test(
+    t
+  );
+}
+
+function hasCashConcernNow(text: string): boolean {
+  const t = (text ?? "").trim();
+  return (
+    /(手元資金|手元の現金|現金|キャッシュ|資金繰り|運転資金).*(大丈夫|足り|不足|不安|心配|回る|回らん|きつい|詰)/.test(
+      t
+    ) ||
+    /(大丈夫|足り|不足|不安|心配|回る|回らん|きつい|詰).*(手元資金|手元の現金|現金|キャッシュ|資金繰り|運転資金)/.test(
+      t
+    )
+  );
+}
+
+function hasProfitAnxietyNow(text: string): boolean {
+  const t = (text ?? "").trim();
+  return (
+    /(利益|黒字|売上).*(不安|心配|安心でき|大丈夫)/.test(t) ||
+    /(不安|心配|安心でき|大丈夫).*(利益|黒字|売上)/.test(t)
+  );
+}
+
+function hasOpsPainNow(text: string): boolean {
+  const t = (text ?? "").trim();
+  return /(回らん|追いつか|パンク|忙しすぎ|時間ない|属人化|あの人おらん|誰が何|同じミス|バタバタ)/.test(
+    t
+  );
+}
+
 function hasFamilyContext(text: string): boolean {
   const t = (text ?? "").trim();
   // 家族給与・家族役員を主題にするなら、最低限これらのどれかが本文に必要
@@ -186,6 +221,42 @@ export function decideAxisSubject(
 
     // tax audit 文脈が近いか（イベント型）
   const recentText = buildRecentText(message, recentUserMsgs);
+
+    // ===== 家族給与・家族役員：主題採用ルール（誤爆根絶） =====
+  // 1) 会話文脈(recentText)に家族があってもOK（覚えてるのは正義）
+  // 2) ただし「今回の発話(message)に家族トリガが無い」なら、家族給与を主題にしない
+  // 3) 今回の発話が“資金不安”なら、主題は会社成長に倒す（家族給与は背景）
+  const familyInContext = hasFamilyNow(recentText);
+  const familyTriggerNow = hasFamilyNow(message);
+  const cashNow = hasCashConcernNow(message) || hasProfitAnxietyNow(message);
+  const opsPainNow = hasOpsPainNow(message);
+
+  if (subjectTopic === "家族給与・家族役員" && !familyTriggerNow) {
+    // 資金不安の質問なら「会社成長」を主題にする（家族給与は背景として残る）
+    if (cashNow) {
+      subjectTopic = "会社成長";
+    } else {
+      // 家族の話題が文脈に残っていても、今回の発話が家族トリガ無しなら別主題へ落とす
+      const altNow =
+        topicsNow.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ??
+        "";
+      const altPrev =
+        topicsPrev.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ??
+        "";
+
+      subjectTopic = altNow || (continuationLike ? altPrev : "") || "";
+
+      // それでも空なら、雑相談の性質でフォールバック
+      if (!subjectTopic) {
+        if (opsPainNow) subjectTopic = "ラク・管理";
+        else if (cashNow) subjectTopic = "会社成長";
+      }
+    }
+  }
+
+  // （任意）家族文脈がある＋今回「役員」ワード → 家族側を主題に寄せたい場合はここで微調整も可
+  // 例）subjectTopic が 役員報酬 だが message に familyTriggerNow があるなら subject=家族給与・家族役員 に寄せる、など
+
 
     // ===== 妥当性ゲート：高リスクtopicの誤爆を根絶 =====
   // 「家族給与・家族役員」は本文に家族文脈が無いなら主題採用しない
