@@ -6,7 +6,7 @@ export type Lens = "amount" | "substance" | "system";
 export const TOPIC_TAX_AUDIT = "税務調査";
 
 // ===== 新規：紹介料 vs 外注の差し戻し用 =====
-const TOPIC_REFERRAL = "紹介料"; // topicSignals 側の topic 名に合わせる
+const TOPIC_REFERRAL = "紹介料";
 const TOPIC_OUTSOURCE = "外注";
 
 function buildRecentText(message: string, recentUserMsgs: string[]): string {
@@ -17,21 +17,15 @@ function buildRecentText(message: string, recentUserMsgs: string[]): string {
 // “純外注”の匂い：外注topicに戻したい
 function looksPureOutsource(text: string): boolean {
   return (
-    /(成果物|納品|検収|制作|デザイン|開発|コーディング|実装|原稿|記事|ライティング|編集|運用|保守|テスト|仕様|要件|工数|見積)/.test(
-      text
-    ) ||
-    /(指揮命令|常駐|出社|勤怠|タイムカード|勤務時間|シフト|席|PC支給|社用メール|社内システム|上司|評価|業務指示)/.test(
-      text
-    ) ||
+    /(成果物|納品|検収|制作|デザイン|開発|コーディング|実装|原稿|記事|ライティング|編集|運用|保守|テスト|仕様|要件|工数|見積)/.test(text) ||
+    /(指揮命令|常駐|出社|勤怠|タイムカード|勤務時間|シフト|席|PC支給|社用メール|社内システム|上司|評価|業務指示)/.test(text) ||
     /(偽装(委託|請負)|偽装請負|準委任|請負|派遣|労働者派遣)/.test(text)
   );
 }
 
 // “紹介料/口利き”の匂い：紹介料topicを維持したい
 function looksReferral(text: string): boolean {
-  return /(紹介|仲介|成功報酬|口利き|リファラル|マージン|コミッション|バック|キックバック|謝礼|協力費)/.test(
-    text
-  );
+  return /(紹介|仲介|成功報酬|口利き|リファラル|マージン|コミッション|バック|キックバック|謝礼|協力費)/.test(text);
 }
 
 // 「この主題が出たら “税務調査軸” を自然に重ねる」対象
@@ -46,40 +40,29 @@ export const AUDIT_OVERLAY_TOPICS = new Set<string>([
   "消費税",
   "家族給与・家族役員",
   "退職金",
-  "紹介料"
-  // TOPIC_REFERRAL,
+  "紹介料",
 ]);
 
 // ===== 税務調査を「原則重ねたくない」topic =====
-// 方針：経営/運用/設計の抽象話は、惰性stickyで auditAxis=true にしない（ただし明示税務調査/lineRequest/overlayなら例外）
 export const AUDIT_STICKY_EXEMPT_TOPICS = new Set<string>([
   "会社成長",
   "個人資産",
   "ラク・管理",
-
-  // 「節税・設計・投資」系の実体
   "余剰資金運用",
   "資金戦略",
   "資金移転",
-
-  // 長期・抽象・経営判断寄り
   "M&A",
   "相続・承継",
 ]);
 
-
 export function isExplicitTopicShiftPhrase(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(別件|話(を)?変え|話題(を)?変え|ところで|それはそうと|次の相談|別の相談|一旦置いといて)/.test(
-    m
-  );
+  return /(別件|話(を)?変え|話題(を)?変え|ところで|それはそうと|次の相談|別の相談|一旦置いといて)/.test(m);
 }
 
 export function isExplicitTaxAuditOff(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(調査は関係ない|税務調査は関係ない|税務調査じゃない|調査の話はもういい|調査はもういい|調査は一旦)/.test(
-    m
-  );
+  return /(調査は関係ない|税務調査は関係ない|税務調査じゃない|調査の話はもういい|調査はもういい|調査は一旦)/.test(m);
 }
 
 function hasTaxAuditWords(text: string): boolean {
@@ -91,16 +74,28 @@ function hasTaxAuditWords(text: string): boolean {
 
 function looksLineRequest(text: string): boolean {
   const t = (text ?? "").trim();
-  // 「どこまで」「大丈夫？」が amount に倒れるのを抑えたい → ここでは “lineRequest” としてsticky維持側に回す
-  return /(安全ライン|どこまで|大丈夫|リスク|グレー|アウト|セーフ|上限|限界|ギリ|攻め|守り|攻守|詰められ|バレ|突っ込まれ|否認)/.test(
+  // NOTE: 「大丈夫」を入れると followup_lines 維持が強くなる。必要なら後で削る。
+  return /(安全ライン|ここまで|リスク|グレー|アウト|セーフ|上限|限界|ギリ|攻め|守り|攻守|詰められ|バレ|突っ込まれ|否認)/.test(t);
+}
+
+/**
+ * ★重要：
+ * "大丈夫" = 大 丈 夫 の「夫」で家族判定が暴発する。
+ * → 今回の発話で“主題採用”する判定は Strong（夫を含めない）
+ * → 文脈として残ってるかを見るのは Weak（夫を含めてもOK）
+ */
+function hasFamilyStrong(text: string): boolean {
+  const t = (text ?? "").trim();
+  // ★「夫」は入れない（大丈夫誤爆の根を断つ）
+  return /(奥さん|嫁|妻|家内|子ども|子供|こども|息子|娘|長男|長女|親戚|親族|身内|家のもん|家の者|家族|専従者|家族給与|家族役員)/.test(
     t
   );
 }
 
-function hasFamilyNow(text: string): boolean {
+function hasFamilyWeak(text: string): boolean {
   const t = (text ?? "").trim();
-  // “完全一致じゃない”家族表現も拾う（身内/家のもん 等）
-  return /(奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親戚|親族|身内|家のもん|家の者|家族|専従者|家族給与|家族役員)/.test(
+  // 文脈用：夫/父/母/親も含める
+  return /(奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親|父|母|親戚|親族|身内|家のもん|家の者|家族|専従者|家族給与|家族役員)/.test(
     t
   );
 }
@@ -108,39 +103,29 @@ function hasFamilyNow(text: string): boolean {
 function hasCashConcernNow(text: string): boolean {
   const t = (text ?? "").trim();
   return (
-    /(手元資金|手元の現金|現金|キャッシュ|資金繰り|運転資金).*(大丈夫|足り|不足|不安|心配|回る|回らん|きつい|詰)/.test(
-      t
-    ) ||
-    /(大丈夫|足り|不足|不安|心配|回る|回らん|きつい|詰).*(手元資金|手元の現金|現金|キャッシュ|資金繰り|運転資金)/.test(
-      t
-    )
+    /(手元資金|手元の現金|現金|キャッシュ|資金繰り|運転資金).*(大丈夫|足り|不足|不安|心配|回る|回らん|きつい|詰)/.test(t) ||
+    /(大丈夫|足り|不足|不安|心配|回る|回らん|きつい|詰).*(手元資金|手元の現金|現金|キャッシュ|資金繰り|運転資金)/.test(t)
   );
 }
 
 function hasProfitAnxietyNow(text: string): boolean {
   const t = (text ?? "").trim();
-  return (
-    /(利益|黒字|売上).*(不安|心配|安心でき|大丈夫)/.test(t) ||
-    /(不安|心配|安心でき|大丈夫).*(利益|黒字|売上)/.test(t)
-  );
+  return /(利益|黒字|売上).*(不安|心配|安心でき|大丈夫)/.test(t) || /(不安|心配|安心でき|大丈夫).*(利益|黒字|売上)/.test(t);
 }
 
 function hasOpsPainNow(text: string): boolean {
   const t = (text ?? "").trim();
-  return /(回らん|追いつか|パンク|忙しすぎ|時間ない|属人化|あの人おらん|誰が何|同じミス|バタバタ)/.test(
-    t
-  );
+  return /(回らん|追いつか|パンク|忙しすぎ|時間ない|属人化|あの人おらん|誰が何|同じミス|バタバタ)/.test(t);
 }
 
 function hasFamilyContext(text: string): boolean {
   const t = (text ?? "").trim();
-  // 家族給与・家族役員を主題にするなら、最低限これらのどれかが本文に必要
-  return /(奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親戚|親族|家族給与|家族役員|専従者)/.test(t);
+  // 文脈ゲート（夫も含めてOK）
+  return /(奥さん|嫁|妻|夫|家内|子ども|子供|こども|息子|娘|長男|長女|親戚|親族|家族給与|家族役員|専従者|家族)/.test(t);
 }
 
 function hasCashConcern(text: string): boolean {
   const t = (text ?? "").trim();
-  // 「手元の現金/資金繰りが不安」系の雑質問を拾う（会社成長へ寄せる）
   return (
     /(手元資金|手元の現金|現金|キャッシュ|資金繰り|運転資金).*(大丈夫|足り|不足|不安|心配|回る|回らん|きつい|詰)/.test(t) ||
     /(大丈夫|足り|不足|不安|心配|回る|回らん|きつい|詰).*(手元資金|手元の現金|現金|キャッシュ|資金繰り|運転資金)/.test(t)
@@ -149,10 +134,8 @@ function hasCashConcern(text: string): boolean {
 
 function hasOpsPain(text: string): boolean {
   const t = (text ?? "").trim();
-  // ラク・管理に寄せたい “社長の詰まり/属人化/混乱” 系
   return /(回らん|追いつか|パンク|忙しすぎ|時間ない|属人化|あの人おらん|誰が何|同じミス|バタバタ)/.test(t);
 }
-
 
 export type DecideAxisSubjectInput = {
   message: string;
@@ -161,7 +144,7 @@ export type DecideAxisSubjectInput = {
   topicsPrev: string[];
 
   prevAssistantMessage: string | null;
-  recentUserMsgs: string[]; // 直近ユーザー発言（本文）
+  recentUserMsgs: string[];
 
   continuationLike: boolean;
 
@@ -180,14 +163,7 @@ export type DecideAxisSubjectOutput = {
   overlayWanted: boolean;
 };
 
-/**
- * ダブルトピック決定：
- * axis = 税務調査（sticky/overlay）
- * subject = 交際費/外注など（主題）
- */
-export function decideAxisSubject(
-  input: DecideAxisSubjectInput
-): DecideAxisSubjectOutput {
+export function decideAxisSubject(input: DecideAxisSubjectInput): DecideAxisSubjectOutput {
   const {
     message,
     topicsNow,
@@ -199,8 +175,7 @@ export function decideAxisSubject(
     explicitTaxOff: explicitTaxOffIn,
   } = input;
 
-  const explicitTopicShift =
-    explicitTopicShiftIn ?? isExplicitTopicShiftPhrase(message);
+  const explicitTopicShift = explicitTopicShiftIn ?? isExplicitTopicShiftPhrase(message);
   const explicitTaxOff = explicitTaxOffIn ?? isExplicitTaxAuditOff(message);
 
   // subject候補：今→前（税務調査は除外）
@@ -208,45 +183,31 @@ export function decideAxisSubject(
   const subjectPrev = topicsPrev.find((t) => t !== TOPIC_TAX_AUDIT) ?? "";
   let subjectTopic = subjectNow || (continuationLike ? subjectPrev : "") || "";
 
-  // --- 37.4+：紹介料 ⇄ 外注の差し戻し（“雑な業務委託費”問題の回収） ---
-  // topicSignalsが「業務委託費」を紹介料寄せにしている前提で、
-  // “純外注”っぽいときだけ外注へ戻す。
+  // --- 紹介料 ⇄ 外注 差し戻し ---
   if (subjectTopic === TOPIC_REFERRAL) {
     const text = buildRecentText(message, recentUserMsgs);
-    // 紹介/仲介ワードが明確なら紹介料を維持
     if (!looksReferral(text) && looksPureOutsource(text)) {
       subjectTopic = TOPIC_OUTSOURCE;
     }
   }
 
-    // tax audit 文脈が近いか（イベント型）
   const recentText = buildRecentText(message, recentUserMsgs);
 
-    // ===== 家族給与・家族役員：主題採用ルール（誤爆根絶） =====
-  // 1) 会話文脈(recentText)に家族があってもOK（覚えてるのは正義）
-  // 2) ただし「今回の発話(message)に家族トリガが無い」なら、家族給与を主題にしない
-  // 3) 今回の発話が“資金不安”なら、主題は会社成長に倒す（家族給与は背景）
-  const familyInContext = hasFamilyNow(recentText);
-  const familyTriggerNow = hasFamilyNow(message);
+  // ===== 家族給与・家族役員：主題採用ルール（誤爆根絶） =====
+  const familyInContext = hasFamilyWeak(recentText);
+  const familyTriggerNow = hasFamilyStrong(message); // ★ここが肝（夫で暴発させない）
   const cashNow = hasCashConcernNow(message) || hasProfitAnxietyNow(message);
   const opsPainNow = hasOpsPainNow(message);
 
   if (subjectTopic === "家族給与・家族役員" && !familyTriggerNow) {
-    // 資金不安の質問なら「会社成長」を主題にする（家族給与は背景として残る）
     if (cashNow) {
       subjectTopic = "会社成長";
     } else {
-      // 家族の話題が文脈に残っていても、今回の発話が家族トリガ無しなら別主題へ落とす
-      const altNow =
-        topicsNow.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ??
-        "";
-      const altPrev =
-        topicsPrev.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ??
-        "";
+      const altNow = topicsNow.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ?? "";
+      const altPrev = topicsPrev.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ?? "";
 
       subjectTopic = altNow || (continuationLike ? altPrev : "") || "";
 
-      // それでも空なら、雑相談の性質でフォールバック
       if (!subjectTopic) {
         if (opsPainNow) subjectTopic = "ラク・管理";
         else if (cashNow) subjectTopic = "会社成長";
@@ -254,73 +215,40 @@ export function decideAxisSubject(
     }
   }
 
-  // （任意）家族文脈がある＋今回「役員」ワード → 家族側を主題に寄せたい場合はここで微調整も可
-  // 例）subjectTopic が 役員報酬 だが message に familyTriggerNow があるなら subject=家族給与・家族役員 に寄せる、など
-
-
-    // ===== 妥当性ゲート：高リスクtopicの誤爆を根絶 =====
-  // 「家族給与・家族役員」は本文に家族文脈が無いなら主題採用しない
-  if (subjectTopic === "家族給与・家族役員" && !hasFamilyContext(recentText)) {
-    // 1) topicsNow の次候補へ落とす
-    const altNow =
-      topicsNow.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ?? "";
-    // 2) continuationLike なら prev も候補
-    const altPrev =
-      topicsPrev.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ?? "";
+  // 妥当性ゲート：家族給与は文脈に家族が無いなら主題採用しない
+  if (subjectTopic === "家族給与・家族役員" && !hasFamilyContext(recentText) && !familyInContext) {
+    const altNow = topicsNow.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ?? "";
+    const altPrev = topicsPrev.find((t) => t !== TOPIC_TAX_AUDIT && t !== "家族給与・家族役員") ?? "";
 
     subjectTopic = altNow || (continuationLike ? altPrev : "") || "";
 
-    // 3) それでも空なら文脈フォールバック
     if (!subjectTopic) {
       if (hasCashConcern(recentText)) subjectTopic = "会社成長";
       else if (hasOpsPain(recentText)) subjectTopic = "ラク・管理";
     }
   }
 
-  const hasAuditNow =
-    topicsNow.includes(TOPIC_TAX_AUDIT) || hasTaxAuditWords(message);
+  const hasAuditNow = topicsNow.includes(TOPIC_TAX_AUDIT) || hasTaxAuditWords(message);
+  const hasAuditRecent = hasTaxAuditWords(recentText) || hasTaxAuditWords(prevAssistantMessage ?? "");
+  const taxAuditContextActive = hasAuditNow || topicsPrev.includes(TOPIC_TAX_AUDIT) || hasAuditRecent;
 
-  const hasAuditRecent =
-    hasTaxAuditWords(recentText) || hasTaxAuditWords(prevAssistantMessage ?? "");
+  const overlayWanted = !explicitTaxOff && Boolean(subjectTopic) && AUDIT_OVERLAY_TOPICS.has(subjectTopic);
 
-  const taxAuditContextActive =
-    hasAuditNow ||
-    topicsPrev.includes(TOPIC_TAX_AUDIT) ||
-    hasAuditRecent;
-
-  // overlay：主題が対象なら軸に税務調査を重ねる（ここは現行仕様）
-  const overlayWanted =
-    !explicitTaxOff &&
-    Boolean(subjectTopic) &&
-    AUDIT_OVERLAY_TOPICS.has(subjectTopic);
-
-  // ★ sticky解除条件（リリース仕様：exempt topics は惰性で audit にしない）
   const lineRequest = looksLineRequest(message);
-  const subjectIsExempt =
-    Boolean(subjectTopic) && AUDIT_STICKY_EXEMPT_TOPICS.has(subjectTopic);
+  const subjectIsExempt = Boolean(subjectTopic) && AUDIT_STICKY_EXEMPT_TOPICS.has(subjectTopic);
 
   const shouldUnstickForExempt =
     subjectIsExempt &&
-    !hasTaxAuditWords(message) &&          // 今の発話に税務調査ワードなし
-    !lineRequest &&                        // 安全ライン/詰められ系じゃない
-    !overlayWanted &&                      // overlay でもない
-    !topicsNow.includes(TOPIC_TAX_AUDIT);  // 今topicとして税務調査が立ってない
+    !hasTaxAuditWords(message) &&
+    !lineRequest &&
+    !overlayWanted &&
+    !topicsNow.includes(TOPIC_TAX_AUDIT);
 
-  // sticky：明示オフ/明示話題転換で解除 ＋ exempt topic のときも解除
-  const taxAuditSticky =
-    taxAuditContextActive &&
-    !explicitTaxOff &&
-    !explicitTopicShift &&
-    !shouldUnstickForExempt;
+  const taxAuditSticky = taxAuditContextActive && !explicitTaxOff && !explicitTopicShift && !shouldUnstickForExempt;
 
+  const auditAxis = !explicitTaxOff && (taxAuditSticky || topicsNow.includes(TOPIC_TAX_AUDIT) || overlayWanted);
 
-  // auditAxis も boolean 確定
-  const auditAxis =
-    !explicitTaxOff &&
-    (taxAuditSticky || topicsNow.includes(TOPIC_TAX_AUDIT) || overlayWanted);
-
-  // axisTopic：auditAxisなら税務調査、それ以外は topicsNow 先頭（無ければ空）
-  const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : (topicsNow[0] ?? "");
+  const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : topicsNow[0] ?? "";
 
   let reason = "normal";
   if (explicitTaxOff) reason = "explicit_tax_audit_off";
@@ -342,52 +270,36 @@ export function inferLensWithContext(params: {
   message: string;
   axisTopic: string;
   fallbackPrevUser?: string | null;
-  usePrevInstead?: boolean; // 追撃短文等
+  usePrevInstead?: boolean;
 }): Lens {
   const axis = params.axisTopic;
   const m0 = (params.usePrevInstead ? params.fallbackPrevUser : params.message) ?? params.message;
   const m = (m0 ?? "").trim();
 
-  // amount優先：金額やレンジが明確
   const hasMoney =
-    /([0-9０-９]+)\s*(円|万円|万|千円)|¥\s*[0-9０-９]+|金額|上限|限度|相場|単価|目安|程度|レンジ|幅|いくら|なんぼ/.test(
-      m
-    );
+    /([0-9０-９]+)\s*(円|万円|万|千円)|¥\s*[0-9０-９]+|金額|上限|限度|相場|単価|目安|程度|レンジ|幅|いくら|なんぼ/.test(m);
 
   const hasLineWords = /(上限|限界|ギリ|グレー|安全ライン|アウト|セーフ|攻め|守り|攻守)/.test(m);
   const hasScopeWords = /(どこまで|大丈夫|リスク|安全度|安全性)/.test(m);
 
-  // system：制度/要件/帳簿・届出
   const isSystem =
     /(インボイス|消費税|控除|届出|規程|規定|ルール|手続|要件|仕訳|帳簿|請求書|契約書|稟議|承認)/.test(m) ||
     (/(書類|資料)/.test(m) && /(届出|規程|規定|要件|帳簿|契約書)/.test(m));
 
-  // 税務調査：運用/対応の話は substance 寄り
-  const isAuditOps = /(雑談|反面調査|高圧|態度|圧|雰囲気|資料(全部|提出|要求)|提出リスト|ヒアリング|質問|調査官|国税|税務署)/.test(
-    m
-  );
+  const isAuditOps = /(雑談|反面調査|高圧|態度|圧|雰囲気|資料(全部|提出|要求)|提出リスト|ヒアリング|質問|調査官|国税|税務署)/.test(m);
 
   if (axis === TOPIC_TAX_AUDIT) {
-    // 金額が明確なら amount
     if (hasMoney) return "amount";
-
-    // 調査での対応/運用は substance
     if (isAuditOps) return "substance";
-
-    // scope系（どこまで/安全/リスク）は amount に倒さない
     if (hasScopeWords || hasLineWords) {
       return isSystem ? "system" : "substance";
     }
-
-    // 制度寄りなら system、そうでなければ substance
     if (isSystem) return "system";
     return "substance";
   }
 
-  // 通常時：金額が明確なら amount
   if (hasMoney) return "amount";
 
-  // 「どこまで/安全/リスク」系は、金額が無いなら amount に倒さない
   if (hasScopeWords || hasLineWords) {
     return isSystem ? "system" : "substance";
   }
