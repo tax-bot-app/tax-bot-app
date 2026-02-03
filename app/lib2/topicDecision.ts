@@ -95,6 +95,13 @@ function hasFamilyStrong(text: string): boolean {
   );
 }
 
+// ===== 消費税（免税）Strong =====
+function hasConsumptionTaxStrong(text: string): boolean {
+  const t = (text ?? "").trim();
+  // ※ インバウンドは入れない（掛け算は後段で成立させる）
+  return /(免税売上|免税|非課税売上|課税売上|消費税)/.test(t);
+}
+
 function hasFamilyWeak(text: string): boolean {
   const t = (text ?? "").trim();
   // 文脈用：夫/父/母/親も含める
@@ -194,7 +201,13 @@ export function decideAxisSubject(input: DecideAxisSubjectInput): DecideAxisSubj
     }
   }
 
-  const recentText = buildRecentText(message, recentUserMsgs);
+    const recentText = buildRecentText(message, recentUserMsgs);
+
+  // ===== 消費税：免税は Strong で主題確定 =====
+  if (hasConsumptionTaxStrong(message)) {
+    subjectTopic = "消費税";
+  }
+ 
 
   // ===== 家族給与・家族役員：主題採用ルール（誤爆根絶） =====
   const familyInContext = hasFamilyWeak(recentText);
