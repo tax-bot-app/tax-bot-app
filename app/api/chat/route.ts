@@ -255,6 +255,14 @@ function extractClarifyTerm(message: string): string | null {
   return null;
 }
 
+function normKey(s: string): string {
+  return (s ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[\/\\・\.\-＿_]/g, ""); // スラッシュ等を消す（全角＿＋半角_ も）
+}
+
+
 function detectClarifyPrevAnswer(message: string, prevAssistantMessage: string | null): { ok: boolean; term: string; matched: string } {
   const prev = (prevAssistantMessage ?? "").trim();
   if (!prev) return { ok: false, term: "", matched: "" };
@@ -264,6 +272,11 @@ function detectClarifyPrevAnswer(message: string, prevAssistantMessage: string |
 
   // まずは素直に部分一致
   if (term.length >= 2 && prev.includes(term)) return { ok: true, term, matched: term };
+
+    // ★追加：記号差（B/L vs BL など）を吸収して部分一致
+  const prevK = normKey(prev);
+  const termK = normKey(term);
+  if (termK.length >= 2 && prevK.includes(termK)) return { ok: true, term, matched: term };
 
   // 次に token（3文字以上）で部分一致
   const ts = tokens3(term);
@@ -1498,7 +1511,8 @@ export async function POST(req: Request) {
       const shiftedRaw = topicShiftLikelyLite(prevUserMessage, message);
 
       const followupOnlyRaw = isFollowupOnlyText(message);
-      const followupOnly = followupOnlyRaw && !clarifyPrevAnswer && !looksQuestionish(message);
+const followupOnly =
+  followupOnlyRaw && !clarifyPrevAnswer && !looksQuestionish(message) && !shiftedRaw; // ★追加
 
       const weakUtterance = isWeakUtterance(message);
 
