@@ -166,6 +166,14 @@ type DebugMeta = {
   lines_keep_reason?: string;
 
   tax_audit_sticky_reason?: string;
+
+  // NEW: clarify / implicit shift (CSVに出したければ admin export に後で足せばOK)
+  clarify_prev_answer?: boolean;
+  clarify_term?: string;
+  clarify_matched?: string;
+  implicit_shift?: boolean;
+  implicit_shift_unstick?: boolean;
+  audit_essence_injected?: boolean;
 };
 
 type DebugTrace = {
@@ -193,6 +201,109 @@ function normalizeDialect(x: string): Dialect {
 }
 function normalizeStance(x: string): Stance {
   return x === "sanbo" ? "sanbo" : "zubatto";
+}
+
+/** ===== clarify / implicit shift helpers ===== */
+function hasTaxAuditWordsLite(text: string): boolean {
+  const t = (text ?? "").trim();
+  return /(税務調査|調査官|国税|税務署|反面調査|更正|修正申告|過少申告|重加算|質問検査|任意調査|臨場|調査(対応|対策|で)|税務署(から|来)|国税(から|来))/i.test(
+    t
+  );
+}
+
+function startsWithContinuationPrefix(message: string): boolean {
+  const m = (message ?? "").trim();
+  return /^(それ|その|じゃあ|じゃ|ほな|で|なら|今の|さっき|続き|つづき|あと|それで)/.test(m);
+}
+
+function hasGenericContinuationCue(message: string): boolean {
+  const m = (message ?? "").trim();
+  return /(どうすれば|どうしたら|どう対応|何したら|何から|結局|つまり|次(は)?|このあと|具体的に|要は)/.test(m);
+}
+
+// followupOnly（短文）扱いを抑える：質問っぽい短文は followupOnly にしない
+function looksQuestionish(message: string): boolean {
+  const m = (message ?? "").trim();
+  if (!m) return false;
+  if (/[?？]/.test(m)) return true;
+  return /(何|なに|どう|どっち|どちら|いつ|どこ|だれ|誰|なぜ|なんで|意味|どゆ|どういう|って|とは)/.test(m);
+}
+
+function tokens3(s: string): string[] {
+  return Array.from((s ?? "").matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((m) => m[0]);
+}
+
+function extractClarifyTerm(message: string): string | null {
+  const raw = (message ?? "").trim();
+  if (!raw) return null;
+
+  // 末尾の記号を落とす
+  const s = raw.replace(/[！!。．…]+$/g, "").replace(/[?？]+$/g, "").trim();
+  if (!s) return null;
+
+  // 典型：Xってなに / Xてなに / Xとは / Xって？
+  const m1 = s.match(/^(.+?)(?:って|て|とは)\s*(?:何|なに|どういう意味|どういうこと|どゆこと|どゆ意味|意味)$/);
+  if (m1?.[1]) return m1[1].trim();
+
+  const m2 = s.match(/^(.+?)(?:って|て|とは)\s*$/);
+  if (m2?.[1]) return m2[1].trim();
+
+  // 単語だけ：按分？ / 不課税？ みたいな “単体疑問”
+  const solo = s.trim();
+  if (solo.length <= 10 && !/\s/.test(solo)) return solo;
+
+  return null;
+}
+
+function detectClarifyPrevAnswer(message: string, prevAssistantMessage: string | null): { ok: boolean; term: string; matched: string } {
+  const prev = (prevAssistantMessage ?? "").trim();
+  if (!prev) return { ok: false, term: "", matched: "" };
+
+  const term = (extractClarifyTerm(message) ?? "").trim();
+  if (!term) return { ok: false, term: "", matched: "" };
+
+  // まずは素直に部分一致
+  if (term.length >= 2 && prev.includes(term)) return { ok: true, term, matched: term };
+
+  // 次に token（3文字以上）で部分一致
+  const ts = tokens3(term);
+  const hit = ts.find((t) => t && prev.includes(t));
+  if (hit) return { ok: true, term, matched: hit };
+
+  return { ok: false, term, matched: "" };
+}
+
+function insertLineBeforeInquiry(answer: string, line: string): string {
+  const a0 = String(answer ?? "").replace(/\r\n/g, "\n").trim();
+  const l = String(line ?? "").trim();
+  if (!a0 || !l) return a0;
+
+  const lines = a0.split("\n");
+  const idx = lines.findIndex((x) => x.trimStart().startsWith("🔎"));
+  if (idx < 0) {
+    return `${a0}\n\n${l}`.replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  // 既に同じ行が入ってたら重複させない
+  if (lines.some((x) => x.trim() === l)) return a0;
+
+  const head = lines.slice(0, idx);
+  const tail = lines.slice(idx);
+
+  const out: string[] = [...head];
+  if (out.length > 0 && out[out.length - 1].trim()) out.push("");
+  out.push(l, "");
+  out.push(...tail);
+
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function auditEssenceOneLine(dialect: Dialect, stance: Stance): string {
+  // B案：固定テンプレ1行（カード混ぜない）
+  if (dialect === "kansai" && stance === "sanbo") return "※ 税務調査目線：形式より実態。一貫性と証拠で見られますわ。";
+  if (dialect === "standard" && stance === "sanbo") return "※ 税務調査目線：形式より実態。一貫性と証拠で見られます。";
+  // zubatto（丁寧語なし）
+  return "※ 税務調査目線：形式より実態。一貫性と証拠で見られる。";
 }
 
 /** ===== rules builders ===== */
@@ -355,8 +466,8 @@ function isInFollowupPhase(prevAssistantMessage: string | null): boolean {
 function isLineRequest(message: string): boolean {
   const m = (message ?? "").trim();
   return /(攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|安全度|安全性|レンジ|幅|アウト|セーフ|リスク|いくら|いくつまで|なんぼ|どんぐらい)/.test(
-  m
-);
+    m
+  );
 }
 
 function topicShiftLikelyLite(prevUser: string | null, cur: string): boolean {
@@ -1287,7 +1398,6 @@ async function fetchPrevDebugLite(
   }
 }
 
-
 /** ===== footer (tax audit axis) ===== */
 function followupFooter(axisTopic: string, dialect: Dialect, stance: Stance): string | null {
   if (axisTopic !== TOPIC_TAX_AUDIT) return null;
@@ -1380,26 +1490,45 @@ export async function POST(req: Request) {
         return prevRows?.[0]?.content ?? null;
       })();
 
-      const followupOnly = isFollowupOnlyText(message);
+      // ===== clarify 判定（前の回答に出てきた用語の追撃）=====
+      const clarify = detectClarifyPrevAnswer(message, prevAssistantMessage);
+      const clarifyPrevAnswer = clarify.ok;
+
+      // ===== followup 判定（短文誤爆を抑える）=====
+      const shiftedRaw = topicShiftLikelyLite(prevUserMessage, message);
+
+      const followupOnlyRaw = isFollowupOnlyText(message);
+      const followupOnly = followupOnlyRaw && !clarifyPrevAnswer && !looksQuestionish(message);
+
       const weakUtterance = isWeakUtterance(message);
-      const followupExplicit = wantsAttackDefenseDetail(message, prevUserMessage);
+
+      const followupExplicitRaw = wantsAttackDefenseDetail(message, prevUserMessage);
+      const followupExplicit = followupExplicitRaw && !clarifyPrevAnswer;
+
       const lineRequest = isLineRequest(message);
 
-      const shiftedRaw = topicShiftLikelyLite(prevUserMessage, message);
       const followupPhaseRaw = isInFollowupPhase(prevAssistantMessage);
 
       const continuationLike =
         followupOnly ||
-        weakUtterance ||
         lineRequest ||
         followupExplicit ||
-        /^((それ|その|じゃあ|ほな|で|なら|今の|さっき|続き|つづき)\b)/.test(message.trim());
+        clarifyPrevAnswer ||
+        startsWithContinuationPrefix(message) ||
+        hasGenericContinuationCue(message) ||
+        (weakUtterance && !shiftedRaw);
 
       const followupPhase = followupPhaseRaw && continuationLike;
       const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shiftedRaw);
 
-      // ★ 後でクールダウンで上書きするので let
+      // ===== implicit shift（暗黙の話題転換）=====
+      const implicitShift = !clarifyPrevAnswer && !continuationLike && shiftedRaw;
+
+      // ★ 後でクールダウン等で上書きするので let
       let forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance;
+
+      // clarify は必ず normal 回答へ（lines禁止）
+      if (clarifyPrevAnswer) forceNormalAnswer = true;
 
       // ===== topic / axis / subject (37.2: topicDecision) =====
       const topicsNowDbg = inferTopicsDebug(message, { max: 3 });
@@ -1432,32 +1561,63 @@ export async function POST(req: Request) {
       const prevDebug = await fetchPrevDebugLite(db, convId);
 
       let subjectTopic = decision.subjectTopic || "";
-const auditAxis = decision.auditAxis;
+      let auditAxis = decision.auditAxis;
 
-// ★ lineRequest なのに subject が空なら、直前の「確定主題」を最優先で借りる
-if (!subjectTopic && lineRequest) {
-  const prevSubject = (prevDebug?.subjectTopic ?? "").trim();
+      // ★ lineRequest なのに subject が空なら、直前の「確定主題」を最優先で借りる
+      if (!subjectTopic && lineRequest) {
+        const prevSubject = (prevDebug?.subjectTopic ?? "").trim();
 
-  // ① 直前の確定主題があればそれ（税務調査は除外）
-  if (prevSubject && prevSubject !== TOPIC_TAX_AUDIT) {
-    subjectTopic = prevSubject;
-  } else {
-    // ② fallback：直前ユーザー発話のtopic推定（匂い検知）
-    const prevTopics = topicsPrev.filter((t) => t !== TOPIC_TAX_AUDIT);
-    subjectTopic = prevTopics[0] || "";
-  }
-}
+        // ① 直前の確定主題があればそれ（税務調査は除外）
+        if (prevSubject && prevSubject !== TOPIC_TAX_AUDIT) {
+          subjectTopic = prevSubject;
+        } else {
+          // ② fallback：直前ユーザー発話のtopic推定（匂い検知）
+          const prevTopics = topicsPrev.filter((t) => t !== TOPIC_TAX_AUDIT);
+          subjectTopic = prevTopics[0] || "";
+        }
+      }
 
-// auditAxis=true なら税務調査、そうじゃなければ subjectTopic を軸に寄せる
-const axisTopic =
-  auditAxis ? TOPIC_TAX_AUDIT : (subjectTopic || decision.axisTopic || inferTopicFromHistory(prevUserMessage, prevAssistantMessage) || "");
+      // ★ clarify（前の回答の用語確認）なら、subject が空でも直前 subject を借りる
+      if (!subjectTopic && clarifyPrevAnswer) {
+        const prevSubject = (prevDebug?.subjectTopic ?? "").trim();
+        if (prevSubject && prevSubject !== TOPIC_TAX_AUDIT) {
+          subjectTopic = prevSubject;
+        } else {
+          const prevTopics = topicsPrev.filter((t) => t !== TOPIC_TAX_AUDIT);
+          subjectTopic = prevTopics[0] || "";
+        }
+      }
 
+      // ===== implicit shift 時の税務調査 sticky 吸い込み解除 =====
+      const hasAuditWordsNow = hasTaxAuditWordsLite(message);
 
+      const implicitShiftUnstick =
+        implicitShift &&
+        decision.taxAuditSticky &&
+        !hasAuditWordsNow &&
+        !lineRequest &&
+        !followupExplicit &&
+        !followupOnly;
 
+      if (implicitShiftUnstick) {
+        auditAxis = false;
+      }
+
+      // ===== axisTopic 計算（implicit shift では履歴フォールバックしない）=====
+      const historyAxis = implicitShift ? "" : (inferTopicFromHistory(prevUserMessage, prevAssistantMessage) || "");
+
+      const decisionAxisCandidate = (() => {
+        const x = String(decision.axisTopic ?? "").trim();
+        if (!x) return "";
+        if (x === TOPIC_TAX_AUDIT) return "";
+        return x;
+      })();
+
+      const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : (subjectTopic || decisionAxisCandidate || historyAxis || "");
 
       const topicsNow = topicsNow0;
 
-      const shifted = decision.taxAuditSticky ? false : shiftedRaw;
+      const shifted = implicitShift ? true : (decision.taxAuditSticky ? false : shiftedRaw);
 
       const lensInputUsePrev = (followupOnly || weakUtterance) && Boolean(prevUserMessage);
       const lens: Lens = inferLensWithContext({
@@ -1468,7 +1628,6 @@ const axisTopic =
       });
 
       // ===== followup_lines クールダウン（1回出したら基本リセット）=====
-      
       const prevWasLines = prevDebug?.path === "followup_lines";
       const prevLens = (prevDebug?.lens ?? "").trim();
       const lensChanged = Boolean(prevLens) && prevLens !== lens;
@@ -1563,7 +1722,13 @@ const axisTopic =
         prev_user_len: (prevUserMessage ?? "").length,
 
         kb_bucket_counts: { subject: cSubject, audit: cAudit, other: cOther },
-        tax_audit_sticky_reason: decision.reason,
+        tax_audit_sticky_reason: implicitShiftUnstick ? `implicit_shift_unstick:${decision.reason}` : decision.reason,
+
+        clarify_prev_answer: clarifyPrevAnswer,
+        clarify_term: clarify.term || "",
+        clarify_matched: clarify.matched || "",
+        implicit_shift: Boolean(implicitShift),
+        implicit_shift_unstick: Boolean(implicitShiftUnstick),
       };
 
       meta.picked_kb_items = (topicKbItemsForPrompt ?? []).slice(0, 10).map((it) => ({
@@ -1639,7 +1804,8 @@ const axisTopic =
       }
 
       // ===== B) topic未確定だけ clarify =====
-      const needTopicClarify = !axisTopic && topicsNow.length === 0 && topicKbItems.length === 0;
+      // ※「購入とリースどっち」みたいに具体的な質問は、topicが取れなくても無理に確認を要求しない（弱発話の時だけ）
+      const needTopicClarify = !axisTopic && topicsNow.length === 0 && topicKbItems.length === 0 && (followupOnly || weakUtterance);
       const topicClarifyInquiry =
         "🔎確認 どの話の相談かだけ教えて（例：交際費/出張手当/外注/家事按分/福利厚生/役員報酬/車両/消費税/税務調査/退職金/不動産/相続・承継）。";
 
@@ -1740,6 +1906,13 @@ const axisTopic =
       }
 
       answer = stripInternalLeaks(answer);
+
+      // ===== implicit shift で sticky を外した場合：税務調査エッセンスを固定1行だけ添える =====
+      const prevAxisTopic = (prevDebug?.axisTopic ?? "").trim();
+      if (implicitShiftUnstick && prevAxisTopic === TOPIC_TAX_AUDIT) {
+        answer = insertLineBeforeInquiry(answer, auditEssenceOneLine(dialect, stance));
+        meta.audit_essence_injected = true;
+      }
 
       const trace: DebugTrace = {
         convId,

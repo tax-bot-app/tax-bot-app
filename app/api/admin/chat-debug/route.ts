@@ -161,6 +161,14 @@ export async function GET(req: Request) {
           topic_normalized: safeStr(meta?.topic_normalized ?? ""),
           topic_hits: meta?.topic_hits ? JSON.stringify(meta.topic_hits) : "",
 
+          // ===== clarify / implicit shift（会話の流れ補正）=====
+clarify_prev_answer: String(Boolean(meta?.clarify_prev_answer)),
+clarify_term: safeStr(meta?.clarify_term ?? ""),
+clarify_matched: safeStr(meta?.clarify_matched ?? ""),
+implicit_shift: String(Boolean(meta?.implicit_shift)),
+implicit_shift_unstick: String(Boolean(meta?.implicit_shift_unstick)),
+audit_essence_injected: String(Boolean(meta?.audit_essence_injected)),
+
           // ===== followup_lines / クールダウン =====
           prev_debug_path: safeStr(meta?.prev_debug_path ?? ""),
           prev_debug_lens: safeStr(meta?.prev_debug_lens ?? ""),
@@ -190,6 +198,12 @@ export async function GET(req: Request) {
         "prev_debug_lens",
         "lines_cooldown_applied",
         "lines_keep_reason",
+        "clarify_prev_answer",
+"clarify_term",
+"clarify_matched",
+"implicit_shift",
+"implicit_shift_unstick",
+"audit_essence_injected",
       ];
 
       const csvBody = toCsv(csvRows, headers);
