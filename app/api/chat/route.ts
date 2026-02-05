@@ -478,10 +478,9 @@ function isInFollowupPhase(prevAssistantMessage: string | null): boolean {
 
 function isLineRequest(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|安全度|安全性|レンジ|幅|アウト|セーフ|リスク|いくら|いくつまで|なんぼ|どんぐらい)/.test(
-    m
-  );
+  return /(攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|安全度|安全性|レンジ|幅|アウト|セーフ|リスク|いくら|いくつまで|なんぼ|どんぐらい|詳しく|詳細|具体|もう少し|もっと|続き|つづき)/.test(m);
 }
+
 
 function topicShiftLikelyLite(prevUser: string | null, cur: string): boolean {
   const prev = (prevUser ?? "").trim();
@@ -506,7 +505,7 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
   if (strong) return true;
 
   const followupCue =
-    /(教えて|おしえて|詳しく|詳細|具体|もう少し|もっと|続き|つづき|お願い|おねがい|頼む|たのむ|よろしく|再度|もう一回|もういちど|さっき|今の|それ|よろしこ)/.test(
+    /(教えて|おしえて|詳しく|詳細|具体|もう少し|もっと|続き|つづき|お願い|おねがい|頼む|たのむ|よろしく|再度|もう一回|もういちど|さっき|よろしこ)/.test(
       m
     );
 
@@ -1519,7 +1518,19 @@ const followupOnly =
       const followupExplicitRaw = wantsAttackDefenseDetail(message, prevUserMessage);
       const followupExplicit = followupExplicitRaw && !clarifyPrevAnswer;
 
-      const lineRequest = isLineRequest(message);
+      const lineRequestRaw = isLineRequest(message);
+
+      // ★ 直前のAIが「攻め/守りを出せる」と促していたか
+const prevInvitedLines =
+  /(攻め|守り|攻守|ラインも知りたかったら|遠慮なく言うてな)/.test(prevAssistantMessage ?? "");
+
+// ★ 促し後の短文了承
+const shortAckForLines =
+  /^(よろ|よろしく|よろしこ|頼む|たのむ)$/.test((message ?? "").trim());
+
+// ★ 最終的な lineRequest
+const lineRequest = lineRequestRaw || (prevInvitedLines && shortAckForLines);
+
 
       const followupPhaseRaw = isInFollowupPhase(prevAssistantMessage);
 
@@ -1646,7 +1657,7 @@ const followupOnly =
       const prevLens = (prevDebug?.lens ?? "").trim();
       const lensChanged = Boolean(prevLens) && prevLens !== lens;
 
-      const keepLines = lineRequest || lensChanged;
+      const keepLines = lineRequest || followupExplicit || lensChanged;
 
       const linesKeepReason = keepLines
         ? lineRequest
