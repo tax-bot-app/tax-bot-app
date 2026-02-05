@@ -1324,6 +1324,7 @@ async function generateAnswerStrict(params: {
 });
 
 
+
     if (!forbidden) return last;
 
     lastHits = findForbiddenHits(last, forbidden);
