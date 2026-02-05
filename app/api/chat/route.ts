@@ -1171,8 +1171,14 @@ function postProcessAnswer(
   raw: string,
   dialect: Dialect,
   stance: Stance,
-  opts: { usedKnowledge: boolean; allowAttackDefenseDetail: boolean; inquiryOverride?: string | null }
+  opts: {
+  usedKnowledge: boolean;
+  allowAttackDefenseDetail: boolean;
+  inquiryOverride?: string | null;
+  llmIntent?: string | null; // "qa_first" | "qa_more" | "need_lines" | ...
+}
 ): string {
+  const llmIntent = safeStr(opts.llmIntent ?? "").trim();
   const usedKnowledge = opts.usedKnowledge;
   const allowAttackDefenseDetail = opts.allowAttackDefenseDetail;
   const inquiryOverride = (opts.inquiryOverride ?? "").trim();
@@ -1207,9 +1213,26 @@ function postProcessAnswer(
   }
 
   const alreadyCatch = a.split("\n").some((line) => isCatchphraseLine(line));
-  if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch) {
-    a = `${a}\n\n${catchphraseFor(dialect, stance)}`.trim();
+
+// 誤爆ゼロ方針：qa_more では誘導を出さない（短文承諾が Lines に吸われるのを防ぐ）
+const isQaFirst = llmIntent === "qa_first";
+const isQaMore = llmIntent === "qa_more";
+const isNeedLines = llmIntent === "need_lines";
+
+if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch) {
+  // qa_first の時だけ、短いCTAを付ける（固定決めゼリフはここで置き換え）
+  if (isQaFirst) {
+    const cta =
+      dialect === "kansai"
+        ? "🔎確認 続きが欲しければ「続き」。線引き（どこまで/上限）ならそれを言うて。"
+        : "🔎確認 続きが欲しければ「続き」。線引き（どこまで/上限）ならそれを言って。";
+
+    // 既に🔎がある場合は追加しない（重複防止）
+    const hasInquiry = a.split("\n").some((line) => line.trimStart().startsWith("🔎"));
+    if (!hasInquiry) a = `${a}\n\n${cta}`.trim();
   }
+  // qa_more / need_lines は誘導を付けない（誤爆防止）
+}
 
   a = a
     .split("\n")
@@ -1268,6 +1291,7 @@ async function generateAnswerStrict(params: {
   usedKnowledge: boolean;
   allowAttackDefenseDetail: boolean;
   inquiryOverride?: string | null;
+  llmIntent?: string | null;
 }): Promise<string> {
   const { message, promptPartsBase, dialect, stance } = params;
 
@@ -1293,10 +1317,12 @@ async function generateAnswerStrict(params: {
     const result = await generateAnswer({ message, promptParts });
 
     last = postProcessAnswer(result.answer, dialect, stance, {
-      usedKnowledge: params.usedKnowledge,
-      allowAttackDefenseDetail: params.allowAttackDefenseDetail,
-      inquiryOverride: params.inquiryOverride ?? null,
-    });
+  usedKnowledge: params.usedKnowledge,
+  allowAttackDefenseDetail: params.allowAttackDefenseDetail,
+  inquiryOverride: params.inquiryOverride ?? null,
+  llmIntent: params.llmIntent ?? null,
+});
+
 
     if (!forbidden) return last;
 
@@ -2058,6 +2084,7 @@ if (qaKeyPointRule && bestQaForKeypoint) {
           usedKnowledge,
           allowAttackDefenseDetail,
           inquiryOverride,
+          llmIntent: (topicMode === "llm" && llmOk ? llmIntent : null),
         });
 
         path = "normal_llm";
