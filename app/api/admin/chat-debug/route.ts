@@ -173,6 +173,8 @@ export async function GET(req: Request) {
         "prev_debug_lens",
         "lines_cooldown_applied",
         "lines_keep_reason",
+        "lines_blocked_no_subject",
+        "lines_suppressed_short_ack",
 
         // clarify / implicit shift
         "clarify_prev_answer",
@@ -220,6 +222,8 @@ export async function GET(req: Request) {
           prev_debug_lens: safeStr(meta?.prev_debug_lens ?? ""),
           lines_cooldown_applied: String(Boolean(meta?.lines_cooldown_applied)),
           lines_keep_reason: safeStr(meta?.lines_keep_reason ?? ""),
+           lines_blocked_no_subject: String(Boolean(meta?.lines_blocked_no_subject)),
+           lines_suppressed_short_ack: String(Boolean(meta?.lines_suppressed_short_ack)),
 
           // ===== clarify / implicit shift（会話の流れ補正）=====
           clarify_prev_answer: String(Boolean(meta?.clarify_prev_answer)),
