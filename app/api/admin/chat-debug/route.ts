@@ -50,6 +50,16 @@ function toCsv(rows: Record<string, unknown>[], headers: string[]): string {
   return `${head}\n${body}\n`;
 }
 
+function jsonish(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string") return v; // 既にJSON文字列として入ってるケースもある
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return "";
+  }
+}
+
 function pickedQaTitles(meta: any): string {
   const arr = Array.isArray(meta?.picked_qa) ? meta.picked_qa : [];
   return arr
@@ -79,10 +89,7 @@ export async function GET(req: Request) {
   try {
     const token = bearer(req);
     if (!token) {
-      return NextResponse.json(
-        { ok: false, error: "Missing bearer token" } satisfies ApiRes,
-        { status: 401 }
-      );
+      return NextResponse.json({ ok: false, error: "Missing bearer token" } satisfies ApiRes, { status: 401 });
     }
 
     // anon + Bearer（RLS前提）
@@ -92,10 +99,7 @@ export async function GET(req: Request) {
     const authClient = createClient(url, anon, { auth: { persistSession: false } });
     const { data: userRes, error: userErr } = await authClient.auth.getUser(token);
     if (userErr || !userRes?.user) {
-      return NextResponse.json(
-        { ok: false, error: "Invalid session" } satisfies ApiRes,
-        { status: 401 }
-      );
+      return NextResponse.json({ ok: false, error: "Invalid session" } satisfies ApiRes, { status: 401 });
     }
 
     const db = createClient(url, anon, {
@@ -130,53 +134,12 @@ export async function GET(req: Request) {
 
     const { data, error } = await query;
     if (error) {
-      return NextResponse.json(
-        { ok: false, error: error.message } satisfies ApiRes,
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: error.message } satisfies ApiRes, { status: 400 });
     }
 
     const rows = data ?? [];
 
     if (format === "csv") {
-      const csvRows = rows.map((r: any) => {
-        const meta = r?.meta ?? {};
-        return {
-          created_at: safeStr(r?.created_at),
-          message_head: safeStr(r?.message_head),
-          topics_now: Array.isArray(r?.topics_now) ? r.topics_now.join(" | ") : safeStr(r?.topics_now),
-          inferred_topic: safeStr(r?.inferred_topic),
-          subject_topic: safeStr(meta?.subject_topic ?? ""),
-          axis_topic: safeStr(meta?.axis_topic ?? ""),
-          audit_axis: String(Boolean(meta?.audit_axis)),
-          lens: safeStr(r?.lens),
-          qa_pick_reason: safeStr(meta?.qa_pick_reason ?? meta?.pick_reason ?? ""),
-          picked_lines: pickedLinesSimple(meta),
-          picked_qa: pickedQaTitles(meta),
-
-          // ===== topic debug（証拠系）=====
-          topic_raw: safeStr(meta?.topic_raw ?? ""),
-          topic_raw_json: meta?.topic_raw_json ? JSON.stringify(meta.topic_raw_json) : "",
-          topic_codepoints_tail: safeStr(meta?.topic_codepoints_tail ?? ""),
-          topic_normalized: safeStr(meta?.topic_normalized ?? ""),
-          topic_hits: meta?.topic_hits ? JSON.stringify(meta.topic_hits) : "",
-
-          // ===== clarify / implicit shift（会話の流れ補正）=====
-clarify_prev_answer: String(Boolean(meta?.clarify_prev_answer)),
-clarify_term: safeStr(meta?.clarify_term ?? ""),
-clarify_matched: safeStr(meta?.clarify_matched ?? ""),
-implicit_shift: String(Boolean(meta?.implicit_shift)),
-implicit_shift_unstick: String(Boolean(meta?.implicit_shift_unstick)),
-audit_essence_injected: String(Boolean(meta?.audit_essence_injected)),
-
-          // ===== followup_lines / クールダウン =====
-          prev_debug_path: safeStr(meta?.prev_debug_path ?? ""),
-          prev_debug_lens: safeStr(meta?.prev_debug_lens ?? ""),
-          lines_cooldown_applied: String(Boolean(meta?.lines_cooldown_applied)),
-          lines_keep_reason: safeStr(meta?.lines_keep_reason ?? ""),
-        };
-      });
-
       const headers = [
         "created_at",
         "message_head",
@@ -186,25 +149,87 @@ audit_essence_injected: String(Boolean(meta?.audit_essence_injected)),
         "axis_topic",
         "audit_axis",
         "lens",
+
+        // LLM (NEW)
+        "topic_mode",
+        "llm_intent",
+        "llm_confidence",
+        "llm_topic_ok",
+        "llm_reason",
+
         "qa_pick_reason",
         "picked_lines",
         "picked_qa",
+
+        // topic debug
         "topic_raw",
         "topic_raw_json",
         "topic_codepoints_tail",
         "topic_normalized",
         "topic_hits",
+
+        // flow debug
         "prev_debug_path",
         "prev_debug_lens",
         "lines_cooldown_applied",
         "lines_keep_reason",
+
+        // clarify / implicit shift
         "clarify_prev_answer",
-"clarify_term",
-"clarify_matched",
-"implicit_shift",
-"implicit_shift_unstick",
-"audit_essence_injected",
+        "clarify_term",
+        "clarify_matched",
+        "implicit_shift",
+        "implicit_shift_unstick",
+        "audit_essence_injected",
       ];
+
+      const csvRows = rows.map((r: any) => {
+        const meta = r?.meta ?? {};
+
+        return {
+          created_at: safeStr(r?.created_at),
+          message_head: safeStr(r?.message_head),
+          topics_now: Array.isArray(r?.topics_now) ? r.topics_now.join(" | ") : safeStr(r?.topics_now),
+
+          inferred_topic: safeStr(r?.inferred_topic),
+          subject_topic: safeStr(meta?.subject_topic ?? ""),
+          axis_topic: safeStr(meta?.axis_topic ?? ""),
+          audit_axis: String(Boolean(meta?.audit_axis)),
+          lens: safeStr(r?.lens),
+
+          // ===== LLM (NEW) =====
+          topic_mode: safeStr(meta?.topic_mode ?? ""),
+          llm_intent: safeStr(meta?.llm_intent ?? ""),
+          llm_confidence: meta?.llm_confidence === undefined || meta?.llm_confidence === null ? "" : String(meta.llm_confidence),
+          llm_topic_ok: meta?.llm_topic_ok === undefined || meta?.llm_topic_ok === null ? "" : String(Boolean(meta.llm_topic_ok)),
+          llm_reason: safeStr(meta?.llm_reason ?? ""),
+
+          qa_pick_reason: safeStr(meta?.qa_pick_reason ?? meta?.pick_reason ?? ""),
+          picked_lines: pickedLinesSimple(meta),
+          picked_qa: pickedQaTitles(meta),
+
+          // ===== topic debug（証拠系）=====
+          topic_raw: safeStr(meta?.topic_raw ?? ""),
+          topic_raw_json: jsonish(meta?.topic_raw_json ?? ""),
+          topic_codepoints_tail: safeStr(meta?.topic_codepoints_tail ?? ""),
+          topic_normalized: safeStr(meta?.topic_normalized ?? ""),
+          topic_hits: jsonish(meta?.topic_hits ?? ""),
+
+          // ===== followup_lines / クールダウン =====
+          prev_debug_path: safeStr(meta?.prev_debug_path ?? ""),
+          prev_debug_lens: safeStr(meta?.prev_debug_lens ?? ""),
+          lines_cooldown_applied: String(Boolean(meta?.lines_cooldown_applied)),
+          lines_keep_reason: safeStr(meta?.lines_keep_reason ?? ""),
+
+          // ===== clarify / implicit shift（会話の流れ補正）=====
+          clarify_prev_answer: String(Boolean(meta?.clarify_prev_answer)),
+          clarify_term: safeStr(meta?.clarify_term ?? ""),
+          clarify_matched: safeStr(meta?.clarify_matched ?? ""),
+          implicit_shift: String(Boolean(meta?.implicit_shift)),
+          implicit_shift_unstick: String(Boolean(meta?.implicit_shift_unstick)),
+          audit_essence_injected: String(Boolean(meta?.audit_essence_injected)),
+        };
+      });
 
       const csvBody = toCsv(csvRows, headers);
       const csv = "\uFEFF" + csvBody; // BOM（Excel対策）
@@ -221,9 +246,6 @@ audit_essence_injected: String(Boolean(meta?.audit_essence_injected)),
 
     return NextResponse.json({ ok: true, rows } satisfies ApiRes, { status: 200 });
   } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: e?.message ?? "Unknown error" } satisfies ApiRes,
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" } satisfies ApiRes, { status: 500 });
   }
 }

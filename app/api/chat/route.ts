@@ -227,6 +227,20 @@ function hasTaxAuditWordsLite(text: string): boolean {
   );
 }
 
+function isShortAckLike(message: string): boolean {
+  const m = (message ?? "").trim();
+  if (!m) return false;
+
+  // いわゆる「続きちょうだい」系（雑でもOK）
+  if (/^(よろ|よろしく|よろしこ|よろ！|よろー|よろです！|頼む|たのむ|お願い|おねがい|おねげぇ|つづき|続き)$/.test(m)) return true;
+
+  // ひらがなだけの短文（例：おねげぇ、よろ、ほな、など）を広めに拾う
+  if (m.length <= 6 && /^[ぁ-んー！!？?]+$/.test(m)) return true;
+
+  return false;
+}
+
+
 function startsWithContinuationPrefix(message: string): boolean {
   const m = (message ?? "").trim();
   return /^(それ|その|じゃあ|じゃ|ほな|で|なら|今の|さっき|続き|つづき|あと|それで)/.test(m);
@@ -1603,7 +1617,9 @@ const lineRequest = lineRequestRaw || (prevInvitedLines && shortAckForLines);
       const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shiftedRaw);
 
       // ===== implicit shift（暗黙の話題転換）=====
-      const implicitShift = !clarifyPrevAnswer && !continuationLike && shiftedRaw;
+      const implicitShift =
+  !clarifyPrevAnswer && !continuationLike && shiftedRaw && !isShortAckLike(message);
+
 
       // ★ 後でクールダウン等で上書きするので let
       let forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance;
