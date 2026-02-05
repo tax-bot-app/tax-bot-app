@@ -13,6 +13,8 @@ import { decideTopicByLLM } from "../../lib2/ai/topicDecisionLlm";
 
 
 
+
+
 export const runtime = "nodejs";
 
 /** ===== constants ===== */
@@ -1942,13 +1944,28 @@ const topicsNow = llmOk && topicMode === "llm" ? llmTopicsNow.slice(0, 3) : topi
       });
 
       const bestQa = pickedQa.qa;
-      const qaKeyPointRule = bestQa ? qaToKeyPointRule(bestQa, 2) : null;
+      
+      // ===== qa_more: 2枚目QA（priority50側）を使って“続き”を出す =====
+const isQaMore = topicMode === "llm" && llmOk && llmIntent === "qa_more";
 
-      if (qaKeyPointRule && bestQa) {
-        meta.qa_keypoint_used_title = bestQa.title;
-        meta.qa_keypoint_used = qaKeyPointRule;
-        meta.qa_pick_reason = pickedQa.reason;
-      }
+let bestQaForKeypoint = bestQa;
+
+// qa_more の時だけ、picked_qa の2枚目を優先（あれば）
+if (isQaMore) {
+  const picked = (pickedQaForPrompt ?? []).filter((x) => x.kind === "qa");
+  if (picked.length >= 2) {
+    // pickedQaForPrompt は priority降順なので、2枚目を採用
+    bestQaForKeypoint = picked[1];
+  }
+}
+
+const qaKeyPointRule = bestQaForKeypoint ? qaToKeyPointRule(bestQaForKeypoint, 2) : null;
+
+if (qaKeyPointRule && bestQaForKeypoint) {
+  meta.qa_keypoint_used_title = bestQaForKeypoint.title;
+  meta.qa_keypoint_used = qaKeyPointRule;
+  meta.qa_pick_reason = isQaMore ? `${pickedQa.reason}|qa_more:second_qa` : pickedQa.reason;
+}
 
       // ===== C) normal_llm =====
       if (!answer) {

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { TOPIC_TAX_AUDIT } from "../topicDecision";
 
+
 function mustEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
@@ -38,7 +39,7 @@ function uniq(xs: string[]): string[] {
   return out;
 }
 
-export type LlmTopicIntent = "qa_first" | "need_lines" | "clarify" | "chitchat";
+export type LlmTopicIntent = "qa_first" | "qa_more" | "need_lines" | "clarify" | "chitchat";
 
 export type LlmTopicDecision = {
   axisTopic: string; // 税務調査 or ""
@@ -75,14 +76,19 @@ export async function decideTopicByLLM(params: {
     "axisTopic は税務調査軸を使う場合のみ '税務調査'、それ以外は空文字。",
     "",
     "intent の定義：",
-    "- qa_first: まず概要整理（QA要約が適切）。攻め/守りはまだ出さない。",
-    "- need_lines: ユーザーがギリ/上限/セーフアウト/攻め守り/金額レンジ等の『ライン』を求めている。",
-    "- clarify: 直前回答の用語確認・意味質問など。",
-    "- chitchat: 雑談・感想レベル。",
-    "",
-    "need_lines は厳しめ判定：",
-    "- 『よろ』『お願い』『頼む』『続き』だけでは need_lines にしない。",
-    "- 『上限/どこまで/ギリ/セーフ/アウト/グレー/いくら/レンジ/攻め守り/線引き』等がある時だけ。",
+"- qa_first: まず概要整理（QA要約が適切）。攻め/守りはまだ出さない。",
+"- qa_more: 直前の概要整理（qa_first）の『続き』。短い承諾/促し（例：お願い/よろ/続き/それで）に対して、要点を1段だけ追加する。",
+"- need_lines: ユーザーがギリ/上限/セーフアウト/攻め守り/金額レンジ等の『ライン』を求めている。",
+"- clarify: 直前回答の用語確認・意味質問など。",
+"- chitchat: 雑談・感想レベル。",
+"",
+"qa_more の判定ガイド：",
+"- ユーザー発話が短い承諾/促しだけの場合、まず qa_more を優先する。",
+"- ただし直前のアシスタントが『攻め/守りも出せる』と誘導していて、ユーザーが短文で了承した場合は need_lines を選んでよい。",
+"",
+"need_lines は厳しめ判定：",
+"- 『よろ』『お願い』『頼む』『続き』だけでは通常 need_lines にしない（上の例外を除く）。",
+"- 『上限/どこまで/ギリ/セーフ/アウト/グレー/いくら/レンジ/攻め守り/線引き』等がある時だけ。",
     "",
     "topicsNow は allowed_topics から最大3件（1番目は subjectTopic と同じ）。",
     "confidence は 0.0〜1.0。",
@@ -135,7 +141,12 @@ export async function decideTopicByLLM(params: {
       return { ok: false, error: "llm_topic: axisTopic invalid", rawText };
     }
 
-    const intentOk = intent === "qa_first" || intent === "need_lines" || intent === "clarify" || intent === "chitchat";
+    const intentOk =
+  intent === "qa_first" ||
+  intent === "qa_more" ||
+  intent === "need_lines" ||
+  intent === "clarify" ||
+  intent === "chitchat";
     if (!intentOk) return { ok: false, error: "llm_topic: intent invalid", rawText };
 
     const fixedTopicsNow = uniq([subjectTopic, ...topicsNow]).filter((t) => allowSet.has(t)).slice(0, 3);
