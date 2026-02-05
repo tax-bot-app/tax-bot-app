@@ -170,6 +170,9 @@ type DebugMeta = {
   prev_debug_lens?: string;
   lines_cooldown_applied?: boolean;
   lines_keep_reason?: string;
+    // lines safety guards
+  lines_blocked_no_subject?: boolean;
+  lines_suppressed_short_ack?: boolean;
 
   tax_audit_sticky_reason?: string;
 
@@ -508,7 +511,11 @@ function isInFollowupPhase(prevAssistantMessage: string | null): boolean {
 
 function isLineRequest(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|安全度|安全性|レンジ|幅|アウト|セーフ|リスク|いくら|いくつまで|なんぼ|どんぐらい|詳しく|詳細|具体|もう少し|もっと|続き|つづき)/.test(m);
+  // 「続き/詳しく/具体」等は qa_more 側（Linesではない）
+  // Lines（線引き/上限/攻守）だけを拾う
+  return /(攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|安全度|安全性|レンジ|幅|アウト|セーフ|リスク|いくら|いくつまで|なんぼ|どんぐらい)/.test(
+    m
+  );
 }
 
 
@@ -539,8 +546,6 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
       m
     );
 
-  const followupSolo = /^(よろ|よろです|よろです！|よろ！|よろー)$/.test(m);
-
   const veryShort = m.length <= 2 || /^[\.\-ー…\?？!！wｗ]+$/.test(m);
 
   const topicShiftLikely = (() => {
@@ -554,7 +559,8 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
     return !overlap;
   })();
 
-  if (followupCue || followupSolo) return true;
+  // 「よろ」等の短文は followupOnly/isShortAckLike 側で拾う（ここで explicit にしない）
+  if (followupCue) return true;
   if (veryShort && !topicShiftLikely) return true;
 
   return false;
@@ -1186,11 +1192,13 @@ function postProcessAnswer(
   let a = String(raw ?? "").replace(/\r\n/g, "\n").trim();
   a = a.replace(/[\(（]最大[^)）]*[\)）]/g, "");
 
+    // 🍚🧂 が混ざっても “早期return” しない（allowAttackDefenseDetail=false の時にサーバ側で削れるようにする）
   if (hasThreePatterns(a)) {
     const lines = a.split("\n");
     const out = lines.filter((line) => !isCatchphraseLine(line));
-    return stripInternalLeaks(out.join("\n").trim());
+    a = out.join("\n").trim();
   }
+
 
   a = enforceTemplate(a);
 
@@ -1213,26 +1221,27 @@ function postProcessAnswer(
   }
 
   const alreadyCatch = a.split("\n").some((line) => isCatchphraseLine(line));
-
+  
 // 誤爆ゼロ方針：qa_more では誘導を出さない（短文承諾が Lines に吸われるのを防ぐ）
 const isQaFirst = llmIntent === "qa_first";
-const isQaMore = llmIntent === "qa_more";
-const isNeedLines = llmIntent === "need_lines";
+// const isQaMore = llmIntent === "qa_more";
+// const isNeedLines = llmIntent === "need_lines";
 
 if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch) {
-  // qa_first の時だけ、短いCTAを付ける（固定決めゼリフはここで置き換え）
+  // qa_first の時だけ、短いCTAを付ける（※🔎で始めない： inquiry置換に食われるため）
   if (isQaFirst) {
     const cta =
       dialect === "kansai"
-        ? "🔎確認 続きが欲しければ「続き」。線引き（どこまで/上限）ならそれを言うて。"
-        : "🔎確認 続きが欲しければ「続き」。線引き（どこまで/上限）ならそれを言って。";
+        ? "👉 続き欲しければ「続き」。線引き（どこまで/上限）ならそれ言うて。"
+        : "👉 続きが欲しければ「続き」。線引き（どこまで/上限）ならそれを言って。";
 
-    // 既に🔎がある場合は追加しない（重複防止）
-    const hasInquiry = a.split("\n").some((line) => line.trimStart().startsWith("🔎"));
-    if (!hasInquiry) a = `${a}\n\n${cta}`.trim();
+    // 既に👉がある場合は追加しない（重複防止）
+    const hasCta = a.split("\n").some((line) => line.trimStart().startsWith("👉"));
+    if (!hasCta) a = `${a}\n\n${cta}`.trim();
   }
   // qa_more / need_lines は誘導を付けない（誤爆防止）
 }
+
 
   a = a
     .split("\n")
@@ -1611,22 +1620,10 @@ const followupOnly =
       const weakUtterance = isWeakUtterance(message);
 
       const followupExplicitRaw = wantsAttackDefenseDetail(message, prevUserMessage);
-      const followupExplicit = followupExplicitRaw && !clarifyPrevAnswer;
+const followupExplicit = followupExplicitRaw && !clarifyPrevAnswer;
 
-            const lineRequestRaw =
-        topicMode === "llm" && llmOk ? llmIntent === "need_lines" : isLineRequest(message);
-
-
-      // ★ 直前のAIが「攻め/守りを出せる」と促していたか
-const prevInvitedLines =
-  /(攻め|守り|攻守|ラインも知りたかったら|遠慮なく言うてな)/.test(prevAssistantMessage ?? "");
-
-// ★ 促し後の短文了承
-const shortAckForLines =
-  /^(よろ|よろしく|よろしこ|よろです！|よろ！|よろー|頼む|たのむ)$/.test((message ?? "").trim());
-
-// ★ 最終的な lineRequest
-const lineRequest = lineRequestRaw || (prevInvitedLines && shortAckForLines);
+// lineRequest（線引きの明示要求）※LLM intent は後段で合流して最終決定する
+const lineRequest = isLineRequest(message);
 
 
       const followupPhaseRaw = isInFollowupPhase(prevAssistantMessage);
@@ -1789,23 +1786,45 @@ const topicsNow = llmOk && topicMode === "llm" ? llmTopicsNow.slice(0, 3) : topi
       });
 
       // ===== followup_lines クールダウン（1回出したら基本リセット）=====
-      const prevWasLines = prevDebug?.path === "followup_lines";
-      const prevLens = (prevDebug?.lens ?? "").trim();
-      const lensChanged = Boolean(prevLens) && prevLens !== lens;
+      // ===== followup_lines クールダウン（1回出したら基本リセット）=====
+const prevWasLines = prevDebug?.path === "followup_lines";
+const prevLens = (prevDebug?.lens ?? "").trim();
+const lensChanged = Boolean(prevLens) && prevLens !== lens;
 
-      const keepLines = lineRequest || followupExplicit || lensChanged;
+// ===== Lines 出力可否（最終判定）=====
+// - LLMモードでは llmIntent=need_lines の時だけ Lines を許可
+// - ただし短文承諾（よろ/続き/おねげぇ 等）では Lines を絶対に出さない（誤爆ゼロ）
+const suppressLinesByShortAck = isShortAckLike(message) && !lineRequest;
 
-      const linesKeepReason = keepLines
-        ? lineRequest
-          ? "keep:line_request"
-          : followupExplicit
-          ? "keep:explicit_followup"
-          : lensChanged
-          ? `keep:lens_changed:${prevLens}->${lens}`
-          : "keep:other"
-        : "cooldown:prev_was_lines";
+// regex側のlineRequest、LLM側のintentをここで合流
+const lineRequestEffective =
+  (topicMode === "llm" && llmOk ? llmIntent === "need_lines" : lineRequest) && !suppressLinesByShortAck;
 
-      const linesCooldown = prevWasLines && !keepLines;
+// LLMモードで subjectTopic が空なら Lines は出さない（ズレ防止）
+const linesBlockedNoSubject = topicMode === "llm" && llmOk && lineRequestEffective && !subjectTopic;
+
+// これが“唯一のスイッチ”
+const allowLines = lineRequestEffective && !linesBlockedNoSubject;
+
+// need_lines の時は followup_lines を優先したいので、ここで normal 強制を解除（clarifyは除外）
+if (lineRequestEffective && !clarifyPrevAnswer) forceNormalAnswer = false;
+
+const keepLines = lineRequestEffective || lensChanged;
+
+const linesKeepReason = keepLines
+  ? lineRequestEffective
+    ? (linesBlockedNoSubject ? "keep:line_request_blocked:llm_no_subject" : "keep:line_request")
+    : lensChanged
+    ? `keep:lens_changed:${prevLens}->${lens}`
+    : "keep:other"
+  : "cooldown:prev_was_lines";
+
+const linesCooldown = prevWasLines && !keepLines;
+
+if (linesCooldown) {
+  forceNormalAnswer = true;
+}
+
 
       if (linesCooldown) {
         forceNormalAnswer = true;
@@ -1876,6 +1895,9 @@ const topicsNow = llmOk && topicMode === "llm" ? llmTopicsNow.slice(0, 3) : topi
         prev_debug_lens: prevDebug?.lens ?? "",
         lines_cooldown_applied: Boolean(linesCooldown),
         lines_keep_reason: linesKeepReason,
+        lines_blocked_no_subject: Boolean(linesBlockedNoSubject),
+lines_suppressed_short_ack: Boolean(suppressLinesByShortAck),
+
 
         borrowed_prev_topic: shouldBorrowPrevTopic,
         weak_utterance: weakUtterance,
@@ -1913,7 +1935,8 @@ const topicsNow = llmOk && topicMode === "llm" ? llmTopicsNow.slice(0, 3) : topi
       let path: DebugTrace["path"] = "normal_llm";
 
       // ===== A) followup_lines =====
-      if (followup && !forceNormalAnswer) {
+      // ===== A) followup_lines =====
+if (allowLines && !forceNormalAnswer) {
         const header = stance === "zubatto" ? "判断の軸だけ整理する。" : "判断の軸だけ整理します。";
 
         const topicForLines = subjectTopic || axisTopic || topicsNow[0] || "";
@@ -2013,7 +2036,8 @@ if (qaKeyPointRule && bestQaForKeypoint) {
       // ===== C) normal_llm =====
       if (!answer) {
         const usedKnowledge = topicKbItemsForPrompt.length > 0;
-        const allowAttackDefenseDetail = followup && !linesCooldown;
+        // Lines（🍚🧂）は allowLines の時だけ（qa_more では絶対に出さない）
+const allowAttackDefenseDetail = allowLines && !linesCooldown && !forceNormalAnswer;
 
         const kbGlobalBlock = formatKnowledgeBlock(globalRules);
         const kbTopicBlock = formatKnowledgeBlock(topicKbItemsForPrompt);
@@ -2109,7 +2133,7 @@ if (qaKeyPointRule && bestQaForKeypoint) {
         lens,
         followupExplicit,
         followupPhase,
-        lineRequest,
+        lineRequest: lineRequestEffective,
         shifted,
         followup,
         forceNormalAnswer,
