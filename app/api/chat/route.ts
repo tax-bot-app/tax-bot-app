@@ -8,6 +8,10 @@ import { createClient } from "@supabase/supabase-js";
 // NEW: 37.2 split
 import { inferTopics, inferTopicsDebug, inferTopicFromHistory, isWeakUtterance, isFollowupOnlyText } from "../../lib2/topicSignals";
 import { decideAxisSubject, inferLensWithContext, TOPIC_TAX_AUDIT, AUDIT_OVERLAY_TOPICS, type Lens } from "../../lib2/topicDecision";
+// NEW: LLM topic decision (39)
+import { decideTopicByLLM } from "../../lib2/topicDecisionLlm";
+
+
 
 export const runtime = "nodejs";
 
@@ -174,6 +178,16 @@ type DebugMeta = {
   implicit_shift?: boolean;
   implicit_shift_unstick?: boolean;
   audit_essence_injected?: boolean;
+
+    // topic mode / llm decision
+  topic_mode?: "regex" | "llm";
+  llm_topic_ok?: boolean;
+  llm_topic_error?: string;
+  llm_topic_raw?: string;
+  llm_intent?: string;
+  llm_confidence?: number;
+  llm_reason?: string;
+
 };
 
 type DebugTrace = {
@@ -544,6 +558,32 @@ async function retrieveGlobalRules(params: { db: any }): Promise<KnowledgeItem[]
   if (error) return [];
   return (data ?? []) as KnowledgeItem[];
 }
+
+async function fetchAvailableTopics(db: any): Promise<string[]> {
+  const out = new Set<string>();
+
+  try {
+    const { data } = await db.from("knowledge_items").select("topic").eq("is_active", true).limit(500);
+    for (const r of (data ?? []) as any[]) {
+      const t = String(r?.topic ?? "").trim();
+      if (t) out.add(t);
+    }
+  } catch {}
+
+  try {
+    const { data } = await db.from("knowledge_lines").select("topic").eq("is_active", true).limit(500);
+    for (const r of (data ?? []) as any[]) {
+      const t = String(r?.topic ?? "").trim();
+      if (t) out.add(t);
+    }
+  } catch {}
+
+  out.delete("GLOBAL");
+  out.add(TOPIC_TAX_AUDIT);
+
+  return Array.from(out);
+}
+
 
 function messageTokens3(s: string): string[] {
   return Array.from((s ?? "").matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((m) => m[0]);
@@ -1421,6 +1461,18 @@ function followupFooter(axisTopic: string, dialect: Dialect, stance: Stance): st
 
 /** ===== POST ===== */
 export async function POST(req: Request) {
+  // ===== topic / axis / subject (LLM optional) =====
+const topicMode: "regex" | "llm" =
+  (process.env.TOPIC_MODE || "regex") === "llm" ? "llm" : "regex";
+
+let llmOk = false;
+let llmErr = "";
+let llmRaw = "";
+let llmIntent = "";
+let llmConfidence = 0;
+let llmReason = "";
+let llmTopicsNow: string[] = [];
+
   try {
     const token = bearer(req);
     if (!token) return NextResponse.json({ ok: false, error: "Missing bearer token" } satisfies ChatRes, { status: 401 });
@@ -1518,7 +1570,9 @@ const followupOnly =
       const followupExplicitRaw = wantsAttackDefenseDetail(message, prevUserMessage);
       const followupExplicit = followupExplicitRaw && !clarifyPrevAnswer;
 
-      const lineRequestRaw = isLineRequest(message);
+            const lineRequestRaw =
+        topicMode === "llm" && llmOk ? llmIntent === "need_lines" : isLineRequest(message);
+
 
       // ★ 直前のAIが「攻め/守りを出せる」と促していたか
 const prevInvitedLines =
@@ -1526,7 +1580,7 @@ const prevInvitedLines =
 
 // ★ 促し後の短文了承
 const shortAckForLines =
-  /^(よろ|よろしく|よろしこ|頼む|たのむ)$/.test((message ?? "").trim());
+  /^(よろ|よろしく|よろしこ|よろです！|よろ！|よろー|頼む|たのむ)$/.test((message ?? "").trim());
 
 // ★ 最終的な lineRequest
 const lineRequest = lineRequestRaw || (prevInvitedLines && shortAckForLines);
@@ -1555,33 +1609,71 @@ const lineRequest = lineRequestRaw || (prevInvitedLines && shortAckForLines);
       // clarify は必ず normal 回答へ（lines禁止）
       if (clarifyPrevAnswer) forceNormalAnswer = true;
 
-      // ===== topic / axis / subject (37.2: topicDecision) =====
-      const topicsNowDbg = inferTopicsDebug(message, { max: 3 });
-      const topicsNow0 = topicsNowDbg.topics;
+   // topic debug
+const topicsNowDbg = inferTopicsDebug(message, { max: 3 });
+const topicsNow0 = topicsNowDbg.topics;
 
-      const topicsPrevDbg = prevUserMessage ? inferTopicsDebug(prevUserMessage, { max: 3 }) : null;
-      const topicsPrev = topicsPrevDbg?.topics ?? [];
+const topicsPrevDbg = prevUserMessage ? inferTopicsDebug(prevUserMessage, { max: 3 }) : null;
+const topicsPrev = topicsPrevDbg?.topics ?? [];
 
-      const recentUserMsgs = await (async () => {
-        const { data: rows } = await db
-          .from("messages")
-          .select("content")
-          .eq("conversation_id", convId)
-          .eq("role", "user")
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: false })
-          .limit(6);
-        return (rows ?? []).map((r) => String(r.content ?? ""));
-      })();
+const recentUserMsgs = await (async () => {
+  const { data: rows } = await db
+    .from("messages")
+    .select("content")
+    .eq("conversation_id", convId)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(6);
+  return (rows ?? []).map((r) => String(r.content ?? ""));
+})();
 
-      const decision = decideAxisSubject({
-        message,
-        topicsNow: topicsNow0,
-        topicsPrev,
-        prevAssistantMessage,
-        recentUserMsgs,
-        continuationLike,
-      });
+let decision = decideAxisSubject({
+  message,
+  topicsNow: topicsNow0,
+  topicsPrev,
+  prevAssistantMessage,
+  recentUserMsgs,
+  continuationLike,
+});
+
+// LLM decision（失敗したら従来にフォールバック）
+if (topicMode === "llm") {
+  const availableTopics = await fetchAvailableTopics(db);
+  const llm = await decideTopicByLLM({
+    message,
+    prevUserMessage: prevUserMessage ?? null,
+    prevAssistantMessage: prevAssistantMessage ?? null,
+    recentUserMsgs,
+    availableTopics,
+  });
+
+  llmRaw = llm.rawText ?? "";
+
+  if (llm.ok) {
+    llmOk = true;
+    llmIntent = llm.decision.intent;
+    llmConfidence = llm.decision.confidence;
+    llmReason = llm.decision.reason;
+    llmTopicsNow = llm.decision.topicsNow ?? [];
+
+    decision = {
+      ...decision,
+      subjectTopic: llm.decision.subjectTopic,
+      axisTopic: llm.decision.axisTopic,
+      auditAxis: llm.decision.auditAxis,
+      taxAuditSticky: llm.decision.auditAxis,
+      reason: `llm:${llm.decision.intent}:${llm.decision.confidence.toFixed(2)}:${llm.decision.reason || ""}`,
+    } as any;
+  } else {
+    llmOk = false;
+    llmErr = llm.error;
+  }
+}
+
+const topicsNow = llmOk && topicMode === "llm" ? llmTopicsNow.slice(0, 3) : topicsNow0;
+
+
 
       const prevDebug = await fetchPrevDebugLite(db, convId);
 
@@ -1640,8 +1732,7 @@ const lineRequest = lineRequestRaw || (prevInvitedLines && shortAckForLines);
 
       const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : (subjectTopic || decisionAxisCandidate || historyAxis || "");
 
-      const topicsNow = topicsNow0;
-
+     
       const shifted = implicitShift ? true : (decision.taxAuditSticky ? false : shiftedRaw);
 
       const lensInputUsePrev = (followupOnly || weakUtterance) && Boolean(prevUserMessage);
@@ -1754,6 +1845,15 @@ const lineRequest = lineRequestRaw || (prevInvitedLines && shortAckForLines);
         clarify_matched: clarify.matched || "",
         implicit_shift: Boolean(implicitShift),
         implicit_shift_unstick: Boolean(implicitShiftUnstick),
+
+                topic_mode: topicMode,
+        llm_topic_ok: llmOk,
+        llm_topic_error: llmErr,
+        llm_topic_raw: llmRaw ? clampForContext(llmRaw, 800) : "",
+        llm_intent: llmIntent,
+        llm_confidence: llmConfidence,
+        llm_reason: llmReason,
+
       };
 
       meta.picked_kb_items = (topicKbItemsForPrompt ?? []).slice(0, 10).map((it) => ({
