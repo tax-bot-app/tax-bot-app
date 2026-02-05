@@ -1646,7 +1646,7 @@ const followupOnly =
       const prevLens = (prevDebug?.lens ?? "").trim();
       const lensChanged = Boolean(prevLens) && prevLens !== lens;
 
-      const keepLines = lineRequest || followupExplicit || lensChanged;
+      const keepLines = lineRequest || lensChanged;
 
       const linesKeepReason = keepLines
         ? lineRequest
