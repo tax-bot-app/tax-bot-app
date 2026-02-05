@@ -9,7 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 import { inferTopics, inferTopicsDebug, inferTopicFromHistory, isWeakUtterance, isFollowupOnlyText } from "../../lib2/topicSignals";
 import { decideAxisSubject, inferLensWithContext, TOPIC_TAX_AUDIT, AUDIT_OVERLAY_TOPICS, type Lens } from "../../lib2/topicDecision";
 // NEW: LLM topic decision (39)
-import { decideTopicByLLM } from "../../lib2/topicDecisionLlm";
+import { decideTopicByLLM } from "../../lib2/ai/topicDecisionLlm";
 
 
 
