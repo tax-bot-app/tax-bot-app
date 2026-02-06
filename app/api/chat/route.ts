@@ -1207,22 +1207,27 @@ function postProcessAnswer(
   a = enforceTemplate(a);
 
   if (!allowAttackDefenseDetail) {
-    a = a
-      .split("\n")
-      .filter((line) => {
-        const t = line.trimStart();
-        if (t.startsWith("🍚攻め") || t.startsWith("🧂守り")) return false;
-        return true;
-      })
-      .join("\n")
-      .trim();
-  } else {
-    a = a
-      .split("\n")
-      .filter((line) => !line.trimStart().startsWith("🥄"))
-      .join("\n")
-      .trim();
-  }
+  a = a
+    .split("\n")
+    .filter((line) => {
+      const t = line.trimStart();
+
+      // 🍚🧂だけじゃなく、素の「攻め：」「守り：」も全部落とす（誤爆防止の本丸）
+      if (t.startsWith("🍚攻め") || t.startsWith("🧂守り")) return false;
+      if (/^(攻め|守り)\s*[:：]/.test(t)) return false;
+
+      return true;
+    })
+    .join("\n")
+    .trim();
+} else {
+  a = a
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("🥄"))
+    .join("\n")
+    .trim();
+}
+
 
   const alreadyCatch = a.split("\n").some((line) => isCatchphraseLine(line));
   
