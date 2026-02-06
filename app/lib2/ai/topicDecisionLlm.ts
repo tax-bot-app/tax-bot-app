@@ -68,31 +68,42 @@ export async function decideTopicByLLM(params: {
 
   const topics = uniq(availableTopics).slice(0, 220);
 
-  const instructions = [
-    "あなたは会話の『意図』と『主題』を決める分類器。",
+    const instructions = [
+    "あなたは会話の『意図(intent)』と『主題(subjectTopic)』を決める分類器。",
     "必ず JSON のみを返す。コードブロック禁止。余計な文章禁止。",
     "",
-    "subjectTopic は allowed_topics から完全一致で1つ選ぶ。",
-    "axisTopic は税務調査軸を使う場合のみ '税務調査'、それ以外は空文字。",
+    "【最重要：主題の扱い】",
+    "- 主題(subjectTopic)が特定できない場合は、推測で補完しない。必ず空文字 \"\" を返す。",
+    "- 主語が不明な線引き質問（例：「どこまで？」「いくらまで？」）は、主題不明として扱い subjectTopic は空にする。",
+    "- 「制度基準」「一般論」など包括的トピックを、主語不明の穴埋めに使ってはならない。",
+    "",
+    "subjectTopic のルール：",
+    "- 特定できる場合のみ allowed_topics から完全一致で1つ選ぶ。",
+    "- 特定できない場合は空文字 \"\"。",
+    "",
+    "axisTopic のルール：",
+    "- 税務調査軸を使う場合のみ '税務調査'、それ以外は空文字。",
     "",
     "intent の定義：",
-"- qa_first: まず概要整理（QA要約が適切）。攻め/守りはまだ出さない。",
-"- qa_more: 直前の概要整理（qa_first）の『続き』。短い承諾/促し（例：お願い/よろ/続き/それで）に対して、要点を1段だけ追加する。",
-"- need_lines: ユーザーがギリ/上限/セーフアウト/攻め守り/金額レンジ等の『ライン』を求めている。",
-"- clarify: 直前回答の用語確認・意味質問など。",
-"- chitchat: 雑談・感想レベル。",
-"",
-"qa_more の判定ガイド：",
-"- ユーザー発話が短い承諾/促しだけの場合、まず qa_more を優先する。",
-"- ただし直前のアシスタントが『攻め/守りも出せる』と誘導していて、ユーザーが短文で了承した場合は need_lines を選んでよい。",
-"",
-"need_lines は厳しめ判定：",
-"- 『よろ』『お願い』『頼む』『続き』だけでは通常 need_lines にしない（上の例外を除く）。",
-"- 『上限/どこまで/ギリ/セーフ/アウト/グレー/いくら/レンジ/攻め守り/線引き』等がある時だけ。",
+    "- qa_first: まず概要整理（QA要約が適切）。攻め/守りはまだ出さない。",
+    "- qa_more: 直前の概要整理（qa_first）の『続き』。短い承諾/促し（例：お願い/よろ/続き/それで）に対して、要点を1段だけ追加する。",
+    "- need_lines: ユーザーがギリ/上限/セーフアウト/攻め守り/金額レンジ等の『線引き』を求めている。",
+    "- clarify: 直前回答の用語確認・意味質問、または主語不明で確認が必要なケース。",
+    "- chitchat: 雑談・感想レベル。",
     "",
-    "topicsNow は allowed_topics から最大3件（1番目は subjectTopic と同じ）。",
+    "判定ガイド：",
+    "- ユーザー発話が短い承諾/促しだけの場合、まず qa_more を優先する。",
+    "- 『よろ』『お願い』『頼む』『続き』だけでは need_lines にしない。",
+    "- need_lines は『上限/どこまで/ギリ/セーフ/アウト/グレー/いくら/レンジ/攻め守り/線引き』等がある時だけ。",
+    "- ただし need_lines でも主題が特定できない場合は intent を clarify にする（= 主語確認）。",
+    "",
+    "topicsNow のルール：",
+    "- subjectTopic がある場合：allowed_topics から最大3件（1番目は subjectTopic と同じ）。",
+    "- subjectTopic が空の場合：topicsNow は空配列 [] にする。",
+    "",
     "confidence は 0.0〜1.0。",
-  ].join("\n");
+  ].join("\n\n");
+
 
   const input = [
     "allowed_topics:",
@@ -104,13 +115,13 @@ export async function decideTopicByLLM(params: {
     `recent_user_msgs: ${JSON.stringify((recentUserMsgs ?? []).slice(0, 6).map((s) => String(s ?? "").slice(0, 200)))}`,
     `user_message: ${String(message ?? "").slice(0, 800)}`,
     "",
-    "Return JSON with keys:",
+        "Return JSON with keys:",
     `{
-  "subjectTopic": string,
-  "axisTopic": string,
+  "subjectTopic": string,  // allowed_topics から選ぶか、特定不能なら ""
+  "axisTopic": string,     // "" or "税務調査"
   "auditAxis": boolean,
-  "topicsNow": string[],
-  "intent": "qa_first"|"need_lines"|"clarify"|"chitchat",
+  "topicsNow": string[],   // subjectTopic=="" のときは []
+  "intent": "qa_first"|"qa_more"|"need_lines"|"clarify"|"chitchat",
   "confidence": number,
   "reason": string
 }`,
@@ -133,7 +144,8 @@ export async function decideTopicByLLM(params: {
     const topicsNow = Array.isArray(obj.topicsNow) ? obj.topicsNow.map((x: any) => String(x ?? "").trim()).filter(Boolean) : [];
 
     const allowSet = new Set(topics);
-    if (!subjectTopic || !allowSet.has(subjectTopic)) {
+        // subjectTopic は「特定できる時だけ」allowed_topics から選ぶ。特定不能なら空文字を許可。
+    if (subjectTopic !== "" && !allowSet.has(subjectTopic)) {
       return { ok: false, error: "llm_topic: subjectTopic not in allowed_topics", rawText };
     }
 
@@ -149,14 +161,22 @@ export async function decideTopicByLLM(params: {
   intent === "chitchat";
     if (!intentOk) return { ok: false, error: "llm_topic: intent invalid", rawText };
 
-    const fixedTopicsNow = uniq([subjectTopic, ...topicsNow]).filter((t) => allowSet.has(t)).slice(0, 3);
+        // 主語不明の線引きは clarify（= 主語確認）へ
+    let finalIntent: LlmTopicIntent = intent;
+    if (finalIntent === "need_lines" && subjectTopic === "") finalIntent = "clarify";
+
+        const fixedTopicsNow =
+      subjectTopic === ""
+        ? []
+        : uniq([subjectTopic, ...topicsNow]).filter((t) => allowSet.has(t)).slice(0, 3);
+
 
     const decision: LlmTopicDecision = {
       subjectTopic,
       axisTopic: auditAxis ? TOPIC_TAX_AUDIT : "",
       auditAxis,
       topicsNow: fixedTopicsNow,
-      intent,
+            intent: finalIntent,
       confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
       reason,
     };
