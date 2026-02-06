@@ -26,6 +26,13 @@ const SERVICE_ASSUMPTION_RULES: string[] = [
   "例外：ユーザーが明示的に『顧問税理士がいない』と言った場合だけ、その前提で答える。",
 ];
 
+const INTERNAL_LEAK_RE = /(未登録|ここに|\bDB\b|データベース|育成知見|\binternal\b|\bTODO\b|開発用)/i;
+
+function isLeakyLine(text: string): boolean {
+  return INTERNAL_LEAK_RE.test(String(text ?? ""));
+}
+
+
 /** ===== small utils ===== */
 function mustEnv(name: string): string {
   const v = process.env[name];
@@ -771,6 +778,7 @@ async function retrieveKnowledgeLines(params: {
   const minLen = 8; // 好みで。まずは8〜12くらいが無難
   const candidates = rows
     .filter((r) => r.stance === stance)
+    .filter((r) => !isLeakyLine(r.text))                 // ★追加：事故行除外
     .filter((r) => String(r.text ?? "").trim().length >= minLen);
 
   if (candidates.length === 0) return null;
@@ -2002,10 +2010,12 @@ if (allowLines && !forceNormalAnswer) {
           }
 
           if (!built) {
-            const fb = fallbackAttackDefense(topicForLines, lens);
-            built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
-            path = "followup_fallback";
-          }
+  const fb = fallbackAttackDefense(topicForLines, lens);
+  built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
+  meta.built_head = dbgHead(built ?? "", 240);
+  path = "followup_fallback";
+}
+
 
           // built 最終検品：🍚🧂片側欠損は禁止（混線防止）
 const builtOk =
@@ -2037,14 +2047,44 @@ if (!builtOk) {
           if (footer) parts.push("", footer);
           parts.push("", inquiryOverride);
 
-          answer = postProcessAnswer(parts.join("\n").trim(), dialect, stance, {
-            usedKnowledge: true,
-            allowAttackDefenseDetail: true,
-            inquiryOverride,
-          });
+          // ★ここに追加：built が最終確定したら常に記録
+meta.built_head = dbgHead(built ?? "", 240);
+
+answer = postProcessAnswer(parts.join("\n").trim(), dialect, stance, {
+  usedKnowledge: true,
+  allowAttackDefenseDetail: true,
+  inquiryOverride,
+});
+
+// ===== 最終出力検品：🍚🧂どっちか欠けたら即fallbackで作り直す（最後の砦）=====
+const reAttack = /(^|\n)\s*🍚\s*攻め\s*[:：]\s*\S/;
+const reDefense = /(^|\n)\s*🧂\s*守り\s*[:：]\s*\S/;
+const finalOk = reAttack.test(answer) && reDefense.test(answer);
+
+if (!finalOk) {
+  usedLinesPick = false;
+  meta.picked_lines = [];
+
+  const fb = fallbackAttackDefense(topicForLines, lens);
+  const built2 = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
+  meta.built_head = dbgHead(built2, 240);
+  path = "followup_fallback";
+
+  const parts2: string[] = [];
+  parts2.push(header, "", pre.text, "", built2);
+  if (footer) parts2.push("", footer);
+  parts2.push("", inquiryOverride);
+
+  answer = postProcessAnswer(parts2.join("\n").trim(), dialect, stance, {
+    usedKnowledge: true,
+    allowAttackDefenseDetail: true,
+    inquiryOverride,
+  });
+}
         }
       }
 
+      
       // ===== B) topic未確定だけ clarify =====
       // ※「購入とリースどっち」みたいに具体的な質問は、topicが取れなくても無理に確認を要求しない（弱発話の時だけ）
       const needTopicClarify = !axisTopic && topicsNow.length === 0 && topicKbItems.length === 0 && (followupOnly || weakUtterance);
@@ -2191,11 +2231,17 @@ if (implicitShiftUnstick && prevAxisTopic === TOPIC_TAX_AUDIT) {
 }
 
 // ===== answer sanity (server side) =====
-meta.answer_has_rice = answer.includes("🍚");
+const reAttack = /(^|\n)\s*🍚\s*攻め\s*[:：]\s*\S/;
+const reDefense = /(^|\n)\s*🧂\s*守り\s*[:：]\s*\S/;
+
+meta.answer_has_rice = answer.includes("🍚");   // ←これは「絵文字がどっかに居る」判定として残すならOK
 meta.answer_has_salt = answer.includes("🧂");
-meta.answer_has_attack_plain = /(^|\n)\s*攻め\s*[:：]/.test(answer);
-meta.answer_has_defense_plain = /(^|\n)\s*守り\s*[:：]/.test(answer);
+
+meta.answer_has_attack_plain = reAttack.test(answer);   // ← “plain” ちゃうけど互換優先ならここに上書き
+meta.answer_has_defense_plain = reDefense.test(answer);
+
 meta.answer_head = dbgHead(answer, 200);
+
 
       const trace: DebugTrace = {
         convId,
