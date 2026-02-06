@@ -1800,35 +1800,29 @@ const topicsNow = llmOk && topicMode === "llm" ? llmTopicsNow.slice(0, 3) : topi
 
 
 
-      const prevDebug = await fetchPrevDebugLite(db, convId);
+           const prevDebug = await fetchPrevDebugLite(db, convId);
 
       let subjectTopic = decision.subjectTopic || "";
       let auditAxis = decision.auditAxis;
 
-      // ★ lineRequest なのに subject が空なら、直前の「確定主題」を最優先で借りる
-      if (!subjectTopic && lineRequest) {
-        const prevSubject = (prevDebug?.subjectTopic ?? "").trim();
+      // ===== ここから追加：履歴借りの暴走を止める =====
+      const bestHit = (topicsNowDbg.hits ?? [])[0] ?? null;
+      const nowTop = String(bestHit?.topic ?? (topicsNow0?.[0] ?? "")).trim();
+      const nowScore = Number(bestHit?.score ?? 0);
 
-        // ① 直前の確定主題があればそれ（税務調査は除外）
-        if (prevSubject && prevSubject !== TOPIC_TAX_AUDIT) {
-          subjectTopic = prevSubject;
-        } else {
-          // ② fallback：直前ユーザー発話のtopic推定（匂い検知）
-          const prevTopics = topicsPrev.filter((t) => t !== TOPIC_TAX_AUDIT);
-          subjectTopic = prevTopics[0] || "";
-        }
-      }
+      const prevTop = String(prevDebug?.subjectTopic ?? prevDebug?.axisTopic ?? "").trim();
 
-      // ★ clarify（前の回答の用語確認）なら、subject が空でも直前 subject を借りる
-      if (!subjectTopic && clarifyPrevAnswer) {
-        const prevSubject = (prevDebug?.subjectTopic ?? "").trim();
-        if (prevSubject && prevSubject !== TOPIC_TAX_AUDIT) {
-          subjectTopic = prevSubject;
-        } else {
-          const prevTopics = topicsPrev.filter((t) => t !== TOPIC_TAX_AUDIT);
-          subjectTopic = prevTopics[0] || "";
-        }
+      // 「現発話のトピックが強い」＝スコア>=10（あなたのtopicSignalsは10が強ヒット）
+      const strongNow = Boolean(nowTop) && nowScore >= 10;
+
+      // 直前トピックと違う強トピックが出てるなら、履歴に戻らない
+      const blockHistoryBorrow = strongNow && prevTop && nowTop !== prevTop;
+
+      // subject が空なら、強トピックを採用（税務調査は除外）
+      if (!subjectTopic && strongNow && nowTop !== TOPIC_TAX_AUDIT) {
+        subjectTopic = nowTop;
       }
+      // ===== ここまで追加 =====
 
       // ===== implicit shift 時の税務調査 sticky 吸い込み解除 =====
       const hasAuditWordsNow = hasTaxAuditWordsLite(message);
@@ -1846,7 +1840,9 @@ const topicsNow = llmOk && topicMode === "llm" ? llmTopicsNow.slice(0, 3) : topi
       }
 
       // ===== axisTopic 計算（implicit shift では履歴フォールバックしない）=====
-      const historyAxis = implicitShift ? "" : (inferTopicFromHistory(prevUserMessage, prevAssistantMessage) || "");
+      // 変更：強トピックが出ていて prev と違うなら、履歴フォールバック無効
+      const historyAxisRaw = implicitShift ? "" : (inferTopicFromHistory(prevUserMessage, prevAssistantMessage) || "");
+      const historyAxis = blockHistoryBorrow ? "" : historyAxisRaw;
 
       const decisionAxisCandidate = (() => {
         const x = String(decision.axisTopic ?? "").trim();
@@ -1857,16 +1853,28 @@ const topicsNow = llmOk && topicMode === "llm" ? llmTopicsNow.slice(0, 3) : topi
 
       const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : (subjectTopic || decisionAxisCandidate || historyAxis || "");
 
+
      
       const shifted = implicitShift ? true : (decision.taxAuditSticky ? false : shiftedRaw);
 
       const lensInputUsePrev = (followupOnly || weakUtterance) && Boolean(prevUserMessage);
-      const lens: Lens = inferLensWithContext({
-        message,
-        axisTopic,
-        fallbackPrevUser: prevUserMessage ?? null,
-        usePrevInstead: lensInputUsePrev,
-      });
+      const lens0: Lens = inferLensWithContext({
+  message,
+  axisTopic,
+  fallbackPrevUser: prevUserMessage ?? null,
+  usePrevInstead: lensInputUsePrev,
+});
+
+const lens: Lens = adjustLensByConversation({
+  lens: lens0,
+  message,
+  subjectTopic,
+  axisTopic,
+  llmIntent: topicMode === "llm" && llmOk ? llmIntent : "",
+});
+
+
+      
 
       // ===== followup_lines クールダウン（1回出したら基本リセット）=====
       // ===== followup_lines クールダウン（1回出したら基本リセット）=====
