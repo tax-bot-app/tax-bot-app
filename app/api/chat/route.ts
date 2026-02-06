@@ -744,7 +744,10 @@ async function retrieveKnowledgeLines(params: {
       : [lens, "substance", "system", "amount"];
 
   const tokens = messageTokens3(messageForMatch);
+
+  
   const scoreText = (text: string) => {
+    
     const t = (text ?? "").toLowerCase();
     let score = 0;
     for (const w of tokens) if (w && t.includes(w.toLowerCase())) score += 1;
@@ -756,12 +759,18 @@ async function retrieveKnowledgeLines(params: {
     if (!rows || rows.length === 0) continue;
 
     const pickOne = (stance: StanceAD) => {
-      const candidates = rows.filter((r) => r.stance === stance);
-      if (candidates.length === 0) return null;
-      const scored = candidates.map((r) => ({ r, s: scoreText(r.text) }));
-      scored.sort((a, b) => b.s - a.s || (b.r.priority ?? 0) - (a.r.priority ?? 0));
-      return scored[0]?.r ?? null;
-    };
+  // ★中身が空/短すぎる行を除外（事故防止）
+  const minLen = 8; // 好みで。まずは8〜12くらいが無難
+  const candidates = rows
+    .filter((r) => r.stance === stance)
+    .filter((r) => String(r.text ?? "").trim().length >= minLen);
+
+  if (candidates.length === 0) return null;
+
+  const scored = candidates.map((r) => ({ r, s: scoreText(r.text) }));
+  scored.sort((a, b) => b.s - a.s || (b.r.priority ?? 0) - (a.r.priority ?? 0));
+  return scored[0]?.r ?? null;
+};
 
     const attack = pickOne("attack");
     const defense = pickOne("defense");
@@ -900,9 +909,16 @@ function buildFollowupAnswerFromKbWithPick(items: KnowledgeItem[]): { text: stri
 
 function buildFollowupAnswerFromLines(params: { attack: KnowledgeLine | null; defense: KnowledgeLine | null }): string | null {
   const { attack, defense } = params;
+  const at = (attack?.text ?? "").trim();
+  const df = (defense?.text ?? "").trim();
+
+  // ★存在だけじゃなく、中身が空なら不合格
   if (!attack || !defense) return null;
-  return `🍚攻め：${attack.text}\n🧂守り：${defense.text}`.trim();
+  if (!at || !df) return null;
+
+  return `🍚攻め：${at}\n🧂守り：${df}`.trim();
 }
+
 
 function fallbackAttackDefense(topic: string, lens: Lens): { attack: string; defense: string } {
   const t = (topic ?? "").trim();
@@ -1989,17 +2005,20 @@ if (allowLines && !forceNormalAnswer) {
           }
 
           // built 最終検品：🍚🧂片側欠損は禁止（混線防止）
-const builtOk = built && hasThreePatterns(built);
-if (!builtOk) {
-  // ログ整合：拾えたつもりを消す
-  usedLinesPick = false;
-  if (meta.picked_lines) meta.picked_lines = [];
+const builtOk =
+  !!built &&
+  /🍚\s*攻め\s*[:：]\s*\S/.test(built) &&
+  /🧂\s*守り\s*[:：]\s*\S/.test(built);
 
-  // 必ず両方ある形に矯正（fallbackで強制生成）
+if (!builtOk) {
+  usedLinesPick = false;
+  meta.picked_lines = [];
+
   const fb = fallbackAttackDefense(topicForLines, lens);
   built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
   path = "followup_fallback";
 }
+
 
           const pre = buildLinesPreamble({ topic: topicForLines, axisTopic, dialect, stance, qa: linesPrefaceQa });
           const footer = followupFooter(axisTopic, dialect, stance);
