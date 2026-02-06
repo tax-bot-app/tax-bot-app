@@ -10,6 +10,8 @@ import { inferTopics, inferTopicsDebug, inferTopicFromHistory, isWeakUtterance, 
 import { decideAxisSubject, inferLensWithContext, TOPIC_TAX_AUDIT, AUDIT_OVERLAY_TOPICS, type Lens } from "../../lib2/topicDecision";
 // NEW: LLM topic decision (39)
 import { decideTopicByLLM } from "../../lib2/ai/topicDecisionLlm";
+import { inferLensByLLM } from "../../lib2/ai/inferLensByLLM";
+
 
 
 
@@ -1860,20 +1862,32 @@ const topicsNow =
       const shifted = implicitShift ? true : (decision.taxAuditSticky ? false : shiftedRaw);
 
       const lensInputUsePrev = (followupOnly || weakUtterance) && Boolean(prevUserMessage);
-      const lens0: Lens = inferLensWithContext({
+      const lensRule: Lens = inferLensWithContext({
   message,
   axisTopic,
   fallbackPrevUser: prevUserMessage ?? null,
   usePrevInstead: lensInputUsePrev,
 });
 
+const lensLLM = await inferLensByLLM({
+  message,
+});
+
+// confidence が弱い時は rule を優先
+const lensMerged: Lens =
+  lensLLM.confidence >= 0.6
+    ? lensLLM.lens
+    : lensRule;
+
+// 最終ガード（amount誤爆など）
 const lens: Lens = adjustLensByConversation({
-  lens: lens0,
+  lens: lensMerged,
   message,
   subjectTopic,
   axisTopic,
-  llmIntent: topicMode === "llm" && llmOk ? llmIntent : "",
+  llmIntent,
 });
+
 
 
       
