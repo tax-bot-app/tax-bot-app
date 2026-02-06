@@ -1065,7 +1065,11 @@ function collapseInquiryToSingleLine(askLines: string[]): string[] {
 function enforceTemplate(answer: string): string {
   const a = answer.replace(/\r\n/g, "\n").trim();
   if (!a) return a;
-  if (hasAttackOrDefense(a)) return a;
+  if (hasAttackOrDefense(a) && !hasThreePatterns(a)) {
+  // 片側欠損はテンプレ側で直さない（= サーバが弾いて再生成させる）
+  return a;
+}
+if (hasThreePatterns(a)) return a;
 
   const secLine = ensureLineBold(extractSection(a, "🥄"));
   const key = extractSection(a, "✅");
@@ -1332,7 +1336,11 @@ async function generateAnswerStrict(params: {
   llmIntent: params.llmIntent ?? null,
 });
 
-
+// 🍚🧂強制：detail許可時に片側欠損なら再生成
+if (params.allowAttackDefenseDetail && hasAttackOrDefense(last) && !hasThreePatterns(last)) {
+  lastHits = ["🍚/🧂の片側欠損"]; // 禁止語と同じ扱いでリトライに乗せる
+  continue;
+}
 
     if (!forbidden) return last;
 
@@ -1974,6 +1982,19 @@ if (allowLines && !forceNormalAnswer) {
             built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
             path = "followup_fallback";
           }
+
+          // built 最終検品：🍚🧂片側欠損は禁止（混線防止）
+const builtOk = built && hasThreePatterns(built);
+if (!builtOk) {
+  // ログ整合：拾えたつもりを消す
+  usedLinesPick = false;
+  if (meta.picked_lines) meta.picked_lines = [];
+
+  // 必ず両方ある形に矯正（fallbackで強制生成）
+  const fb = fallbackAttackDefense(topicForLines, lens);
+  built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
+  path = "followup_fallback";
+}
 
           const pre = buildLinesPreamble({ topic: topicForLines, axisTopic, dialect, stance, qa: linesPrefaceQa });
           const footer = followupFooter(axisTopic, dialect, stance);
