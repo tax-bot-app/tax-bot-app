@@ -531,12 +531,18 @@ function isInFollowupPhase(prevAssistantMessage: string | null): boolean {
 
 function isLineRequest(message: string): boolean {
   const m = (message ?? "").trim();
-  // 「続き/詳しく/具体」等は qa_more 側（Linesではない）
-  // Lines（線引き/上限/攻守）だけを拾う
-  return /(攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|安全度|安全性|レンジ|幅|アウト|セーフ|リスク|いくら|いくつまで|なんぼ|どんぐらい)/.test(
-    m
-  );
+
+  // 基本合言葉
+  if (/(攻め\s*\/\s*守り|攻め\s*守り|攻めと守り|攻め守りで)/.test(m)) return true;
+  if (/(攻めのライン|守りのライン)/.test(m)) return true;
+
+  // お遊び要素：さじかげん
+  // 「さじかげん」「さじかげんよろ」「さじかげんで」「さじかげん頼む」等を拾う
+  if (/さじかげん/.test(m)) return true;
+
+  return false;
 }
+
 
 // 「初手で🍚🧂を出して良い」ほど明示的な要求だけ拾う（段階出しの本丸）
 function isLineDetailRequest(message: string): boolean {
@@ -1179,15 +1185,15 @@ if (hasThreePatterns(a)) return a;
 
 function catchphraseFor(dialect: Dialect, stance: Stance): string {
   if (dialect === "kansai" && stance === "sanbo") {
-    return "せやけど、税務の世界は答えひとつちゃいますさかい、🍚**攻めライン・🧂守り**ラインもお伝えできますさかい、遠慮なく言うてくださいな。";
+    return "せやけど、税務の世界は答えひとつちゃいますさかい、🍚**『攻め守りで』**とか**『さじかげんよろ』**って言うてくれはったら、実務的なラインお出ししますわ。";
   }
   if (dialect === "standard" && stance === "sanbo") {
-    return "とはいえ、税務の世界は答えが一つではありませんので、🍚**攻めライン・🧂守り**の考え方も含めてお伝えできます。必要でしたらお知らせください。";
+    return "とはいえ、税務の判断は白黒だけではありません。🍚**『攻め守りで』**や**『さじかげんよろしく』**と言っていただければ、実務的なラインを整理します。";
   }
   if (dialect === "kansai" && stance === "zubatto") {
-    return "とはいえ、税務の世界は答えがひとつちゃう。🍚**攻めライン・🧂守り**ラインも知りたかったら、遠慮なく言うてな。";
+    return "とはいえ、税務は一発正解ちゃう。🍚**『攻め守りで』**とか**『さじかげんよろ』**って言うたら、通しどころと地雷、はっきり出すで。";
   }
-  return "とはいえ、税務の世界は答えが一つじゃない。🍚**攻めライン・🧂守り**ラインも知りたければ、遠慮なく言って。";
+  return "とはいえ、税務の世界は答えはひとつじゃないよ。🍚**『攻め守りで』**とか**『さじかげんよろ』**って言ってくれたら、通しどころと地雷、はっきり出すよ。";
 }
 
 function forceCasual(text: string, dialect: Dialect): string {
