@@ -2037,12 +2037,14 @@ if (qaKeyPointRule && bestQaForKeypoint) {
       if (!answer) {
         const usedKnowledge = topicKbItemsForPrompt.length > 0;
         // Lines（🍚🧂）は allowLines の時だけ（qa_more では絶対に出さない）
-const allowAttackDefenseDetail = allowLines && !linesCooldown && !forceNormalAnswer;
+        const wantLinesByIntent = topicMode === "llm" && llmOk && llmIntent === "need_lines";
+const allowAttackDefenseDetail = (allowLines || wantLinesByIntent) && !linesCooldown && !forceNormalAnswer;
+const outputRules = buildOutputRules({ allowAttackDefenseDetail });
 
         const kbGlobalBlock = formatKnowledgeBlock(globalRules);
         const kbTopicBlock = formatKnowledgeBlock(topicKbItemsForPrompt);
 
-        const outputRules = buildOutputRules({ allowAttackDefenseDetail });
+        
         const ambiguityBoost = buildAmbiguityBoostRules(message);
         const styleRules = buildStyleRules(dialect, stance);
         const contextLines = await buildConversationContext({ db, convId });
@@ -2076,10 +2078,21 @@ const allowAttackDefenseDetail = allowLines && !linesCooldown && !forceNormalAns
             ? ["重要：顧問税理士がいる前提。税務調査の初動連絡は税理士宛/会社宛どちらもあり得るが、社長が単独で抱えない。「税理士に確認して折り返す」でOK。"]
             : [];
 
+
+        const clarifyBias =
+  topicMode === "llm" && llmOk && llmIntent === "clarify"
+    ? [
+        "重要：主語が特定できていない。推測で『交際費』など具体トピックの一般論を語り始めない。",
+        "一般整理は2行までにして、最後の🔎確認で「何の話の線引きか」を選択肢で1行だけ促す（例：交際費/外注/出張手当/家事按分/不動産/役員報酬/消費税/税務調査）。",
+      ]
+    : [];
+
+
         const promptPartsBase: PromptParts = {
           context: contextLines,
           injectedRules: [
             ...outputRules,
+            ...clarifyBias,
             ...SERVICE_ASSUMPTION_RULES,
             ...doubleTopicRule,
             ...(qaKeyPointRule ? [qaKeyPointRule] : []),
@@ -2093,6 +2106,7 @@ const allowAttackDefenseDetail = allowLines && !linesCooldown && !forceNormalAns
           ],
           guardrails: gr.action === "inject" ? gr.guardrailLines : [],
         };
+
 
         const inquiryOverride =
           needTopicClarify
