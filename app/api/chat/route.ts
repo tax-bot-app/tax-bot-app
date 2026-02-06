@@ -12,11 +12,6 @@ import { decideAxisSubject, inferLensWithContext, TOPIC_TAX_AUDIT, AUDIT_OVERLAY
 import { decideTopicByLLM } from "../../lib2/ai/topicDecisionLlm";
 import { inferLensByLLM } from "../../lib2/ai/inferLensByLLM";
 
-
-
-
-
-
 export const runtime = "nodejs";
 
 /** ===== constants ===== */
@@ -173,6 +168,14 @@ type DebugMeta = {
   topic_raw?: string;
   topic_raw_json?: string;
   topic_codepoints_tail?: string;
+
+    // ===== lens debug (NEW) =====
+  lens_rule?: Lens;
+  lens_llm?: Lens;
+  lens_llm_confidence?: number;
+  lens_pre?: Lens;
+  lens_final?: Lens;
+
 
   // followup_lines cooldown
   prev_debug_path?: string;
@@ -543,7 +546,7 @@ function isLineDetailRequest(message: string): boolean {
 
 function isAmountAsk(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(いくら|なんぼ|金額|上限|限界|レンジ|幅|いくつまで|どこまで|ギリ)/.test(m);
+  return /(いくら|なんぼ|金額|上限|限界|レンジ|幅|いくつまで|どこまで|ギリ|安全|セーフ|アウト|グレー)/.test(m);
 }
 
 function adjustLensByConversation(params: {
@@ -1873,39 +1876,52 @@ const lensLLM = await inferLensByLLM({
   message,
 });
 
-// confidence が弱い時は rule を優先
+// 1) まずは rule と LLM を統合（confidence が弱い時は rule 優先）
 const lensMerged: Lens =
-  lensLLM.confidence >= 0.6
-    ? lensLLM.lens
-    : lensRule;
+  lensLLM.confidence >= 0.6 ? lensLLM.lens : lensRule;
 
-// 最終ガード（amount誤爆など）
+// 2) intent による “候補レンズ” の補正（トピック特例なしの強ルール）
+// - need_lines は「金額レンジを出したい」要求として amount を優先候補にする
+// - ただし最終決裁は adjustLensByConversation が戻せる（前提不足なら substance/clarify へ）
+let lensPre: Lens = lensMerged;
+
+if (llmIntent === "need_lines") {
+  lensPre = "amount";
+}
+
+// clarify は “結論を出さない” が主眼なので、lens は amount に引っ張られないようにする（保険）
+if (llmIntent === "clarify") {
+  // ここは system に寄るより substance の方が安全（前提確認に向く）
+  lensPre = "substance";
+}
+
+// 3) 最終ガード（amount誤爆・system誤誘導など）
 const lens: Lens = adjustLensByConversation({
-  lens: lensMerged,
+  lens: lensPre,
   message,
   subjectTopic,
   axisTopic,
   llmIntent,
 });
-
-
-
       
 
-      // ===== followup_lines クールダウン（1回出したら基本リセット）=====
-      // ===== followup_lines クールダウン（1回出したら基本リセット）=====
+// ===== followup_lines クールダウン（1回出したら基本リセット）=====
 const prevWasLines = prevDebug?.path === "followup_lines";
 const prevLens = (prevDebug?.lens ?? "").trim();
 const lensChanged = Boolean(prevLens) && prevLens !== lens;
 
 // ===== Lines 出力可否（最終判定）=====
-// - LLMモードでは llmIntent=need_lines の時だけ Lines を許可
-// - ただし短文承諾（よろ/続き/おねげぇ 等）では Lines を絶対に出さない（誤爆ゼロ）
+// 方針：🍚🧂（Lines）は「明示要求」or「直前がLinesで継続」のときだけ許可（誤爆ゼロ寄り）
+
+// 「よろ/続き」等の短文承諾だけで Lines を誤爆させない
 const suppressLinesByShortAck = isShortAckLike(message) && !lineRequest;
 
-// regex側のlineRequest、LLM側のintentをここで合流
+// 継続の「よろ/続き」で Lines を許可する条件（直前が Lines の時だけ）
+const allowLinesByContinuation = prevWasLines && isShortAckLike(message);
+
+// regex側のlineRequestと会話状態（継続）をここで合流（LLMのneed_linesはLines許可に使わない）
 const lineRequestEffective =
-  (topicMode === "llm" && llmOk ? llmIntent === "need_lines" : lineRequest) && !suppressLinesByShortAck;
+  (lineRequest || allowLinesByContinuation) && !suppressLinesByShortAck;
 
 // LLMモードで subjectTopic が空なら Lines は出さない（ズレ防止）
 const linesBlockedNoSubject = topicMode === "llm" && llmOk && lineRequestEffective && !subjectTopic;
@@ -1913,7 +1929,7 @@ const linesBlockedNoSubject = topicMode === "llm" && llmOk && lineRequestEffecti
 // これが“唯一のスイッチ”
 const allowLines = lineRequestEffective && !linesBlockedNoSubject;
 
-// need_lines の時は followup_lines を優先したいので、ここで normal 強制を解除（clarifyは除外）
+// Lines を出すときは followup_lines を優先したいので、ここで normal 強制を解除（clarifyは除外）
 if (lineRequestEffective && !clarifyPrevAnswer) forceNormalAnswer = false;
 
 const keepLines = lineRequestEffective || lensChanged;
@@ -1927,6 +1943,7 @@ const linesKeepReason = keepLines
   : "cooldown:prev_was_lines";
 
 const linesCooldown = prevWasLines && !keepLines;
+
 
 if (linesCooldown) {
   forceNormalAnswer = true;
@@ -2027,8 +2044,14 @@ lines_suppressed_short_ack: Boolean(suppressLinesByShortAck),
         llm_intent: llmIntent,
         llm_confidence: llmConfidence,
         llm_reason: llmReason,
-
       };
+
+      meta.lens_rule = lensRule;
+meta.lens_llm = lensLLM.lens;
+meta.lens_llm_confidence = lensLLM.confidence;
+meta.lens_pre = lensPre;
+meta.lens_final = lens;
+
 
       meta.picked_kb_items = (topicKbItemsForPrompt ?? []).slice(0, 10).map((it) => ({
         id: it.id,
@@ -2043,7 +2066,7 @@ lines_suppressed_short_ack: Boolean(suppressLinesByShortAck),
 
     
       // ===== A) followup_lines =====
-if (allowLines && !forceNormalAnswer) {
+if (allowLines && !forceNormalAnswer && lineRequestEffective) {
         const header = stance === "zubatto" ? "判断の軸だけ整理する。" : "判断の軸だけ整理します。";
 
         const topicForLines = subjectTopic || axisTopic || topicsNow[0] || "";
@@ -2192,10 +2215,18 @@ if (qaKeyPointRule && bestQaForKeypoint) {
       // ===== C) normal_llm =====
       if (!answer) {
         const usedKnowledge = topicKbItemsForPrompt.length > 0;
-        // Lines（🍚🧂）は allowLines の時だけ（qa_more では絶対に出さない）
-        const wantLinesByIntent = topicMode === "llm" && llmOk && llmIntent === "need_lines";
-const allowAttackDefenseDetail = (allowLines || wantLinesByIntent) && !linesCooldown && !forceNormalAnswer;
-const outputRules = buildOutputRules({ allowAttackDefenseDetail });
+       // Lines（🍚🧂）は allowLines（= 明示要求/継続）でのみ許可する。
+// LLMの need_lines は「勝手にLinesを許可」しない（誤爆根絶）。
+const wantLinesByIntent = false;
+
+const allowAttackDefenseDetail =
+  allowLines && lineRequestEffective; // ← “ユーザー明示 or 継続”が前提
+
+const allowAttackDefenseDetailEffective =
+  allowAttackDefenseDetail && !linesCooldown && !forceNormalAnswer;
+
+const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefenseDetailEffective });
+
 
         const kbGlobalBlock = formatKnowledgeBlock(globalRules);
         const kbTopicBlock = formatKnowledgeBlock(topicKbItemsForPrompt);
@@ -2273,15 +2304,15 @@ const outputRules = buildOutputRules({ allowAttackDefenseDetail });
             : null;
 
         answer = await generateAnswerStrict({
-          message,
-          promptPartsBase,
-          dialect,
-          stance,
-          usedKnowledge,
-          allowAttackDefenseDetail,
-          inquiryOverride,
-          llmIntent: (topicMode === "llm" && llmOk ? llmIntent : null),
-        });
+  message,
+  promptPartsBase,
+  dialect,
+  stance,
+  usedKnowledge,
+  allowAttackDefenseDetail: allowAttackDefenseDetailEffective,
+  inquiryOverride,
+  llmIntent: (topicMode === "llm" && llmOk ? llmIntent : null),
+});
 
         path = "normal_llm";
       }
