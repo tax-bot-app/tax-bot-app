@@ -915,14 +915,9 @@ function buildFollowupAnswerFromKbWithPick(items: KnowledgeItem[]): { text: stri
 }
 
 function buildFollowupAnswerFromLines(params: { attack: KnowledgeLine | null; defense: KnowledgeLine | null }): string | null {
-  const { attack, defense } = params;
-  const at = (attack?.text ?? "").trim();
-  const df = (defense?.text ?? "").trim();
-
-  // ★存在だけじゃなく、中身が空なら不合格
-  if (!attack || !defense) return null;
+  const at = (params.attack?.text ?? "").trim();
+  const df = (params.defense?.text ?? "").trim();
   if (!at || !df) return null;
-
   return `🍚攻め：${at}\n🧂守り：${df}`.trim();
 }
 
@@ -2020,11 +2015,11 @@ const builtOk =
 if (!builtOk) {
   usedLinesPick = false;
   meta.picked_lines = [];
-
   const fb = fallbackAttackDefense(topicForLines, lens);
   built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
   path = "followup_fallback";
 }
+
 
 
           const pre = buildLinesPreamble({ topic: topicForLines, axisTopic, dialect, stance, qa: linesPrefaceQa });
@@ -2184,12 +2179,7 @@ const outputRules = buildOutputRules({ allowAttackDefenseDetail });
 
       answer = stripInternalLeaks(answer);
 
-// ===== answer sanity (server side) =====
-meta.answer_has_rice = answer.includes("🍚");
-meta.answer_has_salt = answer.includes("🧂");
-meta.answer_has_attack_plain = /(^|\n)\s*攻め\s*[:：]/.test(answer);
-meta.answer_has_defense_plain = /(^|\n)\s*守り\s*[:：]/.test(answer);
-meta.answer_head = dbgHead(answer, 200);
+
 
 // ===== implicit shift で sticky を外した場合：税務調査エッセンスを固定1行だけ添える =====
 const prevAxisTopic = (prevDebug?.axisTopic ?? "").trim();
@@ -2197,6 +2187,13 @@ if (implicitShiftUnstick && prevAxisTopic === TOPIC_TAX_AUDIT) {
   answer = insertLineBeforeInquiry(answer, auditEssenceOneLine(dialect, stance));
   meta.audit_essence_injected = true;
 }
+
+// ===== answer sanity (server side) =====
+meta.answer_has_rice = answer.includes("🍚");
+meta.answer_has_salt = answer.includes("🧂");
+meta.answer_has_attack_plain = /(^|\n)\s*攻め\s*[:：]/.test(answer);
+meta.answer_has_defense_plain = /(^|\n)\s*守り\s*[:：]/.test(answer);
+meta.answer_head = dbgHead(answer, 200);
 
       const trace: DebugTrace = {
         convId,
