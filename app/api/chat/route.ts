@@ -193,6 +193,13 @@ type DebugMeta = {
   llm_confidence?: number;
   llm_reason?: string;
 
+    // ===== answer sanity (server side) =====
+  answer_has_rice?: boolean;
+  answer_has_salt?: boolean;
+  answer_has_attack_plain?: boolean;
+  answer_has_defense_plain?: boolean;
+  answer_head?: string;
+
 };
 
 type DebugTrace = {
@@ -2177,12 +2184,19 @@ const outputRules = buildOutputRules({ allowAttackDefenseDetail });
 
       answer = stripInternalLeaks(answer);
 
-      // ===== implicit shift で sticky を外した場合：税務調査エッセンスを固定1行だけ添える =====
-      const prevAxisTopic = (prevDebug?.axisTopic ?? "").trim();
-      if (implicitShiftUnstick && prevAxisTopic === TOPIC_TAX_AUDIT) {
-        answer = insertLineBeforeInquiry(answer, auditEssenceOneLine(dialect, stance));
-        meta.audit_essence_injected = true;
-      }
+// ===== answer sanity (server side) =====
+meta.answer_has_rice = answer.includes("🍚");
+meta.answer_has_salt = answer.includes("🧂");
+meta.answer_has_attack_plain = /(^|\n)\s*攻め\s*[:：]/.test(answer);
+meta.answer_has_defense_plain = /(^|\n)\s*守り\s*[:：]/.test(answer);
+meta.answer_head = dbgHead(answer, 200);
+
+// ===== implicit shift で sticky を外した場合：税務調査エッセンスを固定1行だけ添える =====
+const prevAxisTopic = (prevDebug?.axisTopic ?? "").trim();
+if (implicitShiftUnstick && prevAxisTopic === TOPIC_TAX_AUDIT) {
+  answer = insertLineBeforeInquiry(answer, auditEssenceOneLine(dialect, stance));
+  meta.audit_essence_injected = true;
+}
 
       const trace: DebugTrace = {
         convId,
