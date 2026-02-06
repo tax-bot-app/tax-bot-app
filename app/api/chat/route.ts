@@ -533,6 +533,49 @@ function isLineRequest(message: string): boolean {
   );
 }
 
+// 「初手で🍚🧂を出して良い」ほど明示的な要求だけ拾う（段階出しの本丸）
+function isLineDetailRequest(message: string): boolean {
+  const m = (message ?? "").trim();
+  return /(攻め|守り|攻守|上限|限界|安全ライン|レンジ|幅|いくら|なんぼ|金額|いくつまで|どんぐらい)/.test(m);
+}
+
+function isAmountAsk(message: string): boolean {
+  const m = (message ?? "").trim();
+  return /(いくら|なんぼ|金額|上限|限界|レンジ|幅|いくつまで|どこまで|ギリ)/.test(m);
+}
+
+function adjustLensByConversation(params: {
+  lens: Lens;
+  message: string;
+  subjectTopic: string;
+  axisTopic: string;
+  llmIntent: string;
+}): Lens {
+  const { lens, message, subjectTopic, axisTopic, llmIntent } = params;
+  const m = (message ?? "").trim();
+  const topic = (subjectTopic || axisTopic || "").trim();
+
+  // clarify / qa_more は “金額レンジ” で殴らない（会話がズレる）
+  if (llmIntent === "clarify" || llmIntent === "qa_more") {
+    if (lens === "amount") return "substance";
+  }
+
+  // amount は「金額を聞かれた時だけ前に出す」
+  if (lens === "amount" && !isAmountAsk(m)) return "substance";
+
+  // 外注：毎月同額＝金額より「実態（指揮命令/成果/代替性/裁量）」が主戦場
+  if (topic === "外注" && /(毎月|月々|同じ金額|定額|固定)/.test(m) && !isAmountAsk(m)) {
+    return "substance";
+  }
+
+  // 制度ワードが強い時は system に寄せる（インボイス/源泉/登録/規程など）
+  if (/(インボイス|登録|未登録|適格|源泉|支払調書|請求書|契約書|規程|届出|要件)/.test(m)) {
+    return "system";
+  }
+
+  return lens;
+}
+
 
 function topicShiftLikelyLite(prevUser: string | null, cur: string): boolean {
   const prev = (prevUser ?? "").trim();
