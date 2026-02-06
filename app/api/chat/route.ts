@@ -735,9 +735,10 @@ async function retrieveKnowledgeByBuckets(params: {
   if (wantsBuckets) {
     otherItems = await fetchTopics(otherTopics, quotaOther);
   } else {
-    const inferred = inferTopics(params.message, { max: 3 });
-    otherItems = await fetchTopics(inferred, maxTotal);
-  }
+  // LLM主導。other は広めに拾う
+  otherItems = await fetchTopics([], maxTotal);
+}
+
 
   let merged = uniqById([...subjectItems, ...auditItems, ...otherItems]).slice(0, maxTotal);
 
@@ -1755,7 +1756,7 @@ const recentUserMsgs = await (async () => {
 
 let decision = decideAxisSubject({
   message,
-  topicsNow: topicsNow0,
+  topicsNow: [], // ← 空で渡す
   topicsPrev,
   prevAssistantMessage,
   recentUserMsgs,
@@ -1796,9 +1797,10 @@ if (topicMode === "llm") {
   }
 }
 
-const topicsNow = llmOk && topicMode === "llm" ? llmTopicsNow.slice(0, 3) : topicsNow0;
-
-
+const topicsNow =
+  llmOk && topicMode === "llm"
+    ? llmTopicsNow.slice(0, 3)
+    : []; // ← regex fallback しない
 
            const prevDebug = await fetchPrevDebugLite(db, convId);
 
