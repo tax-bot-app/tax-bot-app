@@ -200,6 +200,7 @@ type DebugMeta = {
   answer_has_defense_plain?: boolean;
   answer_head?: string;
 
+  built_head?: string;
 };
 
 type DebugTrace = {
@@ -1965,7 +1966,7 @@ lines_suppressed_short_ack: Boolean(suppressLinesByShortAck),
       let usedLinesPick = false;
       let path: DebugTrace["path"] = "normal_llm";
 
-      // ===== A) followup_lines =====
+    
       // ===== A) followup_lines =====
 if (allowLines && !forceNormalAnswer) {
         const header = stance === "zubatto" ? "判断の軸だけ整理する。" : "判断の軸だけ整理します。";
@@ -2017,6 +2018,7 @@ if (!builtOk) {
   meta.picked_lines = [];
   const fb = fallbackAttackDefense(topicForLines, lens);
   built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
+  meta.built_head = dbgHead(built ?? "", 240);
   path = "followup_fallback";
 }
 
