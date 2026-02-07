@@ -1867,10 +1867,8 @@ const prevSubject = String(prevDebug?.subjectTopic ?? "").trim();
 const lineRequestByPhrase = isLineRequest(message);
 
 // 誘導直後に合言葉が来たら、主題が空でも前回主題に固定して Lines を許可
-if (prevNudgeApplied && lineRequestByPhrase && !subjectTopic && prevSubject) {
+if (prevNudgeApplied && lineRequestByPhrase && prevSubject) {
   subjectTopic = prevSubject;
-  // LLM topicsNow が空でも最低1つは持たせる（Lines検索でtopicForLinesに使われる）
-  // ※topicsNow が const で再代入できないなら、別変数 topicsNowEffective を作る
 }
 
       // ===== ここから追加：履歴借りの暴走を止める =====
@@ -2140,7 +2138,9 @@ meta.nudge_lines_reason = String(decision.nudgeReason ?? "");
 if (allowLines && !forceNormalAnswer && lineRequestEffective) {
         const header = stance === "zubatto" ? "判断の軸だけ整理する。" : "判断の軸だけ整理します。";
 
-        const topicForLines = subjectTopic || axisTopic || topicsNow[0] || "";
+        const topicsNowEffective = topicsNow.length > 0 ? topicsNow : (subjectTopic ? [subjectTopic] : []);
+        const topicForLines = subjectTopic || axisTopic || topicsNowEffective[0] || "";
+
         if (topicForLines) {
           let built: string | null = null;
 
