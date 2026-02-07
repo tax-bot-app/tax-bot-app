@@ -49,6 +49,9 @@ export type LlmTopicDecision = {
   intent: LlmTopicIntent;
   confidence: number; // 0-1
   reason: string;
+  // NEW: 誘導（攻め守り/さじかげん）を出す提案
+  nudgeLines: boolean;
+  nudgeReason: string;
 };
 
 export async function decideTopicByLLM(params: {
@@ -91,6 +94,14 @@ export async function decideTopicByLLM(params: {
     "- clarify: 直前回答の用語確認・意味質問、または主語不明で確認が必要なケース。",
     "- chitchat: 雑談・感想レベル。",
     "",
+    "",
+"nudgeLines の定義：",
+"- nudgeLines: 回答の末尾に『攻め守りで / さじかげんよろ』の誘導（決めゼリフ）を出した方が良いか。",
+"- true にするのは、ユーザーが「もっと踏み込みたい」気配がある時だけ（例：線引き・比較・不安・地雷回避・実務の次の一手が欲しい）。",
+"- false にするのは、定義質問（例：不課税とは？）、雑談、短文承諾（よろ/お願い/続き）、clarify（主語確認）など。",
+"- nudgeLines は『Lines（🍚🧂）を出すか』ではない。誘導文を出すかどうかだけ。", 
+"- nudgeReason は短く。", 
+"",
     "判定ガイド：",
     "- ユーザー発話が短い承諾/促しだけの場合、まず qa_more を優先する。",
     "- 『よろ』『お願い』『頼む』『続き』だけでは need_lines にしない。",
@@ -123,7 +134,10 @@ export async function decideTopicByLLM(params: {
   "topicsNow": string[],   // subjectTopic=="" のときは []
   "intent": "qa_first"|"qa_more"|"need_lines"|"clarify"|"chitchat",
   "confidence": number,
-  "reason": string
+  "reason": string,
+
+  "nudgeLines": boolean,   // NEW: 誘導（決めゼリフ）を出す提案
+  "nudgeReason": string    // NEW: その理由（短く）
 }`,
   ].join("\n");
 
@@ -141,6 +155,8 @@ export async function decideTopicByLLM(params: {
     const intent = String(obj.intent ?? "").trim() as LlmTopicIntent;
     const confidence = Number(obj.confidence ?? 0);
     const reason = String(obj.reason ?? "").trim();
+    const nudgeLines = Boolean(obj.nudgeLines);
+const nudgeReason = String(obj.nudgeReason ?? "").trim();
     const topicsNow = Array.isArray(obj.topicsNow) ? obj.topicsNow.map((x: any) => String(x ?? "").trim()).filter(Boolean) : [];
 
     const allowSet = new Set(topics);
@@ -172,14 +188,19 @@ export async function decideTopicByLLM(params: {
 
 
     const decision: LlmTopicDecision = {
-      subjectTopic,
-      axisTopic: auditAxis ? TOPIC_TAX_AUDIT : "",
-      auditAxis,
-      topicsNow: fixedTopicsNow,
-            intent: finalIntent,
-      confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
-      reason,
-    };
+  subjectTopic,
+  axisTopic: auditAxis ? TOPIC_TAX_AUDIT : "",
+  auditAxis,
+  topicsNow: fixedTopicsNow,
+  intent: finalIntent,
+  confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
+  reason,
+
+  // NEW: 誘導（攻め守り/さじかげん）を出す提案
+  nudgeLines,
+  nudgeReason,
+};
+
 
     return { ok: true, decision, rawText };
   } catch (e: any) {

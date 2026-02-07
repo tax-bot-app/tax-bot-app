@@ -143,6 +143,7 @@ type DebugMeta = {
   axis_topic?: string;
   subject_topic?: string;
   audit_axis?: boolean;
+  used_sajikagen?: boolean;
 
   borrowed_prev_topic?: boolean;
   weak_utterance?: boolean;
@@ -213,6 +214,10 @@ type DebugMeta = {
   answer_head?: string;
 
   built_head?: string;
+
+  nudge_lines_llm?: boolean;
+nudge_lines_reason?: string;
+nudge_lines_applied?: boolean;
 };
 
 type DebugTrace = {
@@ -542,6 +547,8 @@ function isLineRequest(message: string): boolean {
 
   return false;
 }
+
+
 
 
 // 「初手で🍚🧂を出して良い」ほど明示的な要求だけ拾う（段階出しの本丸）
@@ -1772,6 +1779,9 @@ let decision = decideAxisSubject({
   prevAssistantMessage,
   recentUserMsgs,
   continuationLike,
+  // NEW: 初期は false
+  llmNudgeLines: false,
+  llmNudgeReason: "",
 });
 
 // LLM decision（失敗したら従来にフォールバック）
@@ -1784,6 +1794,36 @@ if (topicMode === "llm") {
     recentUserMsgs,
     availableTopics,
   });
+
+  if (llm.ok) {
+  // 既存で持ってるやつに合わせて格納
+  llmOk = true;
+  llmIntent = llm.decision.intent;
+  llmConfidence = llm.decision.confidence;
+  llmReason = llm.decision.reason;
+  llmTopicsNow = llm.decision.topicsNow;
+
+  // ★ここが追加：LLMの誘導提案を取り出す
+  const llmNudgeLines = Boolean(llm.decision.nudgeLines);
+  const llmNudgeReason = String(llm.decision.nudgeReason ?? "");
+
+  // ★decision を LLM情報入りで作り直す（topicsNowもLLMのtopicsNowを渡す）
+  decision = decideAxisSubject({
+    message,
+    topicsNow: llmTopicsNow.slice(0, 3),
+    topicsPrev,
+    prevAssistantMessage,
+    recentUserMsgs,
+    continuationLike,
+
+    llmNudgeLines,
+    llmNudgeReason,
+  });
+} else {
+  llmOk = false;
+  llmErr = llm.error;
+}
+
 
   llmRaw = llm.rawText ?? "";
 
@@ -1877,6 +1917,10 @@ const topicsNow =
   fallbackPrevUser: prevUserMessage ?? null,
   usePrevInstead: lensInputUsePrev,
 });
+
+// ===== user input flags =====
+const usedSajikagen = /さじかげん/.test(message ?? "");
+
 
 const lensLLM = await inferLensByLLM({
   message,
@@ -2014,6 +2058,7 @@ if (linesCooldown) {
         axis_topic: axisTopic,
         subject_topic: subjectTopic,
         audit_axis: auditAxis,
+         used_sajikagen: usedSajikagen,
 
         topic_raw: message,
         topic_raw_json: JSON.stringify(message),
@@ -2050,6 +2095,8 @@ lines_suppressed_short_ack: Boolean(suppressLinesByShortAck),
         llm_intent: llmIntent,
         llm_confidence: llmConfidence,
         llm_reason: llmReason,
+
+        
       };
 
       meta.lens_rule = lensRule;
@@ -2057,6 +2104,9 @@ meta.lens_llm = lensLLM.lens;
 meta.lens_llm_confidence = lensLLM.confidence;
 meta.lens_pre = lensPre;
 meta.lens_final = lens;
+meta.nudge_lines_llm = Boolean(decision.nudgeLines);
+meta.nudge_lines_reason = String(decision.nudgeReason ?? "");
+
 
 
       meta.picked_kb_items = (topicKbItemsForPrompt ?? []).slice(0, 10).map((it) => ({
@@ -2324,7 +2374,28 @@ const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefe
       }
 
       answer = stripInternalLeaks(answer);
+// ===== nudge (catchphrase) gate =====
+const alreadyHasLines = meta.answer_has_attack_plain || meta.answer_has_defense_plain;
+const alreadyPrompted = /攻め守りで|さじかげんよろ|さじかげんよろしく|さじかげん/.test(answer);
 
+// LLM提案（topicMode=llm のときだけ）
+const wantNudgeByLLM = topicMode === "llm" && llmOk && Boolean(decision.nudgeLines);
+
+// サーバー最終決裁（誤爆止め）
+const allowNudge =
+  wantNudgeByLLM &&
+  !alreadyHasLines &&                 // すでに🍚🧂出てるなら誘導いらん
+  !alreadyPrompted &&                 // 二重表示防止
+  llmIntent !== "clarify" &&          // 主語確認中は邪魔
+  !weakUtterance &&                   // 「よろ」系は誘導しない
+  !isShortAckLike(message);           // 念のため
+
+if (allowNudge) {
+  answer = `${answer}\n\n${catchphraseFor(dialect, stance)}`;
+  meta.nudge_lines_applied = true;
+} else {
+  meta.nudge_lines_applied = false;
+}
 
 
 // ===== implicit shift で sticky を外した場合：税務調査エッセンスを固定1行だけ添える =====

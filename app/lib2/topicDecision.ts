@@ -160,6 +160,10 @@ export type DecideAxisSubjectInput = {
 
   explicitTopicShift?: boolean;
   explicitTaxOff?: boolean;
+
+  llmNudgeLines?: boolean;
+llmNudgeReason?: string;
+
 };
 
 export type DecideAxisSubjectOutput = {
@@ -171,6 +175,8 @@ export type DecideAxisSubjectOutput = {
   reason: string;
 
   overlayWanted: boolean;
+  nudgeLines?: boolean;
+nudgeReason?: string;
 };
 
 export function decideAxisSubject(input: DecideAxisSubjectInput): DecideAxisSubjectOutput {
@@ -274,7 +280,17 @@ export function decideAxisSubject(input: DecideAxisSubjectInput): DecideAxisSubj
   else if (overlayWanted) reason = "overlay_by_subject";
   else reason = "no_audit_axis";
 
-  return { axisTopic, subjectTopic, auditAxis, taxAuditSticky, reason, overlayWanted };
+  return {
+  axisTopic,
+  subjectTopic,
+  auditAxis,
+  taxAuditSticky,
+  reason,
+  overlayWanted,
+  nudgeLines: Boolean(input.llmNudgeLines),
+  nudgeReason: String(input.llmNudgeReason ?? ""),
+};
+
 }
 
 /**
