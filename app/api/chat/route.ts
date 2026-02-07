@@ -1580,7 +1580,7 @@ function emitDebug(trace: DebugTrace) {
 async function fetchPrevDebugLite(
   db: any,
   convId: string
-): Promise<{ path: string; lens: string; subjectTopic: string; axisTopic: string } | null> {
+): Promise<{ path: string; lens: string; subjectTopic: string; axisTopic: string; prevNudgeApplied: boolean } | null> {
   try {
     const { data } = await db
       .from("chat_debug_events")
@@ -1593,12 +1593,13 @@ async function fetchPrevDebugLite(
     if (!r) return null;
 
     const meta = (r.meta ?? {}) as any;
-    return {
-      path: String(r.path ?? ""),
-      lens: String(r.lens ?? ""),
-      subjectTopic: String(meta.subject_topic ?? ""),
-      axisTopic: String(meta.axis_topic ?? ""),
-    };
+return {
+  path: String(r.path ?? ""),
+  lens: String(r.lens ?? ""),
+  subjectTopic: String(meta.subject_topic ?? ""),
+  axisTopic: String(meta.axis_topic ?? ""),
+  prevNudgeApplied: Boolean(meta.nudge_lines_applied),
+};
   } catch {
     return null;
   }
@@ -1857,6 +1858,20 @@ const topicsNow =
 
       let subjectTopic = decision.subjectTopic || "";
       let auditAxis = decision.auditAxis;
+
+      // ===== nudge直後の合言葉は「主題固定」で拾う（聞き返し禁止）=====
+const prevNudgeApplied = Boolean(prevDebug?.prevNudgeApplied);
+const prevSubject = String(prevDebug?.subjectTopic ?? "").trim();
+
+// 合言葉（攻め守り／さじかげん 等）を判定：isLineRequest と完全一致させる
+const lineRequestByPhrase = isLineRequest(message);
+
+// 誘導直後に合言葉が来たら、主題が空でも前回主題に固定して Lines を許可
+if (prevNudgeApplied && lineRequestByPhrase && !subjectTopic && prevSubject) {
+  subjectTopic = prevSubject;
+  // LLM topicsNow が空でも最低1つは持たせる（Lines検索でtopicForLinesに使われる）
+  // ※topicsNow が const で再代入できないなら、別変数 topicsNowEffective を作る
+}
 
       // ===== ここから追加：履歴借りの暴走を止める =====
       const bestHit = (topicsNowDbg.hits ?? [])[0] ?? null;
