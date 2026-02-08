@@ -1709,9 +1709,14 @@ let llmTopicsNow: string[] = [];
         return prevRows?.[0]?.content ?? null;
       })();
 
-      // ===== clarify 判定（前の回答に出てきた用語の追撃）=====
       const clarify = detectClarifyPrevAnswer(message, prevAssistantMessage);
-      const clarifyPrevAnswer = clarify.ok;
+
+// lineRequest（線引きの明示要求）※LLM intent は後段で合流して最終決定する
+const lineRequest = isLineRequest(message);
+
+// 合言葉（lineRequest）のときは clarify を無効化（Lines の導線を優先）
+const clarifyPrevAnswer = Boolean(clarify.ok) && !lineRequest;
+
 
       // ===== followup 判定（短文誤爆を抑える）=====
       const shiftedRaw = topicShiftLikelyLite(prevUserMessage, message);
@@ -1724,9 +1729,6 @@ const followupOnly =
 
       const followupExplicitRaw = wantsAttackDefenseDetail(message, prevUserMessage);
 const followupExplicit = followupExplicitRaw && !clarifyPrevAnswer;
-
-// lineRequest（線引きの明示要求）※LLM intent は後段で合流して最終決定する
-const lineRequest = isLineRequest(message);
 
 
       const followupPhaseRaw = isInFollowupPhase(prevAssistantMessage);
@@ -1751,8 +1753,9 @@ const lineRequest = isLineRequest(message);
       // ★ 後でクールダウン等で上書きするので let
       let forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance;
 
-      // clarify は必ず normal 回答へ（lines禁止）
-      if (clarifyPrevAnswer) forceNormalAnswer = true;
+      // clarify は原則 normal 回答へ（lines禁止）
+// ただし合言葉（lineRequest）がある時は Lines を優先する
+if (clarifyPrevAnswer && !lineRequest) forceNormalAnswer = true;
 
    // topic debug
 const topicsNowDbg = inferTopicsDebug(message, { max: 3 });
@@ -1992,8 +1995,9 @@ const linesBlockedNoSubject = topicMode === "llm" && llmOk && lineRequestEffecti
 // これが“唯一のスイッチ”
 const allowLines = lineRequestEffective && !linesBlockedNoSubject;
 
-// Lines を出すときは followup_lines を優先したいので、ここで normal 強制を解除（clarifyは除外）
-if (lineRequestEffective && !clarifyPrevAnswer) forceNormalAnswer = false;
+// Lines を出すときは followup_lines を優先したいので、ここで normal 強制を解除
+// （合言葉があるなら clarify でも解除する）
+if (lineRequestEffective) forceNormalAnswer = false;
 
 const keepLines = lineRequestEffective || lensChanged;
 
@@ -2006,11 +2010,6 @@ const linesKeepReason = keepLines
   : "cooldown:prev_was_lines";
 
 const linesCooldown = prevWasLines && !keepLines;
-
-
-if (linesCooldown) {
-  forceNormalAnswer = true;
-}
 
 
       if (linesCooldown) {
@@ -2135,7 +2134,7 @@ meta.nudge_lines_reason = String(decision.nudgeReason ?? "");
 
     
       // ===== A) followup_lines =====
-if (allowLines && !forceNormalAnswer && lineRequestEffective) {
+if (allowLines && !forceNormalAnswer) {
         const header = stance === "zubatto" ? "判断の軸だけ整理する。" : "判断の軸だけ整理します。";
 
         const topicsNowEffective = topicsNow.length > 0 ? topicsNow : (subjectTopic ? [subjectTopic] : []);
