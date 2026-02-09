@@ -5,17 +5,29 @@ import { judgeGuardrails } from "../../lib2/guardrails";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-// NEW: 37.2 split
-import { inferTopics, inferTopicsDebug, inferTopicFromHistory, isWeakUtterance, isFollowupOnlyText } from "../../lib2/topicSignals";
-import { decideAxisSubject, inferLensWithContext, TOPIC_TAX_AUDIT, AUDIT_OVERLAY_TOPICS, type Lens } from "../../lib2/topicDecision";
-// NEW: LLM topic decision (39)
+// NEW: split
+import {
+  inferTopicsDebug,
+  inferTopicFromHistory,
+  isWeakUtterance,
+  isFollowupOnlyText,
+} from "../../lib2/topicSignals";
+import {
+  decideAxisSubject,
+  inferLensWithContext,
+  TOPIC_TAX_AUDIT,
+  AUDIT_OVERLAY_TOPICS,
+  type Lens,
+} from "../../lib2/topicDecision";
+
+// LLM topic decision
 import { decideTopicByLLM } from "../../lib2/ai/topicDecisionLlm";
 import { inferLensByLLM } from "../../lib2/ai/inferLensByLLM";
 
 export const runtime = "nodejs";
 
 /** ===== constants ===== */
-const LINES_PREFACE_TAG = "【Lines前置き】"; // knowledge_items(kind=qa) の title に入れると followup_lines 前置きに使われる
+const LINES_PREFACE_TAG = "【Lines前置き】";
 
 const SERVICE_ASSUMPTION_RULES: string[] = [
   "重要：このサービスは『顧問税理士がいる前提』で答える。顧問税理士がいない前提の案内（例：税理士の有無確認・選任の勧め・無い場合の段取り）は原則書かない。",
@@ -24,11 +36,9 @@ const SERVICE_ASSUMPTION_RULES: string[] = [
 ];
 
 const INTERNAL_LEAK_RE = /(未登録|ここに|\bDB\b|データベース|育成知見|\binternal\b|\bTODO\b|開発用)/i;
-
 function isLeakyLine(text: string): boolean {
   return INTERNAL_LEAK_RE.test(String(text ?? ""));
 }
-
 
 /** ===== small utils ===== */
 function mustEnv(name: string): string {
@@ -68,8 +78,6 @@ function dbgHead(s: string, n = 80) {
   const t = (s ?? "").replace(/\s+/g, " ").trim();
   return t.length <= n ? t : t.slice(0, n) + "…";
 }
-
-// 見えない混入（ゼロ幅・全角スペース等）も疑えるように、末尾のコードポイントを可視化
 function codepointsTail(s: string, n = 24): string {
   const arr = Array.from(String(s ?? ""));
   const tail = arr.slice(Math.max(0, arr.length - n));
@@ -105,7 +113,6 @@ type ChatRes =
 
 type Dialect = "kansai" | "standard";
 type Stance = "zubatto" | "sanbo";
-
 type MsgMini = { id: string; role: "user" | "assistant"; content: string; created_at: string };
 
 type StanceAD = "attack" | "defense";
@@ -155,41 +162,29 @@ type DebugMeta = {
   qa_pick_reason?: string;
 
   kb_bucket_counts?: { subject: number; audit: number; other: number };
-  picked_kb_items?: Array<{
-    id: string;
-    kind: "rule" | "qa" | "example";
-    topic: string;
-    title: string;
-    priority: number;
-  }>;
+  picked_kb_items?: Array<{ id: string; kind: "rule" | "qa" | "example"; topic: string; title: string; priority: number }>;
 
-  // topic debug
   topic_normalized?: string;
-  topic_hits?: any; // TopicHit[] を使うなら型付け可（循環回避で any）
+  topic_hits?: any;
   topic_raw?: string;
   topic_raw_json?: string;
   topic_codepoints_tail?: string;
 
-    // ===== lens debug (NEW) =====
   lens_rule?: Lens;
   lens_llm?: Lens;
   lens_llm_confidence?: number;
   lens_pre?: Lens;
   lens_final?: Lens;
 
-
-  // followup_lines cooldown
   prev_debug_path?: string;
   prev_debug_lens?: string;
   lines_cooldown_applied?: boolean;
   lines_keep_reason?: string;
-    // lines safety guards
   lines_blocked_no_subject?: boolean;
   lines_suppressed_short_ack?: boolean;
 
   tax_audit_sticky_reason?: string;
 
-  // NEW: clarify / implicit shift (CSVに出したければ admin export に後で足せばOK)
   clarify_prev_answer?: boolean;
   clarify_term?: string;
   clarify_matched?: string;
@@ -197,7 +192,6 @@ type DebugMeta = {
   implicit_shift_unstick?: boolean;
   audit_essence_injected?: boolean;
 
-    // topic mode / llm decision
   topic_mode?: "regex" | "llm";
   llm_topic_ok?: boolean;
   llm_topic_error?: string;
@@ -206,7 +200,6 @@ type DebugMeta = {
   llm_confidence?: number;
   llm_reason?: string;
 
-    // ===== answer sanity (server side) =====
   answer_has_rice?: boolean;
   answer_has_salt?: boolean;
   answer_has_attack_plain?: boolean;
@@ -216,8 +209,8 @@ type DebugMeta = {
   built_head?: string;
 
   nudge_lines_llm?: boolean;
-nudge_lines_reason?: string;
-nudge_lines_applied?: boolean;
+  nudge_lines_reason?: string;
+  nudge_lines_applied?: boolean;
 };
 
 type DebugTrace = {
@@ -225,7 +218,7 @@ type DebugTrace = {
   userId: string;
   messageHead: string;
   topicsNow: string[];
-  inferredTopic: string; // axis としてログに出す（= 税務調査になりやすい）
+  inferredTopic: string;
   lens: Lens;
   followupExplicit: boolean;
   followupPhase: boolean;
@@ -243,7 +236,7 @@ type DebugTrace = {
 function normalizeDialect(x: string): Dialect {
   return x === "standard" ? "standard" : "kansai";
 }
-function normalizeStance(x: string): Stance {
+function normalizeStance(x: Stance): Stance {
   return x === "sanbo" ? "sanbo" : "zubatto";
 }
 
@@ -258,69 +251,46 @@ function hasTaxAuditWordsLite(text: string): boolean {
 function isShortAckLike(message: string): boolean {
   const m = (message ?? "").trim();
   if (!m) return false;
-
-  // いわゆる「続きちょうだい」系（雑でもOK）
   if (/^(よろ|よろしく|よろしこ|よろ！|よろー|よろです！|頼む|たのむ|お願い|おねがい|おねげぇ|つづき|続き)$/.test(m)) return true;
-
-  // ひらがなだけの短文（例：おねげぇ、よろ、ほな、など）を広めに拾う
   if (m.length <= 6 && /^[ぁ-んー！!？?]+$/.test(m)) return true;
-
   return false;
 }
-
 
 function startsWithContinuationPrefix(message: string): boolean {
   const m = (message ?? "").trim();
   return /^(それ|その|じゃあ|じゃ|ほな|で|なら|今の|さっき|続き|つづき|あと|それで)/.test(m);
 }
-
 function hasGenericContinuationCue(message: string): boolean {
   const m = (message ?? "").trim();
   return /(どうすれば|どうしたら|どう対応|何したら|何から|結局|つまり|次(は)?|このあと|具体的に|要は)/.test(m);
 }
-
-// followupOnly（短文）扱いを抑える：質問っぽい短文は followupOnly にしない
 function looksQuestionish(message: string): boolean {
   const m = (message ?? "").trim();
   if (!m) return false;
   if (/[?？]/.test(m)) return true;
   return /(何|なに|どう|どっち|どちら|いつ|どこ|だれ|誰|なぜ|なんで|意味|どゆ|どういう|って|とは)/.test(m);
 }
-
 function tokens3(s: string): string[] {
   return Array.from((s ?? "").matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((m) => m[0]);
 }
-
 function extractClarifyTerm(message: string): string | null {
   const raw = (message ?? "").trim();
   if (!raw) return null;
-
-  // 末尾の記号を落とす
   const s = raw.replace(/[！!。．…]+$/g, "").replace(/[?？]+$/g, "").trim();
   if (!s) return null;
 
-  // 典型：Xってなに / Xてなに / Xとは / Xって？
   const m1 = s.match(/^(.+?)(?:って|て|とは)\s*(?:何|なに|どういう意味|どういうこと|どゆこと|どゆ意味|意味)$/);
   if (m1?.[1]) return m1[1].trim();
-
   const m2 = s.match(/^(.+?)(?:って|て|とは)\s*$/);
   if (m2?.[1]) return m2[1].trim();
 
-  // 単語だけ：按分？ / 不課税？ みたいな “単体疑問”
   const solo = s.trim();
   if (solo.length <= 10 && !/\s/.test(solo)) return solo;
-
   return null;
 }
-
 function normKey(s: string): string {
-  return (s ?? "")
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[\/\\・\.\-＿_]/g, ""); // スラッシュ等を消す（全角＿＋半角_ も）
+  return (s ?? "").toLowerCase().replace(/\s+/g, "").replace(/[\/\\・\.\-＿_]/g, "");
 }
-
-
 function detectClarifyPrevAnswer(message: string, prevAssistantMessage: string | null): { ok: boolean; term: string; matched: string } {
   const prev = (prevAssistantMessage ?? "").trim();
   if (!prev) return { ok: false, term: "", matched: "" };
@@ -328,15 +298,12 @@ function detectClarifyPrevAnswer(message: string, prevAssistantMessage: string |
   const term = (extractClarifyTerm(message) ?? "").trim();
   if (!term) return { ok: false, term: "", matched: "" };
 
-  // まずは素直に部分一致
   if (term.length >= 2 && prev.includes(term)) return { ok: true, term, matched: term };
 
-    // ★追加：記号差（B/L vs BL など）を吸収して部分一致
   const prevK = normKey(prev);
   const termK = normKey(term);
   if (termK.length >= 2 && prevK.includes(termK)) return { ok: true, term, matched: term };
 
-  // 次に token（3文字以上）で部分一致
   const ts = tokens3(term);
   const hit = ts.find((t) => t && prev.includes(t));
   if (hit) return { ok: true, term, matched: hit };
@@ -351,33 +318,25 @@ function insertLineBeforeInquiry(answer: string, line: string): string {
 
   const lines = a0.split("\n");
   const idx = lines.findIndex((x) => x.trimStart().startsWith("🔎"));
-  if (idx < 0) {
-    return `${a0}\n\n${l}`.replace(/\n{3,}/g, "\n\n").trim();
-  }
-
-  // 既に同じ行が入ってたら重複させない
+  if (idx < 0) return `${a0}\n\n${l}`.replace(/\n{3,}/g, "\n\n").trim();
   if (lines.some((x) => x.trim() === l)) return a0;
 
   const head = lines.slice(0, idx);
   const tail = lines.slice(idx);
-
   const out: string[] = [...head];
   if (out.length > 0 && out[out.length - 1].trim()) out.push("");
   out.push(l, "");
   out.push(...tail);
-
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function auditEssenceOneLine(dialect: Dialect, stance: Stance): string {
-  // B案：固定テンプレ1行（カード混ぜない）
   if (dialect === "kansai" && stance === "sanbo") return "※ 税務調査目線：形式より実態。一貫性と証拠で見られますわ。";
   if (dialect === "standard" && stance === "sanbo") return "※ 税務調査目線：形式より実態。一貫性と証拠で見られます。";
-  // zubatto（丁寧語なし）
   return "※ 税務調査目線：形式より実態。一貫性と証拠で見られる。";
 }
 
-/** ===== rules builders ===== */
+/** ===== output rules ===== */
 function buildOutputRules(params: { allowAttackDefenseDetail: boolean }): string[] {
   const { allowAttackDefenseDetail } = params;
 
@@ -401,7 +360,6 @@ function buildAmbiguityBoostRules(message: string): string[] {
   const hasTaxWords =
     /税|経費|損金|消費税|源泉|役員|給与|交際費|棚卸|売上|請求|領収|仕訳|法人|個人|青色|調査|否認|事業|私用|按分/.test(m);
   if (!m) return [];
-
   const hasSafety = /安全度|安全性|リスク|危険|グレー|大丈夫/.test(m);
   if (!hasSafety) return [];
 
@@ -422,9 +380,7 @@ function forbiddenFor(_dialect: Dialect, stance: Stance): string[] | null {
 }
 function findForbiddenHits(text: string, forbidden: string[]): string[] {
   const hits: string[] = [];
-  for (const w of forbidden) {
-    if (text.includes(w)) hits.push(w);
-  }
+  for (const w of forbidden) if (text.includes(w)) hits.push(w);
   return Array.from(new Set(hits));
 }
 
@@ -473,7 +429,12 @@ function summarizeSeed(text: string): string {
   return s.length <= 60 ? s : s.slice(0, 60) + "…";
 }
 
-async function ensureConversationId(params: { db: any; userId: string; conversationId: string | null; firstUserMessage: string }): Promise<string> {
+async function ensureConversationId(params: {
+  db: any;
+  userId: string;
+  conversationId: string | null;
+  firstUserMessage: string;
+}): Promise<string> {
   const { db, userId, conversationId, firstUserMessage } = params;
 
   if (conversationId && isUuid(conversationId)) {
@@ -533,30 +494,17 @@ function isInFollowupPhase(prevAssistantMessage: string | null): boolean {
   const s = prevAssistantMessage ?? "";
   return s.includes("🍚攻め") && s.includes("🧂守り");
 }
-
 function isLineRequest(message: string): boolean {
   const m = (message ?? "").trim();
-
-  // 基本合言葉
   if (/(攻め\s*\/\s*守り|攻め\s*守り|攻めと守り|攻め守りで)/.test(m)) return true;
   if (/(攻めのライン|守りのライン)/.test(m)) return true;
-
-  // お遊び要素：さじかげん
-  // 「さじかげん」「さじかげんよろ」「さじかげんで」「さじかげん頼む」等を拾う
   if (/さじかげん/.test(m)) return true;
-
   return false;
 }
-
-
-
-
-// 「初手で🍚🧂を出して良い」ほど明示的な要求だけ拾う（段階出しの本丸）
 function isLineDetailRequest(message: string): boolean {
   const m = (message ?? "").trim();
   return /(攻め|守り|攻守|上限|限界|安全ライン|レンジ|幅|いくら|なんぼ|金額|いくつまで|どんぐらい)/.test(m);
 }
-
 function isAmountAsk(message: string): boolean {
   const m = (message ?? "").trim();
   return /(いくら|なんぼ|金額|上限|限界|レンジ|幅|いくつまで|どこまで|ギリ|安全|セーフ|アウト|グレー)/.test(m);
@@ -573,27 +521,14 @@ function adjustLensByConversation(params: {
   const m = (message ?? "").trim();
   const topic = (subjectTopic || axisTopic || "").trim();
 
-  // clarify / qa_more は “金額レンジ” で殴らない（会話がズレる）
   if (llmIntent === "clarify" || llmIntent === "qa_more") {
     if (lens === "amount") return "substance";
   }
-
-  // amount は「金額を聞かれた時だけ前に出す」
   if (lens === "amount" && !isAmountAsk(m)) return "substance";
-
-  // 外注：毎月同額＝金額より「実態（指揮命令/成果/代替性/裁量）」が主戦場
-  if (topic === "外注" && /(毎月|月々|同じ金額|定額|固定)/.test(m) && !isAmountAsk(m)) {
-    return "substance";
-  }
-
-  // 制度ワードが強い時は system に寄せる（インボイス/源泉/登録/規程など）
-  if (/(インボイス|登録|未登録|適格|源泉|支払調書|請求書|契約書|規程|届出|要件)/.test(m)) {
-    return "system";
-  }
-
+  if (topic === "外注" && /(毎月|月々|同じ金額|定額|固定)/.test(m) && !isAmountAsk(m)) return "substance";
+  if (/(インボイス|登録|未登録|適格|源泉|支払調書|請求書|契約書|規程|届出|要件)/.test(m)) return "system";
   return lens;
 }
-
 
 function topicShiftLikelyLite(prevUser: string | null, cur: string): boolean {
   const prev = (prevUser ?? "").trim();
@@ -621,7 +556,6 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
     /(教えて|おしえて|詳しく|詳細|具体|もう少し|もっと|続き|つづき|お願い|おねがい|頼む|たのむ|よろしく|再度|もう一回|もういちど|さっき|よろしこ)/.test(
       m
     );
-
   const veryShort = m.length <= 2 || /^[\.\-ー…\?？!！wｗ]+$/.test(m);
 
   const topicShiftLikely = (() => {
@@ -635,10 +569,8 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
     return !overlap;
   })();
 
-  // 「よろ」等の短文は followupOnly/isShortAckLike 側で拾う（ここで explicit にしない）
   if (followupCue) return true;
   if (veryShort && !topicShiftLikely) return true;
-
   return false;
 }
 
@@ -678,10 +610,8 @@ async function fetchAvailableTopics(db: any): Promise<string[]> {
 
   out.delete("GLOBAL");
   out.add(TOPIC_TAX_AUDIT);
-
   return Array.from(out);
 }
-
 
 function messageTokens3(s: string): string[] {
   return Array.from((s ?? "").matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((m) => m[0]);
@@ -689,18 +619,15 @@ function messageTokens3(s: string): string[] {
 
 async function retrieveKnowledgeByBuckets(params: {
   db: any;
-  message: string;
   auditAxis: boolean;
   subjectTopic: string;
   topicsNow: string[];
   maxTotal?: number;
 }): Promise<KnowledgeItem[]> {
   const { db, auditAxis, subjectTopic, topicsNow } = params;
-
   const maxTotal = Math.max(1, Math.min(20, params.maxTotal ?? 10));
 
   const wantsBuckets = auditAxis && Boolean(subjectTopic);
-
   const quotaSubject = wantsBuckets ? 4 : 0;
   const quotaAudit = wantsBuckets ? 3 : 0;
   const quotaOther = wantsBuckets ? Math.max(0, maxTotal - quotaSubject - quotaAudit) : maxTotal;
@@ -744,23 +671,17 @@ async function retrieveKnowledgeByBuckets(params: {
     return (data ?? []) as KnowledgeItem[];
   };
 
+  // buckets
   const subjectItems = wantsBuckets ? await fetchTopic(subjectTopic, quotaSubject) : [];
   const auditItems = wantsBuckets ? await fetchTopic(TOPIC_TAX_AUDIT, quotaAudit) : [];
-
   const otherTopics = (topicsNow ?? []).filter((t) => t && t !== subjectTopic && t !== TOPIC_TAX_AUDIT);
 
-  let otherItems: KnowledgeItem[] = [];
-  if (wantsBuckets) {
-    otherItems = await fetchTopics(otherTopics, quotaOther);
-  } else {
-  // LLM主導。other は広めに拾う
-  otherItems = await fetchTopics([], maxTotal);
-}
-
+  // wantsBuckets=false のときは “topicsNow中心” で拾う（空inは禁止）
+  const otherItems = await fetchTopics(wantsBuckets ? otherTopics : otherTopics, quotaOther);
 
   let merged = uniqById([...subjectItems, ...auditItems, ...otherItems]).slice(0, maxTotal);
 
-  if (merged.length < maxTotal) {
+  if (merged.length < maxTotal && wantsBuckets) {
     const poolTopics = Array.from(new Set([subjectTopic, ...(auditAxis ? [TOPIC_TAX_AUDIT] : []), ...otherTopics].filter(Boolean)));
     const fill = await fetchTopics(poolTopics, maxTotal - merged.length);
     merged = uniqById([...merged, ...fill]).slice(0, maxTotal);
@@ -815,16 +736,11 @@ async function retrieveKnowledgeLines(params: {
 
   const lensFallbacks: Lens[] =
     topic === TOPIC_TAX_AUDIT
-      ? lens === "amount"
-        ? ["substance", "system", "amount"]
-        : ["substance", "system", "amount"]
+      ? ["substance", "system", "amount"]
       : [lens, "substance", "system", "amount"];
 
   const tokens = messageTokens3(messageForMatch);
-
-  
   const scoreText = (text: string) => {
-    
     const t = (text ?? "").toLowerCase();
     let score = 0;
     for (const w of tokens) if (w && t.includes(w.toLowerCase())) score += 1;
@@ -836,19 +752,18 @@ async function retrieveKnowledgeLines(params: {
     if (!rows || rows.length === 0) continue;
 
     const pickOne = (stance: StanceAD) => {
-  // ★中身が空/短すぎる行を除外（事故防止）
-  const minLen = 8; // 好みで。まずは8〜12くらいが無難
-  const candidates = rows
-    .filter((r) => r.stance === stance)
-    .filter((r) => !isLeakyLine(r.text))                 // ★追加：事故行除外
-    .filter((r) => String(r.text ?? "").trim().length >= minLen);
+      const minLen = 8;
+      const candidates = rows
+        .filter((r) => r.stance === stance)
+        .filter((r) => !isLeakyLine(r.text))
+        .filter((r) => String(r.text ?? "").trim().length >= minLen);
 
-  if (candidates.length === 0) return null;
+      if (candidates.length === 0) return null;
 
-  const scored = candidates.map((r) => ({ r, s: scoreText(r.text) }));
-  scored.sort((a, b) => b.s - a.s || (b.r.priority ?? 0) - (a.r.priority ?? 0));
-  return scored[0]?.r ?? null;
-};
+      const scored = candidates.map((r) => ({ r, s: scoreText(r.text) }));
+      scored.sort((a, b) => b.s - a.s || (b.r.priority ?? 0) - (a.r.priority ?? 0));
+      return scored[0]?.r ?? null;
+    };
 
     const attack = pickOne("attack");
     const defense = pickOne("defense");
@@ -919,18 +834,14 @@ function qaToKeyPointRule(qa: KnowledgeItem, maxLines = 2): string {
 
   const body = picked.length ? picked : [lines[0]?.slice(0, 120) ?? ""].filter(Boolean);
   const joined = body.join(" / ").trim();
-
   return `重要：以下の実務要点を必ず反映する（出典：QA「${qa.title}」）。→ ${joined}`;
 }
 
-/** ===== knowledge formatting ===== */
 function formatKnowledgeBlock(items: KnowledgeItem[]): string {
   if (!items || items.length === 0) return "";
-
   const lines: string[] = [];
   lines.push("【育成知見（最優先）】");
   lines.push("※一般論より優先して扱う。金額の目安は育成知見を採用する。");
-
   for (const it of items) {
     const tag = it.kind === "rule" ? "[Rule]" : it.kind === "qa" ? "[Q&A]" : "[Example]";
     lines.push(`${tag} ${it.title}`);
@@ -940,9 +851,8 @@ function formatKnowledgeBlock(items: KnowledgeItem[]): string {
   return lines.join("\n");
 }
 
-/** ===== followup kb builder ===== */
+/** ===== followup (Lines/Kb/Fallback) ===== */
 type AttackDefensePick = { attack: string; defense: string; pitfall?: string | null };
-
 function pickFirstNonEmpty(...xs: Array<string | null | undefined>): string | null {
   for (const x of xs) {
     const t = (x ?? "").trim();
@@ -950,7 +860,6 @@ function pickFirstNonEmpty(...xs: Array<string | null | undefined>): string | nu
   }
   return null;
 }
-
 function extractAttackDefenseFromContent(content: string): AttackDefensePick | null {
   const text = (content ?? "").replace(/\r\n/g, "\n");
   const defense = pickFirstNonEmpty(text.match(/^[ \t]*守り[:：]\s*(.+)\s*$/m)?.[1]);
@@ -960,14 +869,10 @@ function extractAttackDefenseFromContent(content: string): AttackDefensePick | n
   let pitfall: string | null = null;
   const m = text.match(/【⚠️地雷】([\s\S]*?)(【|$)/);
   if (m?.[1]) {
-    const lines = m[1]
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const lines = m[1].split("\n").map((l) => l.trim()).filter(Boolean);
     const bullet = lines.find((l) => l.startsWith("-") || l.startsWith("・"));
     if (bullet) pitfall = bullet.replace(/^[-・]\s*/, "").trim();
   }
-
   return { attack, defense, pitfall };
 }
 
@@ -975,7 +880,6 @@ function buildFollowupAnswerFromKbWithPick(items: KnowledgeItem[]): { text: stri
   for (const it of items ?? []) {
     const ad = extractAttackDefenseFromContent(it.content);
     if (!ad) continue;
-
     const lines: string[] = [];
     lines.push(`🍚攻め：${ad.attack}`);
     lines.push(`🧂守り：${ad.defense}`);
@@ -991,7 +895,6 @@ function buildFollowupAnswerFromLines(params: { attack: KnowledgeLine | null; de
   if (!at || !df) return null;
   return `🍚攻め：${at}\n🧂守り：${df}`.trim();
 }
-
 
 function fallbackAttackDefense(topic: string, lens: Lens): { attack: string; defense: string } {
   const t = (topic ?? "").trim();
@@ -1013,7 +916,6 @@ function fallbackAttackDefense(topic: string, lens: Lens): { attack: string; def
   };
 }
 
-/** ===== line preface QA picker ===== */
 function pickLinesPrefaceQa(items: KnowledgeItem[]): KnowledgeItem | null {
   const qas = (items ?? []).filter((x) => x.kind === "qa" && (x.title ?? "").includes(LINES_PREFACE_TAG));
   if (qas.length === 0) return null;
@@ -1021,23 +923,11 @@ function pickLinesPrefaceQa(items: KnowledgeItem[]): KnowledgeItem | null {
   return qas[0];
 }
 
-function buildLinesPreamble(params: {
-  topic: string;
-  axisTopic: string;
-  dialect: Dialect;
-  stance: Stance;
-  qa: KnowledgeItem | null;
-}): { text: string; usedQaId?: string } {
+function buildLinesPreamble(params: { topic: string; axisTopic: string; dialect: Dialect; stance: Stance; qa: KnowledgeItem | null }): { text: string; usedQaId?: string } {
   const { topic, axisTopic, qa } = params;
 
   if (qa && qa.content) {
-    const lines = qa.content
-      .replace(/\r\n/g, "\n")
-      .split("\n")
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .slice(0, 3);
-
+    const lines = qa.content.replace(/\r\n/g, "\n").split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 3);
     const out: string[] = [];
     if (lines[0]) out.push(`✅要点 ${lines[0]}`);
     for (const l of lines.slice(1)) out.push(`- ${l}`);
@@ -1045,7 +935,6 @@ function buildLinesPreamble(params: {
   }
 
   const isAuditAxis = axisTopic === TOPIC_TAX_AUDIT;
-
   if (topic === "交際費" && isAuditAxis) {
     return {
       text: [
@@ -1142,11 +1031,7 @@ function ensureLineBold(secLine: string[]): string[] {
 function collapseInquiryToSingleLine(askLines: string[]): string[] {
   if (!askLines || askLines.length === 0) return askLines;
   const head = askLines[0].trim();
-  const rest = askLines
-    .slice(1)
-    .map((l) => l.trim())
-    .filter((x) => x.length > 0)
-    .join(" ");
+  const rest = askLines.slice(1).map((l) => l.trim()).filter((x) => x.length > 0).join(" ");
   if (!rest) return ["🔎確認 税務・経営前提で答えた。前提が違うなら言うてな。"];
   return [`${head} ${rest}`.trim()];
 }
@@ -1154,17 +1039,14 @@ function collapseInquiryToSingleLine(askLines: string[]): string[] {
 function enforceTemplate(answer: string): string {
   const a = answer.replace(/\r\n/g, "\n").trim();
   if (!a) return a;
-  if (hasAttackOrDefense(a) && !hasThreePatterns(a)) {
-  // 片側欠損はテンプレ側で直さない（= サーバが弾いて再生成させる）
-  return a;
-}
-if (hasThreePatterns(a)) return a;
+
+  if (hasAttackOrDefense(a) && !hasThreePatterns(a)) return a;
+  if (hasThreePatterns(a)) return a;
 
   const secLine = ensureLineBold(extractSection(a, "🥄"));
   const key = extractSection(a, "✅");
   const warn = extractSection(a, "⚠️");
   const ask = extractSection(a, "🔎");
-
   if (secLine.length === 0 || key.length === 0) return a;
 
   let askFixed = ask;
@@ -1205,7 +1087,6 @@ function catchphraseFor(dialect: Dialect, stance: Stance): string {
 
 function forceCasual(text: string, dialect: Dialect): string {
   let s = (text ?? "").replace(/\r\n/g, "\n");
-
   s = s
     .replace(/ではありません/g, "ちゃう")
     .replace(/ではない/g, "ちゃう")
@@ -1223,7 +1104,6 @@ function forceCasual(text: string, dialect: Dialect): string {
     .replace(/ください/g, "して")
     .replace(/でしょう/g, dialect === "kansai" ? "やろ" : "だろ")
     .replace(/かもしれません/g, "かもな");
-
   s = s.replace(/し。/g, "する。").replace(/し\n/g, "する\n");
   return s;
 }
@@ -1237,14 +1117,12 @@ function inquiryLine(dialect: Dialect, stance: Stance): string {
 
 function inquiryLineWithAuditCTA(dialect: Dialect, stance: Stance, subjectTopic: string): string {
   const ex = `${subjectTopic}は税務調査で何を突かれやすい？`;
-
   if (stance === "sanbo") {
     if (dialect === "kansai") {
       return `🔎確認 税務・経営前提でお答えしましたで。必要でしたら「${ex}」みたいに投げてもろたら、調査目線のポイントも整理しますわ。`;
     }
     return `🔎確認 税務・経営前提で回答しました。必要でしたら「${ex}」の形でもう一段、税務調査目線のポイントを整理します。`;
   }
-
   if (dialect === "kansai") {
     return `🔎確認 税務・経営前提で答えたで。もし「${ex}」まで知りたかったら言うて。調査で刺さるポイントだけ整理する。`;
   }
@@ -1253,15 +1131,11 @@ function inquiryLineWithAuditCTA(dialect: Dialect, stance: Stance, subjectTopic:
 
 function stripInternalLeaks(text: string): string {
   let s = String(text ?? "").replace(/\r\n/g, "\n");
-
   s = s.replace(/[\(（][^()（）]*(未登録|ここに|DB|データベース|育成|internal|TODO)[^()（）]*[\)）]/gi, "");
-
   const ng = [/未登録/gi, /ここに/gi, /\bDB\b/gi, /データベース/gi, /育成知見/gi, /\binternal\b/gi, /\bTODO\b/gi, /開発用/gi];
-
   const lines = s.split("\n");
   const out = lines.filter((line) => !ng.some((re) => re.test(line)));
   s = out.join("\n").trim();
-
   if (!s) s = "🥄ちょうど良いライン：**一般論で整理する**。必要なら条件を揃えて深掘りする。";
   return s;
 }
@@ -1271,11 +1145,11 @@ function postProcessAnswer(
   dialect: Dialect,
   stance: Stance,
   opts: {
-  usedKnowledge: boolean;
-  allowAttackDefenseDetail: boolean;
-  inquiryOverride?: string | null;
-  llmIntent?: string | null; // "qa_first" | "qa_more" | "need_lines" | ...
-}
+    usedKnowledge: boolean;
+    allowAttackDefenseDetail: boolean;
+    inquiryOverride?: string | null;
+    llmIntent?: string | null;
+  }
 ): string {
   const llmIntent = safeStr(opts.llmIntent ?? "").trim();
   const usedKnowledge = opts.usedKnowledge;
@@ -1285,61 +1159,48 @@ function postProcessAnswer(
   let a = String(raw ?? "").replace(/\r\n/g, "\n").trim();
   a = a.replace(/[\(（]最大[^)）]*[\)）]/g, "");
 
-    // 🍚🧂 が混ざっても “早期return” しない（allowAttackDefenseDetail=false の時にサーバ側で削れるようにする）
   if (hasThreePatterns(a)) {
     const lines = a.split("\n");
     const out = lines.filter((line) => !isCatchphraseLine(line));
     a = out.join("\n").trim();
   }
 
-
   a = enforceTemplate(a);
 
+  // allowAttackDefenseDetail=false の時は 🍚🧂を強制で落とす（偽Lines根絶）
   if (!allowAttackDefenseDetail) {
-  a = a
-    .split("\n")
-    .filter((line) => {
-      const t = line.trimStart();
-
-      // 🍚🧂だけじゃなく、素の「攻め：」「守り：」も全部落とす（誤爆防止の本丸）
-      if (t.startsWith("🍚攻め") || t.startsWith("🧂守り")) return false;
-      if (/^(攻め|守り)\s*[:：]/.test(t)) return false;
-
-      return true;
-    })
-    .join("\n")
-    .trim();
-} else {
-  a = a
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("🥄"))
-    .join("\n")
-    .trim();
-}
-
+    a = a
+      .split("\n")
+      .filter((line) => {
+        const t = line.trimStart();
+        if (t.startsWith("🍚攻め") || t.startsWith("🧂守り")) return false;
+        if (/^(攻め|守り)\s*[:：]/.test(t)) return false;
+        return true;
+      })
+      .join("\n")
+      .trim();
+  } else {
+    // followup_lines は 🥄 を削る（重複を避ける）
+    a = a
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("🥄"))
+      .join("\n")
+      .trim();
+  }
 
   const alreadyCatch = a.split("\n").some((line) => isCatchphraseLine(line));
-  
-// 誤爆ゼロ方針：qa_more では誘導を出さない（短文承諾が Lines に吸われるのを防ぐ）
-const isQaFirst = llmIntent === "qa_first";
-// const isQaMore = llmIntent === "qa_more";
-// const isNeedLines = llmIntent === "need_lines";
+  const isQaFirst = llmIntent === "qa_first";
 
-if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch) {
-  // qa_first の時だけ、短いCTAを付ける（※🔎で始めない： inquiry置換に食われるため）
-  if (isQaFirst) {
-    const cta =
-      dialect === "kansai"
-        ? "👉 続き欲しければ「続き」。線引き（どこまで/上限）ならそれ言うて。"
-        : "👉 続きが欲しければ「続き」。線引き（どこまで/上限）ならそれを言って。";
-
-    // 既に👉がある場合は追加しない（重複防止）
-    const hasCta = a.split("\n").some((line) => line.trimStart().startsWith("👉"));
-    if (!hasCta) a = `${a}\n\n${cta}`.trim();
+  if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch) {
+    if (isQaFirst) {
+      const cta =
+        dialect === "kansai"
+          ? "👉 続き欲しければ「続き」。線引き（どこまで/上限）ならそれ言うて。"
+          : "👉 続きが欲しければ「続き」。線引き（どこまで/上限）ならそれを言って。";
+      const hasCta = a.split("\n").some((line) => line.trimStart().startsWith("👉"));
+      if (!hasCta) a = `${a}\n\n${cta}`.trim();
+    }
   }
-  // qa_more / need_lines は誘導を付けない（誤爆防止）
-}
-
 
   a = a
     .split("\n")
@@ -1401,7 +1262,6 @@ async function generateAnswerStrict(params: {
   llmIntent?: string | null;
 }): Promise<string> {
   const { message, promptPartsBase, dialect, stance } = params;
-
   const forbidden = forbiddenFor(dialect, stance);
   let last = "";
   let lastHits: string[] = [];
@@ -1424,20 +1284,18 @@ async function generateAnswerStrict(params: {
     const result = await generateAnswer({ message, promptParts });
 
     last = postProcessAnswer(result.answer, dialect, stance, {
-  usedKnowledge: params.usedKnowledge,
-  allowAttackDefenseDetail: params.allowAttackDefenseDetail,
-  inquiryOverride: params.inquiryOverride ?? null,
-  llmIntent: params.llmIntent ?? null,
-});
+      usedKnowledge: params.usedKnowledge,
+      allowAttackDefenseDetail: params.allowAttackDefenseDetail,
+      inquiryOverride: params.inquiryOverride ?? null,
+      llmIntent: params.llmIntent ?? null,
+    });
 
-// 🍚🧂強制：detail許可時に片側欠損なら再生成
-if (params.allowAttackDefenseDetail && hasAttackOrDefense(last) && !hasThreePatterns(last)) {
-  lastHits = ["🍚/🧂の片側欠損"]; // 禁止語と同じ扱いでリトライに乗せる
-  continue;
-}
+    if (params.allowAttackDefenseDetail && hasAttackOrDefense(last) && !hasThreePatterns(last)) {
+      lastHits = ["🍚/🧂の片側欠損"];
+      continue;
+    }
 
     if (!forbidden) return last;
-
     lastHits = findForbiddenHits(last, forbidden);
     if (lastHits.length === 0) return last;
   }
@@ -1450,7 +1308,6 @@ if (params.allowAttackDefenseDetail && hasAttackOrDefense(last) && !hasThreePatt
 function sortByPriorityDesc(qas: KnowledgeItem[]): KnowledgeItem[] {
   return [...qas].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 }
-
 function pickTwoBy70and50Preference(qas: KnowledgeItem[]): KnowledgeItem[] {
   const sorted = sortByPriorityDesc(qas);
   if (sorted.length === 0) return [];
@@ -1471,7 +1328,6 @@ function pickTwoBy70and50Preference(qas: KnowledgeItem[]): KnowledgeItem[] {
 
   return picked.slice(0, 2);
 }
-
 function pickOtherUpTo2Prefer50(qas: KnowledgeItem[], alreadyPickedIds: Set<string>): KnowledgeItem[] {
   const sorted = sortByPriorityDesc(qas).filter((it) => !alreadyPickedIds.has(it.id));
   if (sorted.length === 0) return [];
@@ -1496,10 +1352,8 @@ function pickOtherUpTo2Prefer50(qas: KnowledgeItem[], alreadyPickedIds: Set<stri
     used.add(x.id);
     picked.push(x);
   }
-
   return picked.slice(0, 2);
 }
-
 function limitQaMax6(params: {
   itemsForPrompt: KnowledgeItem[];
   subjectTopic: string;
@@ -1517,7 +1371,6 @@ function limitQaMax6(params: {
   const pickedAudit = pickTwoBy70and50Preference(qasAudit);
 
   const usedIds = new Set<string>([...pickedSubject, ...pickedAudit].map((x) => x.id));
-
   const pickedOther = pickOtherUpTo2Prefer50(qasAll, usedIds);
 
   const pickedQa = [...pickedSubject, ...pickedAudit, ...pickedOther].slice(0, 6);
@@ -1542,8 +1395,24 @@ function buildPickedQaMeta(items: KnowledgeItem[], limit = 3): PickedQaMeta[] {
 }
 function buildPickedLinesMeta(picked: { attack: KnowledgeLine | null; defense: KnowledgeLine | null }): PickedLineMeta[] {
   const out: PickedLineMeta[] = [];
-  if (picked.attack) out.push({ id: picked.attack.id, topic: picked.attack.topic, lens: picked.attack.lens, stance: picked.attack.stance, priority: picked.attack.priority, role: picked.attack.role });
-  if (picked.defense) out.push({ id: picked.defense.id, topic: picked.defense.topic, lens: picked.defense.lens, stance: picked.defense.stance, priority: picked.defense.priority, role: picked.defense.role });
+  if (picked.attack)
+    out.push({
+      id: picked.attack.id,
+      topic: picked.attack.topic,
+      lens: picked.attack.lens,
+      stance: picked.attack.stance,
+      priority: picked.attack.priority,
+      role: picked.attack.role,
+    });
+  if (picked.defense)
+    out.push({
+      id: picked.defense.id,
+      topic: picked.defense.topic,
+      lens: picked.defense.lens,
+      stance: picked.defense.stance,
+      priority: picked.defense.priority,
+      role: picked.defense.role,
+    });
   return out.slice(0, 3);
 }
 
@@ -1593,13 +1462,13 @@ async function fetchPrevDebugLite(
     if (!r) return null;
 
     const meta = (r.meta ?? {}) as any;
-return {
-  path: String(r.path ?? ""),
-  lens: String(r.lens ?? ""),
-  subjectTopic: String(meta.subject_topic ?? ""),
-  axisTopic: String(meta.axis_topic ?? ""),
-  prevNudgeApplied: Boolean(meta.nudge_lines_applied),
-};
+    return {
+      path: String(r.path ?? ""),
+      lens: String(r.lens ?? ""),
+      subjectTopic: String(meta.subject_topic ?? ""),
+      axisTopic: String(meta.axis_topic ?? ""),
+      prevNudgeApplied: Boolean(meta.nudge_lines_applied),
+    };
   } catch {
     return null;
   }
@@ -1616,17 +1485,21 @@ function followupFooter(axisTopic: string, dialect: Dialect, stance: Stance): st
 
 /** ===== POST ===== */
 export async function POST(req: Request) {
-  // ===== topic / axis / subject (LLM optional) =====
-const topicMode: "regex" | "llm" =
-  (process.env.TOPIC_MODE || "regex") === "llm" ? "llm" : "regex";
+  const topicMode: "regex" | "llm" = (process.env.TOPIC_MODE || "regex") === "llm" ? "llm" : "regex";
 
-let llmOk = false;
-let llmErr = "";
-let llmRaw = "";
-let llmIntent = "";
-let llmConfidence = 0;
-let llmReason = "";
-let llmTopicsNow: string[] = [];
+  // LLM decision outputs
+  let llmOk = false;
+  let llmErr = "";
+  let llmRaw = "";
+  let llmIntent = "";
+  let llmConfidence = 0;
+  let llmReason = "";
+  let llmTopicsNow: string[] = [];
+  let llmSubject = "";
+  let llmAxis = "";
+  let llmAudit = false;
+  let llmNudgeLines = false;
+  let llmNudgeReason = "";
 
   try {
     const token = bearer(req);
@@ -1638,7 +1511,7 @@ let llmTopicsNow: string[] = [];
     const idempotencyKey = safeStr(body?.idempotencyKey).trim();
     const conversationIdRaw = safeStr(body?.conversationId).trim();
     const dialect = normalizeDialect(safeStr(body?.dialect).trim());
-    const stance = normalizeStance(safeStr(body?.stance).trim());
+    const stance = normalizeStance(safeStr(body?.stance).trim() as any);
     const conversationId = conversationIdRaw ? conversationIdRaw : null;
 
     if (!message) return NextResponse.json({ ok: false, error: "message is required" } satisfies ChatRes, { status: 400 });
@@ -1709,27 +1582,20 @@ let llmTopicsNow: string[] = [];
         return prevRows?.[0]?.content ?? null;
       })();
 
+      const prevDebug = await fetchPrevDebugLite(db, convId);
+
       const clarify = detectClarifyPrevAnswer(message, prevAssistantMessage);
+      const lineRequest = isLineRequest(message);
+      const clarifyPrevAnswer = Boolean(clarify.ok) && !lineRequest;
 
-// lineRequest（線引きの明示要求）※LLM intent は後段で合流して最終決定する
-const lineRequest = isLineRequest(message);
-
-// 合言葉（lineRequest）のときは clarify を無効化（Lines の導線を優先）
-const clarifyPrevAnswer = Boolean(clarify.ok) && !lineRequest;
-
-
-      // ===== followup 判定（短文誤爆を抑える）=====
+      // followup 判定（短文誤爆抑制）
       const shiftedRaw = topicShiftLikelyLite(prevUserMessage, message);
-
       const followupOnlyRaw = isFollowupOnlyText(message);
-const followupOnly =
-  followupOnlyRaw && !clarifyPrevAnswer && !looksQuestionish(message) && !shiftedRaw; // ★追加
+      const followupOnly = followupOnlyRaw && !clarifyPrevAnswer && !looksQuestionish(message) && !shiftedRaw;
 
       const weakUtterance = isWeakUtterance(message);
-
       const followupExplicitRaw = wantsAttackDefenseDetail(message, prevUserMessage);
-const followupExplicit = followupExplicitRaw && !clarifyPrevAnswer;
-
+      const followupExplicit = followupExplicitRaw && !clarifyPrevAnswer;
 
       const followupPhaseRaw = isInFollowupPhase(prevAssistantMessage);
 
@@ -1745,303 +1611,218 @@ const followupExplicit = followupExplicitRaw && !clarifyPrevAnswer;
       const followupPhase = followupPhaseRaw && continuationLike;
       const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shiftedRaw);
 
-      // ===== implicit shift（暗黙の話題転換）=====
-      const implicitShift =
-  !clarifyPrevAnswer && !continuationLike && shiftedRaw && !isShortAckLike(message);
+      const implicitShift = !clarifyPrevAnswer && !continuationLike && shiftedRaw && !isShortAckLike(message);
 
-
-      // ★ 後でクールダウン等で上書きするので let
       let forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance;
+      if (clarifyPrevAnswer && !lineRequest) forceNormalAnswer = true;
 
-      // clarify は原則 normal 回答へ（lines禁止）
-// ただし合言葉（lineRequest）がある時は Lines を優先する
-if (clarifyPrevAnswer && !lineRequest) forceNormalAnswer = true;
+      // topic debug (regex)
+      const topicsNowDbg = inferTopicsDebug(message, { max: 3 });
+      const topicsNowRegex = topicsNowDbg.topics;
 
-   // topic debug
-const topicsNowDbg = inferTopicsDebug(message, { max: 3 });
-const topicsNow0 = topicsNowDbg.topics;
+      const topicsPrevDbg = prevUserMessage ? inferTopicsDebug(prevUserMessage, { max: 3 }) : null;
+      const topicsPrev = topicsPrevDbg?.topics ?? [];
 
-const topicsPrevDbg = prevUserMessage ? inferTopicsDebug(prevUserMessage, { max: 3 }) : null;
-const topicsPrev = topicsPrevDbg?.topics ?? [];
+      const recentUserMsgs = await (async () => {
+        const { data: rows } = await db
+          .from("messages")
+          .select("content")
+          .eq("conversation_id", convId)
+          .eq("role", "user")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .limit(6);
+        return (rows ?? []).map((r) => String(r.content ?? ""));
+      })();
 
-const recentUserMsgs = await (async () => {
-  const { data: rows } = await db
-    .from("messages")
-    .select("content")
-    .eq("conversation_id", convId)
-    .eq("role", "user")
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(6);
-  return (rows ?? []).map((r) => String(r.content ?? ""));
-})();
+      // ===== 1) decide topic (axis/subject) =====
+      let decision = decideAxisSubject({
+        message,
+        topicsNow: topicMode === "regex" ? topicsNowRegex : [],
+        topicsPrev,
+        prevAssistantMessage,
+        recentUserMsgs,
+        continuationLike,
+        llmNudgeLines: false,
+        llmNudgeReason: "",
+      });
 
-let decision = decideAxisSubject({
-  message,
-  topicsNow: [], // ← 空で渡す
-  topicsPrev,
-  prevAssistantMessage,
-  recentUserMsgs,
-  continuationLike,
-  // NEW: 初期は false
-  llmNudgeLines: false,
-  llmNudgeReason: "",
-});
+      if (topicMode === "llm") {
+        const availableTopics = await fetchAvailableTopics(db);
+        const llm = await decideTopicByLLM({
+          message,
+          prevUserMessage: prevUserMessage ?? null,
+          prevAssistantMessage: prevAssistantMessage ?? null,
+          recentUserMsgs,
+          availableTopics,
+        });
 
-// LLM decision（失敗したら従来にフォールバック）
-if (topicMode === "llm") {
-  const availableTopics = await fetchAvailableTopics(db);
-  const llm = await decideTopicByLLM({
-    message,
-    prevUserMessage: prevUserMessage ?? null,
-    prevAssistantMessage: prevAssistantMessage ?? null,
-    recentUserMsgs,
-    availableTopics,
-  });
+        llmRaw = llm.rawText ?? "";
 
-  if (llm.ok) {
-  // 既存で持ってるやつに合わせて格納
-  llmOk = true;
-  llmIntent = llm.decision.intent;
-  llmConfidence = llm.decision.confidence;
-  llmReason = llm.decision.reason;
-  llmTopicsNow = llm.decision.topicsNow;
+        if (llm.ok) {
+          llmOk = true;
+          llmIntent = llm.decision.intent;
+          llmConfidence = llm.decision.confidence;
+          llmReason = llm.decision.reason;
+          llmTopicsNow = llm.decision.topicsNow ?? [];
+          llmSubject = llm.decision.subjectTopic ?? "";
+          llmAxis = llm.decision.axisTopic ?? "";
+          llmAudit = Boolean(llm.decision.auditAxis);
+          llmNudgeLines = Boolean(llm.decision.nudgeLines);
+          llmNudgeReason = String(llm.decision.nudgeReason ?? "");
 
-  // ★ここが追加：LLMの誘導提案を取り出す
-  const llmNudgeLines = Boolean(llm.decision.nudgeLines);
-  const llmNudgeReason = String(llm.decision.nudgeReason ?? "");
+          decision = decideAxisSubject({
+            message,
+            topicsNow: llmTopicsNow.slice(0, 3),
+            topicsPrev,
+            prevAssistantMessage,
+            recentUserMsgs,
+            continuationLike,
+            llmNudgeLines,
+            llmNudgeReason,
+          });
 
-  // ★decision を LLM情報入りで作り直す（topicsNowもLLMのtopicsNowを渡す）
-  decision = decideAxisSubject({
-    message,
-    topicsNow: llmTopicsNow.slice(0, 3),
-    topicsPrev,
-    prevAssistantMessage,
-    recentUserMsgs,
-    continuationLike,
-
-    llmNudgeLines,
-    llmNudgeReason,
-  });
-} else {
-  llmOk = false;
-  llmErr = llm.error;
-}
-
-
-  llmRaw = llm.rawText ?? "";
-
-  if (llm.ok) {
-    llmOk = true;
-    llmIntent = llm.decision.intent;
-    llmConfidence = llm.decision.confidence;
-    llmReason = llm.decision.reason;
-    llmTopicsNow = llm.decision.topicsNow ?? [];
-
-    decision = {
-      ...decision,
-      subjectTopic: llm.decision.subjectTopic,
-      axisTopic: llm.decision.axisTopic,
-      auditAxis: llm.decision.auditAxis,
-      taxAuditSticky: llm.decision.auditAxis,
-      reason: `llm:${llm.decision.intent}:${llm.decision.confidence.toFixed(2)}:${llm.decision.reason || ""}`,
-    } as any;
-  } else {
-    llmOk = false;
-    llmErr = llm.error;
-  }
-}
-
-const topicsNow =
-  llmOk && topicMode === "llm"
-    ? llmTopicsNow.slice(0, 3)
-    : []; // ← regex fallback しない
-
-           const prevDebug = await fetchPrevDebugLite(db, convId);
-
-      let subjectTopic = decision.subjectTopic || "";
-      let auditAxis = decision.auditAxis;
-
-      // ===== nudge直後の合言葉は「主題固定」で拾う（聞き返し禁止）=====
-const prevNudgeApplied = Boolean(prevDebug?.prevNudgeApplied);
-const prevSubject = String(prevDebug?.subjectTopic ?? "").trim();
-
-// 合言葉（攻め守り／さじかげん 等）を判定：isLineRequest と完全一致させる
-const lineRequestByPhrase = isLineRequest(message);
-
-// 誘導直後に合言葉が来たら、主題が空でも前回主題に固定して Lines を許可
-if (prevNudgeApplied && lineRequestByPhrase && prevSubject) {
-  subjectTopic = prevSubject;
-}
-
-      // ===== ここから追加：履歴借りの暴走を止める =====
-      const bestHit = (topicsNowDbg.hits ?? [])[0] ?? null;
-      const nowTop = String(bestHit?.topic ?? (topicsNow0?.[0] ?? "")).trim();
-      const nowScore = Number(bestHit?.score ?? 0);
-
-      const prevTop = String(prevDebug?.subjectTopic ?? prevDebug?.axisTopic ?? "").trim();
-
-      // 「現発話のトピックが強い」＝スコア>=10（あなたのtopicSignalsは10が強ヒット）
-      const strongNow = Boolean(nowTop) && nowScore >= 10;
-
-      // 直前トピックと違う強トピックが出てるなら、履歴に戻らない
-      const blockHistoryBorrow = strongNow && prevTop && nowTop !== prevTop;
-
-      // subject が空なら、強トピックを採用（税務調査は除外）
-      if (!subjectTopic && strongNow && nowTop !== TOPIC_TAX_AUDIT) {
-        subjectTopic = nowTop;
+          // 最終反映（LLMが言うsubject/axis/auditがあるなら優先）
+          decision = {
+            ...decision,
+            subjectTopic: llmSubject || decision.subjectTopic,
+            axisTopic: llmAxis || decision.axisTopic,
+            auditAxis: llmAudit,
+            taxAuditSticky: llmAudit,
+            reason: `llm:${llmIntent}:${llmConfidence.toFixed(2)}:${llmReason || ""}`,
+          } as any;
+        } else {
+          llmOk = false;
+          llmErr = llm.error;
+        }
       }
-      // ===== ここまで追加 =====
 
-      // ===== implicit shift 時の税務調査 sticky 吸い込み解除 =====
+      const topicsNow =
+        topicMode === "llm"
+          ? (llmOk ? llmTopicsNow.slice(0, 3) : topicsNowRegex)
+          : topicsNowRegex;
+
+      // ===== 2) normalize subject (single source of truth) =====
+      let subjectTopic = String(decision.subjectTopic ?? "").trim();
+      let auditAxis = Boolean(decision.auditAxis);
+
+      // “合言葉の直後” は主題を prev で固定（聞き返し禁止）
+      const prevNudgeApplied = Boolean(prevDebug?.prevNudgeApplied);
+      const prevSubject = String(prevDebug?.subjectTopic ?? "").trim();
+      const lineRequestByPhrase = isLineRequest(message);
+
+      if (!subjectTopic && prevNudgeApplied && lineRequestByPhrase && prevSubject) {
+        subjectTopic = prevSubject;
+      }
+
+      // ★ 根本修正：弱発話/合言葉 で subject が空なら、prevSubject を借りる（KB借りより先）
+      const shouldBorrowSubject =
+        !subjectTopic &&
+        Boolean(prevSubject) &&
+        (followup && (lineRequestByPhrase || isShortAckLike(message) || weakUtterance));
+
+      if (shouldBorrowSubject) {
+        subjectTopic = prevSubject;
+      }
+
+      // implicit shift で sticky を外す
       const hasAuditWordsNow = hasTaxAuditWordsLite(message);
-
       const implicitShiftUnstick =
-        implicitShift &&
-        decision.taxAuditSticky &&
-        !hasAuditWordsNow &&
-        !lineRequest &&
-        !followupExplicit &&
-        !followupOnly;
+        implicitShift && Boolean((decision as any)?.taxAuditSticky) && !hasAuditWordsNow && !lineRequest && !followupExplicit && !followupOnly;
 
       if (implicitShiftUnstick) {
         auditAxis = false;
       }
 
-      // ===== axisTopic 計算（implicit shift では履歴フォールバックしない）=====
-      // 変更：強トピックが出ていて prev と違うなら、履歴フォールバック無効
+      // axisTopic
       const historyAxisRaw = implicitShift ? "" : (inferTopicFromHistory(prevUserMessage, prevAssistantMessage) || "");
-      const historyAxis = blockHistoryBorrow ? "" : historyAxisRaw;
-
       const decisionAxisCandidate = (() => {
-        const x = String(decision.axisTopic ?? "").trim();
+        const x = String((decision as any).axisTopic ?? "").trim();
         if (!x) return "";
         if (x === TOPIC_TAX_AUDIT) return "";
         return x;
       })();
 
-      const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : (subjectTopic || decisionAxisCandidate || historyAxis || "");
+      const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : (subjectTopic || decisionAxisCandidate || historyAxisRaw || "");
 
+      const shifted = implicitShift ? true : (Boolean((decision as any)?.taxAuditSticky) ? false : shiftedRaw);
 
-     
-      const shifted = implicitShift ? true : (decision.taxAuditSticky ? false : shiftedRaw);
-
+      // ===== 3) lens =====
       const lensInputUsePrev = (followupOnly || weakUtterance) && Boolean(prevUserMessage);
       const lensRule: Lens = inferLensWithContext({
-  message,
-  axisTopic,
-  fallbackPrevUser: prevUserMessage ?? null,
-  usePrevInstead: lensInputUsePrev,
-});
+        message,
+        axisTopic,
+        fallbackPrevUser: prevUserMessage ?? null,
+        usePrevInstead: lensInputUsePrev,
+      });
 
-// ===== user input flags =====
-const usedSajikagen = /さじかげん/.test(message ?? "");
+      const usedSajikagen = /さじかげん/.test(message ?? "");
+      const lensLLM = await inferLensByLLM({ message });
 
+      const lensMerged: Lens = lensLLM.confidence >= 0.6 ? lensLLM.lens : lensRule;
+      let lensPre: Lens = lensMerged;
 
-const lensLLM = await inferLensByLLM({
-  message,
-});
+      if (llmIntent === "need_lines") lensPre = "amount";
+      if (llmIntent === "clarify") lensPre = "substance";
 
-// 1) まずは rule と LLM を統合（confidence が弱い時は rule 優先）
-const lensMerged: Lens =
-  lensLLM.confidence >= 0.6 ? lensLLM.lens : lensRule;
+      const lens: Lens = adjustLensByConversation({
+        lens: lensPre,
+        message,
+        subjectTopic,
+        axisTopic,
+        llmIntent,
+      });
 
-// 2) intent による “候補レンズ” の補正（トピック特例なしの強ルール）
-// - need_lines は「金額レンジを出したい」要求として amount を優先候補にする
-// - ただし最終決裁は adjustLensByConversation が戻せる（前提不足なら substance/clarify へ）
-let lensPre: Lens = lensMerged;
+      // ===== 4) lines gating =====
+      const prevWasLines = prevDebug?.path === "followup_lines";
+      const prevLens = (prevDebug?.lens ?? "").trim();
+      const lensChanged = Boolean(prevLens) && prevLens !== lens;
 
-if (llmIntent === "need_lines") {
-  lensPre = "amount";
-}
+      const suppressLinesByShortAck = isShortAckLike(message) && !lineRequest;
+      const allowLinesByContinuation = prevWasLines && isShortAckLike(message);
 
-// clarify は “結論を出さない” が主眼なので、lens は amount に引っ張られないようにする（保険）
-if (llmIntent === "clarify") {
-  // ここは system に寄るより substance の方が安全（前提確認に向く）
-  lensPre = "substance";
-}
+      const lineRequestEffective = (lineRequest || allowLinesByContinuation) && !suppressLinesByShortAck;
 
-// 3) 最終ガード（amount誤爆・system誤誘導など）
-const lens: Lens = adjustLensByConversation({
-  lens: lensPre,
-  message,
-  subjectTopic,
-  axisTopic,
-  llmIntent,
-});
-      
+      // LLMモード：subjectが空なら Lines を出さない（ズレ防止）
+      const linesBlockedNoSubject = topicMode === "llm" && llmOk && lineRequestEffective && !subjectTopic;
 
-// ===== followup_lines クールダウン（1回出したら基本リセット）=====
-const prevWasLines = prevDebug?.path === "followup_lines";
-const prevLens = (prevDebug?.lens ?? "").trim();
-const lensChanged = Boolean(prevLens) && prevLens !== lens;
+      const allowLines = lineRequestEffective && !linesBlockedNoSubject;
 
-// ===== Lines 出力可否（最終判定）=====
-// 方針：🍚🧂（Lines）は「明示要求」or「直前がLinesで継続」のときだけ許可（誤爆ゼロ寄り）
+      if (lineRequestEffective) forceNormalAnswer = false;
 
-// 「よろ/続き」等の短文承諾だけで Lines を誤爆させない
-const suppressLinesByShortAck = isShortAckLike(message) && !lineRequest;
+      const keepLines = lineRequestEffective || lensChanged;
+      const linesKeepReason = keepLines
+        ? lineRequestEffective
+          ? (linesBlockedNoSubject ? "keep:line_request_blocked:llm_no_subject" : "keep:line_request")
+          : `keep:lens_changed:${prevLens}->${lens}`
+        : "cooldown:prev_was_lines";
 
-// 継続の「よろ/続き」で Lines を許可する条件（直前が Lines の時だけ）
-const allowLinesByContinuation = prevWasLines && isShortAckLike(message);
+      const linesCooldown = prevWasLines && !keepLines;
+      if (linesCooldown) forceNormalAnswer = true;
 
-// regex側のlineRequestと会話状態（継続）をここで合流（LLMのneed_linesはLines許可に使わない）
-const lineRequestEffective =
-  (lineRequest || allowLinesByContinuation) && !suppressLinesByShortAck;
-
-// LLMモードで subjectTopic が空なら Lines は出さない（ズレ防止）
-const linesBlockedNoSubject = topicMode === "llm" && llmOk && lineRequestEffective && !subjectTopic;
-
-// これが“唯一のスイッチ”
-const allowLines = lineRequestEffective && !linesBlockedNoSubject;
-
-// Lines を出すときは followup_lines を優先したいので、ここで normal 強制を解除
-// （合言葉があるなら clarify でも解除する）
-if (lineRequestEffective) forceNormalAnswer = false;
-
-const keepLines = lineRequestEffective || lensChanged;
-
-const linesKeepReason = keepLines
-  ? lineRequestEffective
-    ? (linesBlockedNoSubject ? "keep:line_request_blocked:llm_no_subject" : "keep:line_request")
-    : lensChanged
-    ? `keep:lens_changed:${prevLens}->${lens}`
-    : "keep:other"
-  : "cooldown:prev_was_lines";
-
-const linesCooldown = prevWasLines && !keepLines;
-
-
-      if (linesCooldown) {
-        forceNormalAnswer = true;
-      }
-
-      // ===== knowledge fetch（主題 + 税務調査 を同時に拾う）=====
+      // ===== 5) knowledge fetch =====
       const globalRules = await retrieveGlobalRules({ db });
 
+      // topicsNow0 は “KB拾いの補助”として subject/topicNow を使う（空で突っ込まない）
+      const topicsNowForKb = topicsNow.length > 0 ? topicsNow : (subjectTopic ? [subjectTopic] : []);
       let topicKbItems = await retrieveKnowledgeByBuckets({
         db,
-        message,
         auditAxis,
         subjectTopic,
-        topicsNow: topicsNow0,
+        topicsNow: topicsNowForKb,
         maxTotal: 10,
       });
 
-      const shouldBorrowPrevTopic =
-        followup &&
-        topicKbItems.length === 0 &&
-        topicsNow.length === 0 &&
-        Boolean(prevUserMessage) &&
-        (weakUtterance || !shifted);
+      // KB借り（主題は既に借りてるので messageだけ借りる）
+      const shouldBorrowPrevTopicKb =
+        followup && topicKbItems.length === 0 && topicsNow.length === 0 && Boolean(prevUserMessage) && (weakUtterance || !shifted);
 
-      if (shouldBorrowPrevTopic && prevUserMessage) {
+      if (shouldBorrowPrevTopicKb && prevUserMessage) {
         topicKbItems = await retrieveKnowledgeByBuckets({
           db,
-          message: prevUserMessage,
           auditAxis,
           subjectTopic,
-          topicsNow: topicsNow0,
+          topicsNow: topicsNowForKb,
           maxTotal: 10,
         });
       }
@@ -2070,7 +1851,7 @@ const linesCooldown = prevWasLines && !keepLines;
         axis_topic: axisTopic,
         subject_topic: subjectTopic,
         audit_axis: auditAxis,
-         used_sajikagen: usedSajikagen,
+        used_sajikagen: usedSajikagen,
 
         topic_raw: message,
         topic_raw_json: JSON.stringify(message),
@@ -2083,16 +1864,15 @@ const linesCooldown = prevWasLines && !keepLines;
         lines_cooldown_applied: Boolean(linesCooldown),
         lines_keep_reason: linesKeepReason,
         lines_blocked_no_subject: Boolean(linesBlockedNoSubject),
-lines_suppressed_short_ack: Boolean(suppressLinesByShortAck),
+        lines_suppressed_short_ack: Boolean(suppressLinesByShortAck),
 
-
-        borrowed_prev_topic: shouldBorrowPrevTopic,
+        borrowed_prev_topic: Boolean(shouldBorrowSubject),
         weak_utterance: weakUtterance,
         prev_user_head: dbgHead(prevUserMessage ?? "", 80),
         prev_user_len: (prevUserMessage ?? "").length,
 
         kb_bucket_counts: { subject: cSubject, audit: cAudit, other: cOther },
-        tax_audit_sticky_reason: implicitShiftUnstick ? `implicit_shift_unstick:${decision.reason}` : decision.reason,
+        tax_audit_sticky_reason: implicitShiftUnstick ? `implicit_shift_unstick:${(decision as any).reason}` : String((decision as any).reason ?? ""),
 
         clarify_prev_answer: clarifyPrevAnswer,
         clarify_term: clarify.term || "",
@@ -2100,26 +1880,22 @@ lines_suppressed_short_ack: Boolean(suppressLinesByShortAck),
         implicit_shift: Boolean(implicitShift),
         implicit_shift_unstick: Boolean(implicitShiftUnstick),
 
-                topic_mode: topicMode,
+        topic_mode: topicMode,
         llm_topic_ok: llmOk,
         llm_topic_error: llmErr,
         llm_topic_raw: llmRaw ? clampForContext(llmRaw, 800) : "",
         llm_intent: llmIntent,
         llm_confidence: llmConfidence,
         llm_reason: llmReason,
-
-        
       };
 
       meta.lens_rule = lensRule;
-meta.lens_llm = lensLLM.lens;
-meta.lens_llm_confidence = lensLLM.confidence;
-meta.lens_pre = lensPre;
-meta.lens_final = lens;
-meta.nudge_lines_llm = Boolean(decision.nudgeLines);
-meta.nudge_lines_reason = String(decision.nudgeReason ?? "");
-
-
+      meta.lens_llm = lensLLM.lens;
+      meta.lens_llm_confidence = lensLLM.confidence;
+      meta.lens_pre = lensPre;
+      meta.lens_final = lens;
+      meta.nudge_lines_llm = Boolean((decision as any).nudgeLines);
+      meta.nudge_lines_reason = String((decision as any).nudgeReason ?? "");
 
       meta.picked_kb_items = (topicKbItemsForPrompt ?? []).slice(0, 10).map((it) => ({
         id: it.id,
@@ -2132,122 +1908,108 @@ meta.nudge_lines_reason = String(decision.nudgeReason ?? "");
       let usedLinesPick = false;
       let path: DebugTrace["path"] = "normal_llm";
 
-    
       // ===== A) followup_lines =====
-if (allowLines && !forceNormalAnswer) {
+      // 偽Lines根絶：allowLines でも topicForLines が空ならここに入らない（normalへ）
+      if (!answer && allowLines && !forceNormalAnswer && (subjectTopic || axisTopic)) {
         const header = stance === "zubatto" ? "判断の軸だけ整理する。" : "判断の軸だけ整理します。";
+        const topicForLines = subjectTopic || axisTopic;
 
-        const topicsNowEffective = topicsNow.length > 0 ? topicsNow : (subjectTopic ? [subjectTopic] : []);
-        const topicForLines = subjectTopic || axisTopic || topicsNowEffective[0] || "";
+        let built: string | null = null;
 
-        if (topicForLines) {
-          let built: string | null = null;
+        const picked = await retrieveKnowledgeLines({
+          db,
+          topic: topicForLines,
+          lens,
+          messageForMatch: message,
+        });
 
-          const picked = await retrieveKnowledgeLines({
-            db,
-            topic: topicForLines,
-            lens,
-            messageForMatch: message,
+        built = buildFollowupAnswerFromLines(picked);
+        if (built) {
+          usedLinesPick = true;
+          path = "followup_lines";
+          meta.picked_lines = buildPickedLinesMeta(picked);
+        }
+
+        if (!built) {
+          const hit = buildFollowupAnswerFromKbWithPick(topicKbItems);
+          if (hit) {
+            built = hit.text;
+            path = "followup_kb";
+            meta.picked_qa =
+              hit.picked.kind === "qa"
+                ? [{ id: hit.picked.id, title: hit.picked.title, priority: hit.picked.priority, topic: hit.picked.topic }]
+                : meta.picked_qa;
+          }
+        }
+
+        if (!built) {
+          const fb = fallbackAttackDefense(topicForLines, lens);
+          built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
+          path = "followup_fallback";
+        }
+
+        // 最終検品：片側欠損禁止
+        const builtOk =
+          !!built &&
+          /🍚\s*攻め\s*[:：]\s*\S/.test(built) &&
+          /🧂\s*守り\s*[:：]\s*\S/.test(built);
+
+        if (!builtOk) {
+          usedLinesPick = false;
+          meta.picked_lines = [];
+          const fb = fallbackAttackDefense(topicForLines, lens);
+          built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
+          path = "followup_fallback";
+        }
+
+        const pre = buildLinesPreamble({ topic: topicForLines, axisTopic, dialect, stance, qa: linesPrefaceQa });
+        const footer = followupFooter(axisTopic, dialect, stance);
+
+        const inquiryOverride =
+          auditAxis && subjectTopic && AUDIT_OVERLAY_TOPICS.has(subjectTopic)
+            ? inquiryLineWithAuditCTA(dialect, stance, subjectTopic)
+            : inquiryLine(dialect, stance);
+
+        const parts: string[] = [];
+        parts.push(header, "", pre.text, "", built);
+        if (footer) parts.push("", footer);
+        parts.push("", inquiryOverride);
+
+        meta.built_head = dbgHead(built ?? "", 240);
+
+        answer = postProcessAnswer(parts.join("\n").trim(), dialect, stance, {
+          usedKnowledge: true,
+          allowAttackDefenseDetail: true,
+          inquiryOverride,
+        });
+
+        const reAttack = /(^|\n)\s*🍚\s*攻め\s*[:：]\s*\S/;
+        const reDefense = /(^|\n)\s*🧂\s*守り\s*[:：]\s*\S/;
+        if (!reAttack.test(answer) || !reDefense.test(answer)) {
+          usedLinesPick = false;
+          meta.picked_lines = [];
+          const fb = fallbackAttackDefense(topicForLines, lens);
+          const built2 = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
+          meta.built_head = dbgHead(built2, 240);
+          path = "followup_fallback";
+
+          const parts2: string[] = [];
+          parts2.push(header, "", pre.text, "", built2);
+          if (footer) parts2.push("", footer);
+          parts2.push("", inquiryOverride);
+
+          answer = postProcessAnswer(parts2.join("\n").trim(), dialect, stance, {
+            usedKnowledge: true,
+            allowAttackDefenseDetail: true,
+            inquiryOverride,
           });
-
-          built = buildFollowupAnswerFromLines(picked);
-          if (built) {
-            usedLinesPick = true;
-            path = "followup_lines";
-            meta.picked_lines = buildPickedLinesMeta(picked);
-          }
-
-          if (!built) {
-            const hit = buildFollowupAnswerFromKbWithPick(topicKbItems);
-            if (hit) {
-              built = hit.text;
-              path = "followup_kb";
-              meta.picked_qa =
-                hit.picked.kind === "qa"
-                  ? [{ id: hit.picked.id, title: hit.picked.title, priority: hit.picked.priority, topic: hit.picked.topic }]
-                  : meta.picked_qa;
-            }
-          }
-
-          if (!built) {
-  const fb = fallbackAttackDefense(topicForLines, lens);
-  built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
-  meta.built_head = dbgHead(built ?? "", 240);
-  path = "followup_fallback";
-}
-
-
-          // built 最終検品：🍚🧂片側欠損は禁止（混線防止）
-const builtOk =
-  !!built &&
-  /🍚\s*攻め\s*[:：]\s*\S/.test(built) &&
-  /🧂\s*守り\s*[:：]\s*\S/.test(built);
-
-if (!builtOk) {
-  usedLinesPick = false;
-  meta.picked_lines = [];
-  const fb = fallbackAttackDefense(topicForLines, lens);
-  built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
-  meta.built_head = dbgHead(built ?? "", 240);
-  path = "followup_fallback";
-}
-
-
-
-          const pre = buildLinesPreamble({ topic: topicForLines, axisTopic, dialect, stance, qa: linesPrefaceQa });
-          const footer = followupFooter(axisTopic, dialect, stance);
-
-          const inquiryOverride =
-            auditAxis && subjectTopic && AUDIT_OVERLAY_TOPICS.has(subjectTopic)
-              ? inquiryLineWithAuditCTA(dialect, stance, subjectTopic)
-              : inquiryLine(dialect, stance);
-
-          const parts: string[] = [];
-          parts.push(header, "", pre.text, "", built);
-          if (footer) parts.push("", footer);
-          parts.push("", inquiryOverride);
-
-          // ★ここに追加：built が最終確定したら常に記録
-meta.built_head = dbgHead(built ?? "", 240);
-
-answer = postProcessAnswer(parts.join("\n").trim(), dialect, stance, {
-  usedKnowledge: true,
-  allowAttackDefenseDetail: true,
-  inquiryOverride,
-});
-
-// ===== 最終出力検品：🍚🧂どっちか欠けたら即fallbackで作り直す（最後の砦）=====
-const reAttack = /(^|\n)\s*🍚\s*攻め\s*[:：]\s*\S/;
-const reDefense = /(^|\n)\s*🧂\s*守り\s*[:：]\s*\S/;
-const finalOk = reAttack.test(answer) && reDefense.test(answer);
-
-if (!finalOk) {
-  usedLinesPick = false;
-  meta.picked_lines = [];
-
-  const fb = fallbackAttackDefense(topicForLines, lens);
-  const built2 = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
-  meta.built_head = dbgHead(built2, 240);
-  path = "followup_fallback";
-
-  const parts2: string[] = [];
-  parts2.push(header, "", pre.text, "", built2);
-  if (footer) parts2.push("", footer);
-  parts2.push("", inquiryOverride);
-
-  answer = postProcessAnswer(parts2.join("\n").trim(), dialect, stance, {
-    usedKnowledge: true,
-    allowAttackDefenseDetail: true,
-    inquiryOverride,
-  });
-}
         }
       }
 
-      
-      // ===== B) topic未確定だけ clarify =====
-      // ※「購入とリースどっち」みたいに具体的な質問は、topicが取れなくても無理に確認を要求しない（弱発話の時だけ）
-      const needTopicClarify = !axisTopic && topicsNow.length === 0 && topicKbItems.length === 0 && (followupOnly || weakUtterance);
+      // ===== B) topic未確定だけ clarify（弱発話の時だけ）=====
+      const needTopicClarify =
+        !answer && !axisTopic && !subjectTopic && topicsNow.length === 0 && topicKbItemsForPrompt.length === 0 && (followupOnly || weakUtterance);
+
       const topicClarifyInquiry =
         "🔎確認 どの話の相談かだけ教えて（例：交際費/出張手当/外注/家事按分/福利厚生/役員報酬/車両/消費税/税務調査/退職金/不動産/相続・承継）。";
 
@@ -2259,49 +2021,34 @@ if (!finalOk) {
       });
 
       const bestQa = pickedQa.qa;
-      
-      // ===== qa_more: 2枚目QA（priority50側）を使って“続き”を出す =====
-const isQaMore = topicMode === "llm" && llmOk && llmIntent === "qa_more";
 
-let bestQaForKeypoint = bestQa;
+      const isQaMore = topicMode === "llm" && llmOk && llmIntent === "qa_more";
+      let bestQaForKeypoint = bestQa;
 
-// qa_more の時だけ、picked_qa の2枚目を優先（あれば）
-if (isQaMore) {
-  const picked = (pickedQaForPrompt ?? []).filter((x) => x.kind === "qa");
-  if (picked.length >= 2) {
-    // pickedQaForPrompt は priority降順なので、2枚目を採用
-    bestQaForKeypoint = picked[1];
-  }
-}
+      if (isQaMore) {
+        const picked = (pickedQaForPrompt ?? []).filter((x) => x.kind === "qa");
+        if (picked.length >= 2) bestQaForKeypoint = picked[1];
+      }
 
-const qaKeyPointRule = bestQaForKeypoint ? qaToKeyPointRule(bestQaForKeypoint, 2) : null;
-
-if (qaKeyPointRule && bestQaForKeypoint) {
-  meta.qa_keypoint_used_title = bestQaForKeypoint.title;
-  meta.qa_keypoint_used = qaKeyPointRule;
-  meta.qa_pick_reason = isQaMore ? `${pickedQa.reason}|qa_more:second_qa` : pickedQa.reason;
-}
+      const qaKeyPointRule = bestQaForKeypoint ? qaToKeyPointRule(bestQaForKeypoint, 2) : null;
+      if (qaKeyPointRule && bestQaForKeypoint) {
+        meta.qa_keypoint_used_title = bestQaForKeypoint.title;
+        meta.qa_keypoint_used = qaKeyPointRule;
+        meta.qa_pick_reason = isQaMore ? `${pickedQa.reason}|qa_more:second_qa` : pickedQa.reason;
+      }
 
       // ===== C) normal_llm =====
       if (!answer) {
         const usedKnowledge = topicKbItemsForPrompt.length > 0;
-       // Lines（🍚🧂）は allowLines（= 明示要求/継続）でのみ許可する。
-// LLMの need_lines は「勝手にLinesを許可」しない（誤爆根絶）。
-const wantLinesByIntent = false;
 
-const allowAttackDefenseDetail =
-  allowLines && lineRequestEffective; // ← “ユーザー明示 or 継続”が前提
+        const allowAttackDefenseDetail = allowLines && lineRequestEffective;
+        const allowAttackDefenseDetailEffective = allowAttackDefenseDetail && !linesCooldown && !forceNormalAnswer;
 
-const allowAttackDefenseDetailEffective =
-  allowAttackDefenseDetail && !linesCooldown && !forceNormalAnswer;
-
-const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefenseDetailEffective });
-
+        const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefenseDetailEffective });
 
         const kbGlobalBlock = formatKnowledgeBlock(globalRules);
         const kbTopicBlock = formatKnowledgeBlock(topicKbItemsForPrompt);
 
-        
         const ambiguityBoost = buildAmbiguityBoostRules(message);
         const styleRules = buildStyleRules(dialect, stance);
         const contextLines = await buildConversationContext({ db, convId });
@@ -2335,16 +2082,14 @@ const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefe
             ? ["重要：顧問税理士がいる前提。税務調査の初動連絡は税理士宛/会社宛どちらもあり得るが、社長が単独で抱えない。「税理士に確認して折り返す」でOK。"]
             : [];
 
-
         const clarifyBias =
-  topicMode === "llm" && llmOk && llmIntent === "clarify"
-    ? [
-        "重要：主語が特定できていない。特定トピック（交際費・外注・出張手当など）の一般論・金額例・セーフ/アウト判断を出さない。一般整理は抽象度高く2行まで。",
-        "clarify では『〜円まで』など数値の線引きを書かない。書くのは『判断軸』と『どの話かの確認』だけ。",
-        "一般整理は2行までにして、最後の🔎確認で「何の話の線引きか」を選択肢で1行だけ促す（例：交際費/外注/出張手当/家事按分/不動産/役員報酬/消費税/税務調査）。",
-      ]
-    : [];
-
+          topicMode === "llm" && llmOk && llmIntent === "clarify"
+            ? [
+                "重要：主語が特定できていない。特定トピック（交際費・外注・出張手当など）の一般論・金額例・セーフ/アウト判断を出さない。一般整理は抽象度高く2行まで。",
+                "clarify では『〜円まで』など数値の線引きを書かない。書くのは『判断軸』と『どの話かの確認』だけ。",
+                "一般整理は2行までにして、最後の🔎確認で「何の話の線引きか」を選択肢で1行だけ促す（例：交際費/外注/出張手当/家事按分/不動産/役員報酬/消費税/税務調査）。",
+              ]
+            : [];
 
         const promptPartsBase: PromptParts = {
           context: contextLines,
@@ -2365,7 +2110,6 @@ const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefe
           guardrails: gr.action === "inject" ? gr.guardrailLines : [],
         };
 
-
         const inquiryOverride =
           needTopicClarify
             ? topicClarifyInquiry
@@ -2374,63 +2118,55 @@ const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefe
             : null;
 
         answer = await generateAnswerStrict({
-  message,
-  promptPartsBase,
-  dialect,
-  stance,
-  usedKnowledge,
-  allowAttackDefenseDetail: allowAttackDefenseDetailEffective,
-  inquiryOverride,
-  llmIntent: (topicMode === "llm" && llmOk ? llmIntent : null),
-});
+          message,
+          promptPartsBase,
+          dialect,
+          stance,
+          usedKnowledge,
+          allowAttackDefenseDetail: allowAttackDefenseDetailEffective,
+          inquiryOverride,
+          llmIntent: (topicMode === "llm" && llmOk ? llmIntent : null),
+        });
 
         path = "normal_llm";
       }
 
       answer = stripInternalLeaks(answer);
-// ===== nudge (catchphrase) gate =====
-const alreadyHasLines = meta.answer_has_attack_plain || meta.answer_has_defense_plain;
-const alreadyPrompted = /攻め守りで|さじかげんよろ|さじかげんよろしく|さじかげん/.test(answer);
 
-// LLM提案（topicMode=llm のときだけ）
-const wantNudgeByLLM = topicMode === "llm" && llmOk && Boolean(decision.nudgeLines);
+      // ===== nudge (catchphrase) gate =====
+      const reAttack = /(^|\n)\s*🍚\s*攻め\s*[:：]\s*\S/;
+      const reDefense = /(^|\n)\s*🧂\s*守り\s*[:：]\s*\S/;
+      meta.answer_has_rice = answer.includes("🍚");
+      meta.answer_has_salt = answer.includes("🧂");
+      meta.answer_has_attack_plain = reAttack.test(answer);
+      meta.answer_has_defense_plain = reDefense.test(answer);
+      meta.answer_head = dbgHead(answer, 200);
 
-// サーバー最終決裁（誤爆止め）
-const allowNudge =
-  wantNudgeByLLM &&
-  !alreadyHasLines &&                 // すでに🍚🧂出てるなら誘導いらん
-  !alreadyPrompted &&                 // 二重表示防止
-  llmIntent !== "clarify" &&          // 主語確認中は邪魔
-  !weakUtterance &&                   // 「よろ」系は誘導しない
-  !isShortAckLike(message);           // 念のため
+      const alreadyHasLines = meta.answer_has_attack_plain || meta.answer_has_defense_plain;
+      const alreadyPrompted = /攻め守りで|さじかげんよろ|さじかげんよろしく|さじかげん/.test(answer);
 
-if (allowNudge) {
-  answer = `${answer}\n\n${catchphraseFor(dialect, stance)}`;
-  meta.nudge_lines_applied = true;
-} else {
-  meta.nudge_lines_applied = false;
-}
+      const wantNudgeByLLM = topicMode === "llm" && llmOk && Boolean((decision as any).nudgeLines);
 
+      const allowNudge =
+        wantNudgeByLLM &&
+        !alreadyHasLines &&
+        !alreadyPrompted &&
+        llmIntent !== "clarify" &&
+        !weakUtterance &&
+        !isShortAckLike(message);
 
-// ===== implicit shift で sticky を外した場合：税務調査エッセンスを固定1行だけ添える =====
-const prevAxisTopic = (prevDebug?.axisTopic ?? "").trim();
-if (implicitShiftUnstick && prevAxisTopic === TOPIC_TAX_AUDIT) {
-  answer = insertLineBeforeInquiry(answer, auditEssenceOneLine(dialect, stance));
-  meta.audit_essence_injected = true;
-}
+      if (allowNudge) {
+        answer = `${answer}\n\n${catchphraseFor(dialect, stance)}`;
+        meta.nudge_lines_applied = true;
+      } else {
+        meta.nudge_lines_applied = false;
+      }
 
-// ===== answer sanity (server side) =====
-const reAttack = /(^|\n)\s*🍚\s*攻め\s*[:：]\s*\S/;
-const reDefense = /(^|\n)\s*🧂\s*守り\s*[:：]\s*\S/;
-
-meta.answer_has_rice = answer.includes("🍚");   // ←これは「絵文字がどっかに居る」判定として残すならOK
-meta.answer_has_salt = answer.includes("🧂");
-
-meta.answer_has_attack_plain = reAttack.test(answer);   // ← “plain” ちゃうけど互換優先ならここに上書き
-meta.answer_has_defense_plain = reDefense.test(answer);
-
-meta.answer_head = dbgHead(answer, 200);
-
+      const prevAxisTopic = (prevDebug?.axisTopic ?? "").trim();
+      if (implicitShiftUnstick && prevAxisTopic === TOPIC_TAX_AUDIT) {
+        answer = insertLineBeforeInquiry(answer, auditEssenceOneLine(dialect, stance));
+        meta.audit_essence_injected = true;
+      }
 
       const trace: DebugTrace = {
         convId,
