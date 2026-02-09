@@ -826,11 +826,9 @@ async function retrieveKnowledgeByBuckets(params: {
   // buckets
   const subjectItems = wantsBuckets ? await fetchTopic(subjectTopic, quotaSubject) : [];
   const auditItems = wantsBuckets ? await fetchTopic(TOPIC_TAX_AUDIT, quotaAudit) : [];
-  const otherTopics = (topicsNow ?? []).filter(
-    (t) => t && t !== subjectTopic && t !== TOPIC_TAX_AUDIT
-  );
-
-  const otherItems = await fetchTopics(otherTopics, quotaOther);
+  const otherTopics = (topicsNow ?? []).filter((t) => t && t !== TOPIC_TAX_AUDIT);
+  const topicsForNonBucket = Array.from(new Set([subjectTopic, ...otherTopics].filter(Boolean)));
+  const otherItems = await fetchTopics(wantsBuckets ? otherTopics : topicsForNonBucket, quotaOther);
 
   let merged = uniqById([...subjectItems, ...auditItems, ...otherItems]).slice(0, maxTotal);
 
@@ -1648,6 +1646,45 @@ async function fetchPrevDebugLite(
   }
 }
 
+async function fetchPrevDebugForPrevUserMessage(
+  db: any,
+  convId: string,
+  prevUserMessage: string | null
+): Promise<{ path: string; lens: string; subjectTopic: string; axisTopic: string; prevNudgeApplied: boolean } | null> {
+  const msg = (prevUserMessage ?? "").trim();
+  if (!msg) return null;
+  const targetJson = JSON.stringify(msg);
+  try {
+    // 直近のdebugを少し多めに見て、直前ユーザー発話に対応するものを拾う
+    const { data } = await db
+      .from("chat_debug_events")
+      .select("path, lens, meta, created_at")
+      .eq("conversation_id", convId)
+      .order("created_at", { ascending: false })
+      .limit(25);
+
+    const rows = Array.isArray(data) ? data : [];
+    const hit = rows.find((r) => {
+      const meta = (r?.meta ?? {}) as any;
+      const rawJson = String(meta.topic_raw_json ?? "");
+      const raw = String(meta.topic_raw ?? "");
+      return rawJson === targetJson || raw === msg;
+    });
+    if (!hit) return null;
+    const meta = (hit.meta ?? {}) as any;
+    return {
+      path: String(hit.path ?? ""),
+      lens: String(hit.lens ?? ""),
+      subjectTopic: String(meta.subject_topic ?? ""),
+      axisTopic: String(meta.axis_topic ?? ""),
+      prevNudgeApplied: Boolean(meta.nudge_lines_applied),
+    };
+  } catch {
+    return null;
+  }
+}
+
+
 /** ===== footer (tax audit axis) ===== */
 function followupFooter(axisTopic: string, dialect: Dialect, stance: Stance): string | null {
   if (axisTopic !== TOPIC_TAX_AUDIT) return null;
@@ -1787,7 +1824,10 @@ export async function POST(req: Request) {
         return prevRows?.[0]?.content ?? null;
       })();
 
-      const prevDebug = await fetchPrevDebugLite(db, convId);
+       // 直前ユーザー発話に紐づくdebugを優先（混線防止）。無ければ従来の最新1件。
+      const prevDebug =
+        (await fetchPrevDebugForPrevUserMessage(db, convId, prevUserMessage)) ??
+        (await fetchPrevDebugLite(db, convId));
 
       const clarify = detectClarifyPrevAnswer(message, prevAssistantMessage);
       const lineRequest = isLineRequest(message);
@@ -2154,11 +2194,16 @@ export async function POST(req: Request) {
         meta.lens_for_lines = lens;
         meta.lines_pick_attempted = true;
 
+        
+// 金額レンジの続きは amount Lines を優先する（回答のlensとは責務を分ける）
+        const lensForLines: Lens = isAmountAsk(lensMessage) ? "amount" : lens;
+        meta.lens_for_lines = lensForLines;
+
         const picked = await retrieveKnowledgeLines({
           db,
           topic: topicForLines,
-          lens,
-          messageForMatch: lensMessage, // ★ followup は前の実質問をマッチ材料にする
+          lens: lensForLines,
+          messageForMatch: lensMessage, // followupは「実質問」をマッチ材料にする
         });
 
         meta.lines_pick_lens_used = picked.lensUsed;
@@ -2234,12 +2279,29 @@ export async function POST(req: Request) {
         if (picked.length >= 2) bestQaForKeypoint = picked[1];
       }
 
-      const qaKeyPointRule = bestQaForKeypoint ? qaToKeyPointRule(bestQaForKeypoint, 2) : null;
+ // ===== QA採用スイッチ（自然会話のため）=====
+      const qaUse =
+        topicKbItemsForPrompt.length > 0 &&
+        !weakUtterance &&
+        !isShortAckLike(message) &&
+        (
+          auditAxis ||
+          llmIntent === "qa_more" ||
+          llmIntent === "qa_first" ||
+          llmIntent === "clarify" ||
+          isAmountAsk(lensMessage) ||
+          /(安全|危ない|リスク|グレー|大丈夫|アウト|セーフ|どこまで|上限|限界|レンジ|幅)/.test(lensMessage)
+        );
+
+      const qaKeyPointRule = (qaUse && bestQaForKeypoint) ? qaToKeyPointRule(bestQaForKeypoint, 2) : null;
       if (qaKeyPointRule && bestQaForKeypoint) {
         meta.qa_keypoint_used_title = bestQaForKeypoint.title;
         meta.qa_keypoint_used = qaKeyPointRule;
         meta.qa_pick_reason = isQaMore ? `${pickedQa.reason}|qa_more:second_qa` : pickedQa.reason;
       }
+
+           
+
 
       // ===== C) normal_llm（LLMは🍚🧂を生成しない。LinesはLinesのみ） =====
       if (!answer) {
@@ -2251,7 +2313,7 @@ export async function POST(req: Request) {
         const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefenseDetailEffective });
 
         const kbGlobalBlock = formatKnowledgeBlock(globalRules);
-        const kbTopicBlock = formatKnowledgeBlock(topicKbItemsForPrompt);
+        const kbTopicBlock = qaUse ? formatKnowledgeBlock(topicKbItemsForPrompt) : "";
 
         const ambiguityBoost = buildAmbiguityBoostRules(message);
         const styleRules = buildStyleRules(dialect, stance);
