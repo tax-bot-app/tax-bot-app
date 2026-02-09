@@ -196,6 +196,7 @@ type DebugMeta = {
   subject_topic?: string;
   axis_topic?: string;
   audit_axis?: boolean;
+  prefer_rule_lens?: boolean;
 
   borrowed_prev_topic?: boolean;
   implicit_shift?: boolean;
@@ -209,6 +210,7 @@ type DebugMeta = {
   lens_llm_confidence?: number;
   lens_pre?: Lens;
   lens_final?: Lens;
+  
 
   // ===== lines gating / pick =====
   line_request_effective?: boolean;
@@ -2013,9 +2015,20 @@ export async function POST(req: Request) {
       const usedSajikagen = /さじかげん/.test(message ?? "");
 
       // ★ followup の合言葉は “lensMessage（前の実質問）” を見て判定する
-      const lensLLM = await inferLensByLLM({ message: lensMessage });
+       const lensLLM = await inferLensByLLM({ message: lensMessage });
 
-      const lensMerged: Lens = lensLLM.confidence >= 0.6 ? lensLLM.lens : lensRule;
+      // ★ lensブレ対策：
+      // followup/弱発話は「レンズ再推定」ではなく「前の実質問を引き継ぐ」場面。
+      // LLM lens を採用すると system に誤爆しやすいので、ここは lensRule を優先する。
+      const preferRuleLens =
+        weakUtterance ||
+        followupOnly ||
+        followupPhase ||
+        lineRequest ||
+        isShortAckLike(message);
+
+      const lensMerged: Lens =
+       preferRuleLens ? lensRule : (lensLLM.confidence >= 0.6 ? lensLLM.lens : lensRule);
       let lensPre: Lens = lensMerged;
 
       // need_lines でも「金額相談の根拠」がある時だけ amount を強める（無条件上書きはしない）
@@ -2126,6 +2139,7 @@ export async function POST(req: Request) {
         subject_topic: subjectTopic,
         axis_topic: axisTopic,
         audit_axis: auditAxis,
+        prefer_rule_lens: preferRuleLens,
 
         borrowed_prev_topic: Boolean(shouldBorrowSubject),
         implicit_shift: Boolean(implicitShift),
