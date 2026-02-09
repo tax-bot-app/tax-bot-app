@@ -1104,8 +1104,20 @@ function hasAttackOrDefense(answer: string): boolean {
 function isCatchphraseLine(line: string): boolean {
   const t = line.trim();
   if (!t) return false;
-  if (t.includes("とはいえ")) return true;
-  if (t.includes("税務の世界") && t.includes("答え")) return true;
+   function isCatchphraseLine(line: string): boolean {
+   const t = line.trim();
+   if (!t) return false;
+  // 🍚🧂の本文に「とはいえ」が混ざるのは普通に起こる。
+  // Linesの行まで消すと片側欠損になるので除外する。
+  if (t.startsWith("🍚") || t.startsWith("🧂")) return false;
+  if (t.includes("🍚攻め") || t.includes("🧂守り")) return false;
+
+  // 決めゼリフ“単独行”だけを除去する（本文内の語は残す）
+  if (/^とはいえ[、,\s]/.test(t)) return true;
+  if (/税務の世界.*答え/.test(t) && !/[。！？]/.test(t.replace(/税務の世界.*答え/, ""))) return true;
+   return false;
+ }
+
   return false;
 }
 
