@@ -56,7 +56,9 @@ function safeStr(x: unknown): string {
   return typeof x === "string" ? x : "";
 }
 function isUuid(s: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    s
+  );
 }
 function limitFromPlan(plan: string): number {
   switch (plan) {
@@ -84,8 +86,12 @@ function codepointsTail(s: string, n = 24): string {
   return tail
     .map((ch) => {
       const cp = ch.codePointAt(0);
-      const hex = cp === undefined ? "??" : "U+" + cp.toString(16).toUpperCase().padStart(4, "0");
-      const visible = ch === " " ? "␠" : ch === "\n" ? "␤" : ch === "\t" ? "␉" : ch;
+      const hex =
+        cp === undefined
+          ? "??"
+          : "U+" + cp.toString(16).toUpperCase().padStart(4, "0");
+      const visible =
+        ch === " " ? "␠" : ch === "\n" ? "␤" : ch === "\t" ? "␉" : ch;
       return `${visible}:${hex}`;
     })
     .join(" ");
@@ -109,11 +115,21 @@ type ChatRes =
       conversation_id: string | null;
       message: string;
     }
-  | { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
+  | {
+      ok: false;
+      error: string;
+      used_talks?: number | null;
+      limit_talks?: number | null;
+    };
 
 type Dialect = "kansai" | "standard";
 type Stance = "zubatto" | "sanbo";
-type MsgMini = { id: string; role: "user" | "assistant"; content: string; created_at: string };
+type MsgMini = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
 
 type StanceAD = "attack" | "defense";
 type RoleKL = "user" | "internal";
@@ -123,7 +139,7 @@ type KnowledgeLine = {
   topic: string;
   stance: StanceAD;
   lens: Lens;
-  role?: RoleKL;
+  role?: RoleKL | null;
   text: string;
   priority: number;
 };
@@ -141,57 +157,34 @@ type KnowledgeItem = {
 
 // ===== Debug meta =====
 type PickedQaMeta = { id: string; title: string; priority: number; topic: string };
-type PickedLineMeta = { id: string; topic: string; lens: Lens; stance: StanceAD; priority: number; role?: RoleKL };
+type PickedLineMeta = {
+  id: string;
+  topic: string;
+  lens: Lens;
+  stance: StanceAD;
+  priority: number;
+  role?: RoleKL | null;
+};
 
 type DebugMeta = {
-  picked_qa?: PickedQaMeta[];
-  picked_lines?: PickedLineMeta[];
-
-  axis_topic?: string;
-  subject_topic?: string;
-  audit_axis?: boolean;
-  used_sajikagen?: boolean;
-
-  borrowed_prev_topic?: boolean;
-  weak_utterance?: boolean;
-  prev_user_head?: string;
-  prev_user_len?: number;
-
-  qa_keypoint_used_title?: string;
-  qa_keypoint_used?: string;
-  qa_pick_reason?: string;
-
-  kb_bucket_counts?: { subject: number; audit: number; other: number };
-  picked_kb_items?: Array<{ id: string; kind: "rule" | "qa" | "example"; topic: string; title: string; priority: number }>;
-
-  topic_normalized?: string;
-  topic_hits?: any;
+  // ===== 入力/前後関係 =====
   topic_raw?: string;
   topic_raw_json?: string;
   topic_codepoints_tail?: string;
+  topic_normalized?: string;
+  topic_hits?: any;
 
-  lens_rule?: Lens;
-  lens_llm?: Lens;
-  lens_llm_confidence?: number;
-  lens_pre?: Lens;
-  lens_final?: Lens;
-
+  prev_user_head?: string;
+  prev_user_len?: number;
   prev_debug_path?: string;
   prev_debug_lens?: string;
-  lines_cooldown_applied?: boolean;
-  lines_keep_reason?: string;
-  lines_blocked_no_subject?: boolean;
-  lines_suppressed_short_ack?: boolean;
 
-  tax_audit_sticky_reason?: string;
-
+  weak_utterance?: boolean;
   clarify_prev_answer?: boolean;
   clarify_term?: string;
   clarify_matched?: string;
-  implicit_shift?: boolean;
-  implicit_shift_unstick?: boolean;
-  audit_essence_injected?: boolean;
 
+  // ===== topic decision =====
   topic_mode?: "regex" | "llm";
   llm_topic_ok?: boolean;
   llm_topic_error?: string;
@@ -200,13 +193,66 @@ type DebugMeta = {
   llm_confidence?: number;
   llm_reason?: string;
 
+  subject_topic?: string;
+  axis_topic?: string;
+  audit_axis?: boolean;
+
+  borrowed_prev_topic?: boolean;
+  implicit_shift?: boolean;
+  implicit_shift_unstick?: boolean;
+  tax_audit_sticky_reason?: string;
+
+  // ===== lens decision =====
+  lens_message_head?: string;
+  lens_rule?: Lens;
+  lens_llm?: Lens;
+  lens_llm_confidence?: number;
+  lens_pre?: Lens;
+  lens_final?: Lens;
+
+  // ===== lines gating / pick =====
+  line_request_effective?: boolean;
+  allow_lines?: boolean;
+
+  lines_keep_reason?: string;
+  lines_cooldown_applied?: boolean;
+  lines_blocked_no_subject?: boolean;
+  lines_suppressed_short_ack?: boolean;
+
+  topic_for_lines?: string;
+  lens_for_lines?: Lens;
+  lines_pick_attempted?: boolean;
+  lines_pick_success?: boolean;
+  lines_pick_lens_used?: Lens | null;
+
+  picked_lines?: PickedLineMeta[];
+
+  // ===== knowledge/qa =====
+  kb_bucket_counts?: { subject: number; audit: number; other: number };
+  picked_kb_items?: Array<{
+    id: string;
+    kind: "rule" | "qa" | "example";
+    topic: string;
+    title: string;
+    priority: number;
+  }>;
+
+  picked_qa?: PickedQaMeta[];
+  qa_keypoint_used_title?: string;
+  qa_keypoint_used?: string;
+  qa_pick_reason?: string;
+
+  // ===== output/debug =====
+  used_sajikagen?: boolean;
+  audit_essence_injected?: boolean;
+
+  built_head?: string;
+
   answer_has_rice?: boolean;
   answer_has_salt?: boolean;
   answer_has_attack_plain?: boolean;
   answer_has_defense_plain?: boolean;
   answer_head?: string;
-
-  built_head?: string;
 
   nudge_lines_llm?: boolean;
   nudge_lines_reason?: string;
@@ -228,7 +274,7 @@ type DebugTrace = {
   forceNormalAnswer: boolean;
   usedKnowledge: boolean;
   usedLinesPick: boolean;
-  path: "followup_lines" | "followup_kb" | "followup_fallback" | "normal_llm";
+  path: "followup_lines" | "normal_llm";
   meta?: DebugMeta;
 };
 
@@ -251,35 +297,53 @@ function hasTaxAuditWordsLite(text: string): boolean {
 function isShortAckLike(message: string): boolean {
   const m = (message ?? "").trim();
   if (!m) return false;
-  if (/^(よろ|よろしく|よろしこ|よろ！|よろー|よろです！|頼む|たのむ|お願い|おねがい|おねげぇ|つづき|続き)$/.test(m)) return true;
+  if (
+    /^(よろ|よろしく|よろしこ|よろ！|よろー|よろです！|頼む|たのむ|お願い|おねがい|おねげぇ|つづき|続き)$/.test(
+      m
+    )
+  )
+    return true;
   if (m.length <= 6 && /^[ぁ-んー！!？?]+$/.test(m)) return true;
   return false;
 }
 
 function startsWithContinuationPrefix(message: string): boolean {
   const m = (message ?? "").trim();
-  return /^(それ|その|じゃあ|じゃ|ほな|で|なら|今の|さっき|続き|つづき|あと|それで)/.test(m);
+  return /^(それ|その|じゃあ|じゃ|ほな|で|なら|今の|さっき|続き|つづき|あと|それで)/.test(
+    m
+  );
 }
 function hasGenericContinuationCue(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(どうすれば|どうしたら|どう対応|何したら|何から|結局|つまり|次(は)?|このあと|具体的に|要は)/.test(m);
+  return /(どうすれば|どうしたら|どう対応|何したら|何から|結局|つまり|次(は)?|このあと|具体的に|要は)/.test(
+    m
+  );
 }
 function looksQuestionish(message: string): boolean {
   const m = (message ?? "").trim();
   if (!m) return false;
   if (/[?？]/.test(m)) return true;
-  return /(何|なに|どう|どっち|どちら|いつ|どこ|だれ|誰|なぜ|なんで|意味|どゆ|どういう|って|とは)/.test(m);
+  return /(何|なに|どう|どっち|どちら|いつ|どこ|だれ|誰|なぜ|なんで|意味|どゆ|どういう|って|とは)/.test(
+    m
+  );
 }
 function tokens3(s: string): string[] {
-  return Array.from((s ?? "").matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((m) => m[0]);
+  return Array.from((s ?? "").matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map(
+    (m) => m[0]
+  );
 }
 function extractClarifyTerm(message: string): string | null {
   const raw = (message ?? "").trim();
   if (!raw) return null;
-  const s = raw.replace(/[！!。．…]+$/g, "").replace(/[?？]+$/g, "").trim();
+  const s = raw
+    .replace(/[！!。．…]+$/g, "")
+    .replace(/[?？]+$/g, "")
+    .trim();
   if (!s) return null;
 
-  const m1 = s.match(/^(.+?)(?:って|て|とは)\s*(?:何|なに|どういう意味|どういうこと|どゆこと|どゆ意味|意味)$/);
+  const m1 = s.match(
+    /^(.+?)(?:って|て|とは)\s*(?:何|なに|どういう意味|どういうこと|どゆこと|どゆ意味|意味)$/
+  );
   if (m1?.[1]) return m1[1].trim();
   const m2 = s.match(/^(.+?)(?:って|て|とは)\s*$/);
   if (m2?.[1]) return m2[1].trim();
@@ -289,9 +353,15 @@ function extractClarifyTerm(message: string): string | null {
   return null;
 }
 function normKey(s: string): string {
-  return (s ?? "").toLowerCase().replace(/\s+/g, "").replace(/[\/\\・\.\-＿_]/g, "");
+  return (s ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[\/\\・\.\-＿_]/g, "");
 }
-function detectClarifyPrevAnswer(message: string, prevAssistantMessage: string | null): { ok: boolean; term: string; matched: string } {
+function detectClarifyPrevAnswer(
+  message: string,
+  prevAssistantMessage: string | null
+): { ok: boolean; term: string; matched: string } {
   const prev = (prevAssistantMessage ?? "").trim();
   if (!prev) return { ok: false, term: "", matched: "" };
 
@@ -302,7 +372,8 @@ function detectClarifyPrevAnswer(message: string, prevAssistantMessage: string |
 
   const prevK = normKey(prev);
   const termK = normKey(term);
-  if (termK.length >= 2 && prevK.includes(termK)) return { ok: true, term, matched: term };
+  if (termK.length >= 2 && prevK.includes(termK))
+    return { ok: true, term, matched: term };
 
   const ts = tokens3(term);
   const hit = ts.find((t) => t && prev.includes(t));
@@ -318,7 +389,8 @@ function insertLineBeforeInquiry(answer: string, line: string): string {
 
   const lines = a0.split("\n");
   const idx = lines.findIndex((x) => x.trimStart().startsWith("🔎"));
-  if (idx < 0) return `${a0}\n\n${l}`.replace(/\n{3,}/g, "\n\n").trim();
+  if (idx < 0)
+    return `${a0}\n\n${l}`.replace(/\n{3,}/g, "\n\n").trim();
   if (lines.some((x) => x.trim() === l)) return a0;
 
   const head = lines.slice(0, idx);
@@ -331,8 +403,10 @@ function insertLineBeforeInquiry(answer: string, line: string): string {
 }
 
 function auditEssenceOneLine(dialect: Dialect, stance: Stance): string {
-  if (dialect === "kansai" && stance === "sanbo") return "※ 税務調査目線：形式より実態。一貫性と証拠で見られますわ。";
-  if (dialect === "standard" && stance === "sanbo") return "※ 税務調査目線：形式より実態。一貫性と証拠で見られます。";
+  if (dialect === "kansai" && stance === "sanbo")
+    return "※ 税務調査目線：形式より実態。一貫性と証拠で見られますわ。";
+  if (dialect === "standard" && stance === "sanbo")
+    return "※ 税務調査目線：形式より実態。一貫性と証拠で見られます。";
   return "※ 税務調査目線：形式より実態。一貫性と証拠で見られる。";
 }
 
@@ -358,7 +432,9 @@ function buildOutputRules(params: { allowAttackDefenseDetail: boolean }): string
 function buildAmbiguityBoostRules(message: string): string[] {
   const m = (message ?? "").trim();
   const hasTaxWords =
-    /税|経費|損金|消費税|源泉|役員|給与|交際費|棚卸|売上|請求|領収|仕訳|法人|個人|青色|調査|否認|事業|私用|按分/.test(m);
+    /税|経費|損金|消費税|源泉|役員|給与|交際費|棚卸|売上|請求|領収|仕訳|法人|個人|青色|調査|否認|事業|私用|按分/.test(
+      m
+    );
   if (!m) return [];
   const hasSafety = /安全度|安全性|リスク|危険|グレー|大丈夫/.test(m);
   if (!hasSafety) return [];
@@ -373,7 +449,19 @@ function buildAmbiguityBoostRules(message: string): string[] {
 }
 
 /** ===== style ===== */
-const FORBIDDEN_POLITE = ["です", "ます", "でした", "ません", "ございます", "ください", "いただ", "おります", "でしょう", "ますか", "ですか"];
+const FORBIDDEN_POLITE = [
+  "です",
+  "ます",
+  "でした",
+  "ません",
+  "ございます",
+  "ください",
+  "いただ",
+  "おります",
+  "でしょう",
+  "ますか",
+  "ですか",
+];
 function forbiddenFor(_dialect: Dialect, stance: Stance): string[] | null {
   if (stance === "zubatto") return FORBIDDEN_POLITE;
   return null;
@@ -404,8 +492,12 @@ function buildStyleRules(dialect: Dialect, stance: Stance): string[] {
       rules.push(
         "関西弁の参謀は“丁寧な関西弁”で統一する（例：〜でっせ／〜でっしゃろ／〜ですわ／〜してはります／〜しときなはれ／〜してもろて）。タメ口（や/で/やな/やろ/ちゃう）は極力使わない。"
       );
-      rules.push("標準語の敬語（〜です/〜ますの“標準語文体”）は禁止。丁寧語を使う場合も関西の言い回しで統一する。");
-      rules.push("文末の7割以上を丁寧語で終える。『や・で』で終えるのは禁止に近い（例外はツッコミ1回まで）。");
+      rules.push(
+        "標準語の敬語（〜です/〜ますの“標準語文体”）は禁止。丁寧語を使う場合も関西の言い回しで統一する。"
+      );
+      rules.push(
+        "文末の7割以上を丁寧語で終える。『や・で』で終えるのは禁止に近い（例外はツッコミ1回まで）。"
+      );
     } else {
       rules.push("語彙・語尾は関西弁の口語。丁寧語（です/ます）は禁止。");
       rules.push("語尾例：や／で／やな／やろ／ちゃう／せやな／アウト寄り／OK寄り");
@@ -438,7 +530,12 @@ async function ensureConversationId(params: {
   const { db, userId, conversationId, firstUserMessage } = params;
 
   if (conversationId && isUuid(conversationId)) {
-    const { data } = await db.from("conversations").select("id").eq("id", conversationId).eq("user_id", userId).maybeSingle();
+    const { data } = await db
+      .from("conversations")
+      .select("id")
+      .eq("id", conversationId)
+      .eq("user_id", userId)
+      .maybeSingle();
     if (data?.id) return data.id as string;
   }
 
@@ -463,7 +560,11 @@ async function buildConversationContext(params: { db: any; convId: string }): Pr
   const { db, convId } = params;
   const lines: string[] = [];
 
-  const { data: conv } = await db.from("conversations").select("summary, summary_updated_at, created_at").eq("id", convId).maybeSingle();
+  const { data: conv } = await db
+    .from("conversations")
+    .select("summary, summary_updated_at, created_at")
+    .eq("id", convId)
+    .maybeSingle();
   const summary = (conv?.summary ?? "").trim();
   if (summary) lines.push(`【会話要約】${clampForContext(summary, 400)}`);
 
@@ -503,30 +604,62 @@ function isLineRequest(message: string): boolean {
 }
 function isLineDetailRequest(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(攻め|守り|攻守|上限|限界|安全ライン|レンジ|幅|いくら|なんぼ|金額|いくつまで|どんぐらい)/.test(m);
+  return /(攻め|守り|攻守|上限|限界|安全ライン|レンジ|幅|いくら|なんぼ|金額|いくつまで|どんぐらい)/.test(
+    m
+  );
 }
+
+// ★ 金額っぽさ：数字+円/万 なども拾う（「1万超える」系を落とさない）
+function hasMoneyLike(message: string): boolean {
+  const m = (message ?? "").trim();
+  if (!m) return false;
+  // 半角/全角数字 + 通貨単位
+  if (/(?:[0-9０-９][0-9０-９,，\.]*\s*(?:円|万円|万|千円|千|百万円|億円|億))/u.test(m))
+    return true;
+  // 雑に漢数字も拾う（例：一万円/十万など）
+  if (/(?:一|二|三|四|五|六|七|八|九|十|百|千|万|億){1,8}\s*(?:円|万円|万|千円|億円|億)/u.test(m))
+    return true;
+  return false;
+}
+
 function isAmountAsk(message: string): boolean {
   const m = (message ?? "").trim();
-  return /(いくら|なんぼ|金額|上限|限界|レンジ|幅|いくつまで|どこまで|ギリ|安全|セーフ|アウト|グレー)/.test(m);
+  if (!m) return false;
+  if (hasMoneyLike(m)) return true;
+  return /(いくら|なんぼ|金額|上限|限界|レンジ|幅|いくつまで|どこまで|ギリ|安全|セーフ|アウト|グレー)/.test(
+    m
+  );
 }
 
 function adjustLensByConversation(params: {
   lens: Lens;
-  message: string;
+  lensMessage: string;
   subjectTopic: string;
   axisTopic: string;
   llmIntent: string;
 }): Lens {
-  const { lens, message, subjectTopic, axisTopic, llmIntent } = params;
-  const m = (message ?? "").trim();
+  const { lens, lensMessage, subjectTopic, axisTopic, llmIntent } = params;
+  const m = (lensMessage ?? "").trim();
   const topic = (subjectTopic || axisTopic || "").trim();
 
   if (llmIntent === "clarify" || llmIntent === "qa_more") {
     if (lens === "amount") return "substance";
   }
+
+  // amount → substance の落とし穴：短い合言葉 followup で誤爆しやすいので、
+  // 「金額っぽさ（数字+円/万）」も見て amount を維持する
   if (lens === "amount" && !isAmountAsk(m)) return "substance";
-  if (topic === "外注" && /(毎月|月々|同じ金額|定額|固定)/.test(m) && !isAmountAsk(m)) return "substance";
-  if (/(インボイス|登録|未登録|適格|源泉|支払調書|請求書|契約書|規程|届出|要件)/.test(m)) return "system";
+
+  if (
+    topic === "外注" &&
+    /(毎月|月々|同じ金額|定額|固定)/.test(m) &&
+    !isAmountAsk(m)
+  )
+    return "substance";
+
+  if (/(インボイス|登録|未登録|適格|源泉|支払調書|請求書|契約書|規程|届出|要件)/.test(m))
+    return "system";
+
   return lens;
 }
 
@@ -535,7 +668,10 @@ function topicShiftLikelyLite(prevUser: string | null, cur: string): boolean {
   const now = (cur ?? "").trim();
   if (!prev || !now) return false;
 
-  const tokens = (s: string) => Array.from(s.matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((x) => x[0]);
+  const tokens = (s: string) =>
+    Array.from(s.matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map(
+      (x) => x[0]
+    );
   const a = tokens(prev);
   const b = tokens(now);
   if (a.length === 0 || b.length === 0) return false;
@@ -549,7 +685,10 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
   const m = (message ?? "").trim();
   const prev = (prevUserMessage ?? "").trim();
 
-  const strong = /攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|幅|レンジ|強め|弱め|リスク高|リスク低/.test(m);
+  const strong =
+    /攻め|守り|攻守|上限|限界|どこまで|ギリ|グレー|危険|安全ライン|幅|レンジ|強め|弱め|リスク高|リスク低/.test(
+      m
+    );
   if (strong) return true;
 
   const followupCue =
@@ -560,7 +699,10 @@ function wantsAttackDefenseDetail(message: string, prevUserMessage: string | nul
 
   const topicShiftLikely = (() => {
     if (!prev) return false;
-    const tokens = (s: string) => Array.from(s.matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((x) => x[0]);
+    const tokens = (s: string) =>
+      Array.from(s.matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map(
+        (x) => x[0]
+      );
     const a = tokens(prev);
     const b = tokens(m);
     if (a.length === 0 || b.length === 0) return false;
@@ -593,7 +735,11 @@ async function fetchAvailableTopics(db: any): Promise<string[]> {
   const out = new Set<string>();
 
   try {
-    const { data } = await db.from("knowledge_items").select("topic").eq("is_active", true).limit(500);
+    const { data } = await db
+      .from("knowledge_items")
+      .select("topic")
+      .eq("is_active", true)
+      .limit(500);
     for (const r of (data ?? []) as any[]) {
       const t = String(r?.topic ?? "").trim();
       if (t) out.add(t);
@@ -601,7 +747,11 @@ async function fetchAvailableTopics(db: any): Promise<string[]> {
   } catch {}
 
   try {
-    const { data } = await db.from("knowledge_lines").select("topic").eq("is_active", true).limit(500);
+    const { data } = await db
+      .from("knowledge_lines")
+      .select("topic")
+      .eq("is_active", true)
+      .limit(500);
     for (const r of (data ?? []) as any[]) {
       const t = String(r?.topic ?? "").trim();
       if (t) out.add(t);
@@ -614,7 +764,9 @@ async function fetchAvailableTopics(db: any): Promise<string[]> {
 }
 
 function messageTokens3(s: string): string[] {
-  return Array.from((s ?? "").matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map((m) => m[0]);
+  return Array.from((s ?? "").matchAll(/[一-龠ぁ-んァ-ンA-Za-z0-9]{3,}/g)).map(
+    (m) => m[0]
+  );
 }
 
 async function retrieveKnowledgeByBuckets(params: {
@@ -674,15 +826,18 @@ async function retrieveKnowledgeByBuckets(params: {
   // buckets
   const subjectItems = wantsBuckets ? await fetchTopic(subjectTopic, quotaSubject) : [];
   const auditItems = wantsBuckets ? await fetchTopic(TOPIC_TAX_AUDIT, quotaAudit) : [];
-  const otherTopics = (topicsNow ?? []).filter((t) => t && t !== subjectTopic && t !== TOPIC_TAX_AUDIT);
+  const otherTopics = (topicsNow ?? []).filter(
+    (t) => t && t !== subjectTopic && t !== TOPIC_TAX_AUDIT
+  );
 
-  // wantsBuckets=false のときは “topicsNow中心” で拾う（空inは禁止）
-  const otherItems = await fetchTopics(wantsBuckets ? otherTopics : otherTopics, quotaOther);
+  const otherItems = await fetchTopics(otherTopics, quotaOther);
 
   let merged = uniqById([...subjectItems, ...auditItems, ...otherItems]).slice(0, maxTotal);
 
   if (merged.length < maxTotal && wantsBuckets) {
-    const poolTopics = Array.from(new Set([subjectTopic, ...(auditAxis ? [TOPIC_TAX_AUDIT] : []), ...otherTopics].filter(Boolean)));
+    const poolTopics = Array.from(
+      new Set([subjectTopic, ...(auditAxis ? [TOPIC_TAX_AUDIT] : []), ...otherTopics].filter(Boolean))
+    );
     const fill = await fetchTopics(poolTopics, maxTotal - merged.length);
     merged = uniqById([...merged, ...fill]).slice(0, maxTotal);
   }
@@ -695,49 +850,60 @@ async function retrieveKnowledgeLines(params: {
   topic: string;
   lens: Lens;
   messageForMatch: string;
-}): Promise<{ attack: KnowledgeLine | null; defense: KnowledgeLine | null }> {
+}): Promise<{
+  attack: KnowledgeLine | null;
+  defense: KnowledgeLine | null;
+  lensUsed: Lens | null;
+}> {
   const { db, topic, lens, messageForMatch } = params;
 
-  const run = async (withRole: boolean, lensArg: Lens) => {
-    let q = db
+  const run = async (selectRole: boolean, lensArg: Lens) => {
+    const sel = selectRole
+      ? "id, topic, stance, lens, role, text, priority"
+      : "id, topic, stance, lens, text, priority";
+    return db
       .from("knowledge_lines")
-      .select("id, topic, stance, lens, role, text, priority")
+      .select(sel)
       .eq("is_active", true)
       .eq("topic", topic)
       .eq("lens", lensArg)
       .in("stance", ["attack", "defense"])
       .order("priority", { ascending: false })
       .limit(30);
-    if (withRole) q = q.eq("role", "user");
-    return q;
   };
 
   const tryFetch = async (lensArg: Lens) => {
     let data: any[] | null = null;
     let error: any = null;
 
-    const res = await run(true, lensArg);
-    const r = await res;
-    data = r?.data ?? null;
-    error = r?.error ?? null;
+    // role列があるなら取りたい（ただし SQL で role=user 固定はしない。空/NULL/未投入で全滅しやすい）
+    const r1 = await run(true, lensArg);
+    data = r1?.data ?? null;
+    error = r1?.error ?? null;
 
     const msg = String(error?.message ?? "");
     const missingRole = /role/i.test(msg) && /(column|does not exist|unknown)/i.test(msg);
 
     if (error && missingRole) {
-      const res2 = await run(false, lensArg);
-      const r2 = await res2;
+      const r2 = await run(false, lensArg);
       data = r2?.data ?? null;
       error = r2?.error ?? null;
     }
+
     if (error || !data) return [] as KnowledgeLine[];
-    return data as KnowledgeLine[];
+
+    const rows = (data ?? []) as KnowledgeLine[];
+
+    // role があれば：
+    //  - user が1つでもあれば user を優先
+    //  - なければ internal を落として残り（null/undefined含む）を使う
+    const userRows = rows.filter((r) => (r as any)?.role === "user");
+    if (userRows.length > 0) return userRows;
+    return rows.filter((r) => (r as any)?.role !== "internal");
   };
 
   const lensFallbacks: Lens[] =
-    topic === TOPIC_TAX_AUDIT
-      ? ["substance", "system", "amount"]
-      : [lens, "substance", "system", "amount"];
+    topic === TOPIC_TAX_AUDIT ? ["substance", "system", "amount"] : [lens, "substance", "system", "amount"];
 
   const tokens = messageTokens3(messageForMatch);
   const scoreText = (text: string) => {
@@ -753,24 +919,24 @@ async function retrieveKnowledgeLines(params: {
 
     const pickOne = (stance: StanceAD) => {
       const minLen = 8;
-      const candidates = rows
+      const base = rows
         .filter((r) => r.stance === stance)
         .filter((r) => !isLeakyLine(r.text))
         .filter((r) => String(r.text ?? "").trim().length >= minLen);
 
-      if (candidates.length === 0) return null;
+      if (base.length === 0) return null;
 
-      const scored = candidates.map((r) => ({ r, s: scoreText(r.text) }));
+      const scored = base.map((r) => ({ r, s: scoreText(r.text) }));
       scored.sort((a, b) => b.s - a.s || (b.r.priority ?? 0) - (a.r.priority ?? 0));
       return scored[0]?.r ?? null;
     };
 
     const attack = pickOne("attack");
     const defense = pickOne("defense");
-    if (attack && defense) return { attack, defense };
+    if (attack && defense) return { attack, defense, lensUsed: lf };
   }
 
-  return { attack: null, defense: null };
+  return { attack: null, defense: null, lensUsed: null };
 }
 
 function pickBestQaForMessage(items: KnowledgeItem[], message: string): KnowledgeItem | null {
@@ -780,7 +946,9 @@ function pickBestQaForMessage(items: KnowledgeItem[], message: string): Knowledg
 
   const intakeHit = /(最初|初動|電話|連絡|窓口|誰に)/.test(m);
   if (intakeHit) {
-    const hit = qas.find((q) => /(最初|連絡|電話|窓口|誰に)/.test((q.title ?? "") + " " + (q.content ?? "")));
+    const hit = qas.find((q) =>
+      /(最初|連絡|電話|窓口|誰に)/.test((q.title ?? "") + " " + (q.content ?? ""))
+    );
     if (hit) return hit;
   }
 
@@ -846,88 +1014,48 @@ function formatKnowledgeBlock(items: KnowledgeItem[]): string {
     const tag = it.kind === "rule" ? "[Rule]" : it.kind === "qa" ? "[Q&A]" : "[Example]";
     lines.push(`${tag} ${it.title}`);
     lines.push(`- ${it.content.replace(/\r\n/g, "\n").split("\n").join("\n- ")}`);
-    if (it.amounts && Object.keys(it.amounts).length > 0) lines.push(`- 目安金額: ${JSON.stringify(it.amounts)}`);
+    if (it.amounts && Object.keys(it.amounts).length > 0)
+      lines.push(`- 目安金額: ${JSON.stringify(it.amounts)}`);
   }
   return lines.join("\n");
 }
 
-/** ===== followup (Lines/Kb/Fallback) ===== */
-type AttackDefensePick = { attack: string; defense: string; pitfall?: string | null };
-function pickFirstNonEmpty(...xs: Array<string | null | undefined>): string | null {
-  for (const x of xs) {
-    const t = (x ?? "").trim();
-    if (t) return t;
-  }
-  return null;
-}
-function extractAttackDefenseFromContent(content: string): AttackDefensePick | null {
-  const text = (content ?? "").replace(/\r\n/g, "\n");
-  const defense = pickFirstNonEmpty(text.match(/^[ \t]*守り[:：]\s*(.+)\s*$/m)?.[1]);
-  const attack = pickFirstNonEmpty(text.match(/^[ \t]*攻め[:：]\s*(.+)\s*$/m)?.[1]);
-  if (!attack || !defense) return null;
-
-  let pitfall: string | null = null;
-  const m = text.match(/【⚠️地雷】([\s\S]*?)(【|$)/);
-  if (m?.[1]) {
-    const lines = m[1].split("\n").map((l) => l.trim()).filter(Boolean);
-    const bullet = lines.find((l) => l.startsWith("-") || l.startsWith("・"));
-    if (bullet) pitfall = bullet.replace(/^[-・]\s*/, "").trim();
-  }
-  return { attack, defense, pitfall };
-}
-
-function buildFollowupAnswerFromKbWithPick(items: KnowledgeItem[]): { text: string; picked: KnowledgeItem } | null {
-  for (const it of items ?? []) {
-    const ad = extractAttackDefenseFromContent(it.content);
-    if (!ad) continue;
-    const lines: string[] = [];
-    lines.push(`🍚攻め：${ad.attack}`);
-    lines.push(`🧂守り：${ad.defense}`);
-    if (ad.pitfall) lines.push(`⚠️地雷メモ：${ad.pitfall}`);
-    return { text: lines.join("\n").trim(), picked: it };
-  }
-  return null;
-}
-
-function buildFollowupAnswerFromLines(params: { attack: KnowledgeLine | null; defense: KnowledgeLine | null }): string | null {
+/** ===== followup (Lines only) ===== */
+function buildFollowupAnswerFromLines(params: {
+  attack: KnowledgeLine | null;
+  defense: KnowledgeLine | null;
+}): string | null {
   const at = (params.attack?.text ?? "").trim();
   const df = (params.defense?.text ?? "").trim();
   if (!at || !df) return null;
   return `🍚攻め：${at}\n🧂守り：${df}`.trim();
 }
 
-function fallbackAttackDefense(topic: string, lens: Lens): { attack: string; defense: string } {
-  const t = (topic ?? "").trim();
-  if (lens === "amount") {
-    return {
-      attack: `${t ? `${t}の` : ""}金額は“運用と説明設計”が固まってる前提で、相場レンジの上側まで寄せる。回数・目的・相手・成果の一貫性を説明できる状態にしてから攻める。`,
-      defense: `${t ? `${t}の` : ""}金額は控えめに置く。1回あたり・1人あたりで上限ルールを決め、例外は理由メモ必須。迷ったら“少額×一貫性”で守る。`,
-    };
-  }
-  if (lens === "system") {
-    return {
-      attack: `${t ? `${t}は` : ""}規程・社内ルールを整備して“制度要件を満たした前提”で攻める。必要書類（規程/申請/精算/承認）の型を固定して、運用で勝つ。`,
-      defense: `${t ? `${t}は` : ""}制度面の抜けを潰すのを最優先。規程が無い/運用が曖昧なら、先にルール整備→運用実績→次に攻める。`,
-    };
-  }
-  return {
-    attack: `${t ? `${t}は` : ""}実態と証拠が揃ってる前提で攻める。誰に・何の目的で・どんな成果に繋がったかを“行メモ”で残して、説明力で勝つ。`,
-    defense: `${t ? `${t}は` : ""}領収書だけの運用は捨てる。相手・目的・成果のメモ、関連資料、承認の流れを先に固めてから進める。`,
-  };
-}
-
 function pickLinesPrefaceQa(items: KnowledgeItem[]): KnowledgeItem | null {
-  const qas = (items ?? []).filter((x) => x.kind === "qa" && (x.title ?? "").includes(LINES_PREFACE_TAG));
+  const qas = (items ?? []).filter(
+    (x) => x.kind === "qa" && (x.title ?? "").includes(LINES_PREFACE_TAG)
+  );
   if (qas.length === 0) return null;
   qas.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
   return qas[0];
 }
 
-function buildLinesPreamble(params: { topic: string; axisTopic: string; dialect: Dialect; stance: Stance; qa: KnowledgeItem | null }): { text: string; usedQaId?: string } {
+function buildLinesPreamble(params: {
+  topic: string;
+  axisTopic: string;
+  dialect: Dialect;
+  stance: Stance;
+  qa: KnowledgeItem | null;
+}): { text: string; usedQaId?: string } {
   const { topic, axisTopic, qa } = params;
 
   if (qa && qa.content) {
-    const lines = qa.content.replace(/\r\n/g, "\n").split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 3);
+    const lines = qa.content
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .slice(0, 3);
     const out: string[] = [];
     if (lines[0]) out.push(`✅要点 ${lines[0]}`);
     for (const l of lines.slice(1)) out.push(`- ${l}`);
@@ -1022,7 +1150,10 @@ function ensureLineBold(secLine: string[]): string[] {
   for (let i = 1; i < out.length; i++) {
     const t = out[i].trim();
     if (!t) continue;
-    out[i] = out[i].replace(/^(\s*)(.*?)(\s*)$/, (_m, p1, body, p2) => `${p1}**${String(body).trim()}**${p2}`);
+    out[i] = out[i].replace(
+      /^(\s*)(.*?)(\s*)$/,
+      (_m, p1, body, p2) => `${p1}**${String(body).trim()}**${p2}`
+    );
     break;
   }
   return out;
@@ -1031,8 +1162,13 @@ function ensureLineBold(secLine: string[]): string[] {
 function collapseInquiryToSingleLine(askLines: string[]): string[] {
   if (!askLines || askLines.length === 0) return askLines;
   const head = askLines[0].trim();
-  const rest = askLines.slice(1).map((l) => l.trim()).filter((x) => x.length > 0).join(" ");
-  if (!rest) return ["🔎確認 税務・経営前提で答えた。前提が違うなら言うてな。"];
+  const rest = askLines
+    .slice(1)
+    .map((l) => l.trim())
+    .filter((x) => x.length > 0)
+    .join(" ");
+  if (!rest)
+    return ["🔎確認 税務・経営前提で答えた。前提が違うなら言うてな。"];
   return [`${head} ${rest}`.trim()];
 }
 
@@ -1109,9 +1245,12 @@ function forceCasual(text: string, dialect: Dialect): string {
 }
 
 function inquiryLine(dialect: Dialect, stance: Stance): string {
-  if (dialect === "standard" && stance === "sanbo") return "🔎確認 税務・経営前提で回答しました。前提が違う場合はお知らせください。";
-  if (dialect === "standard" && stance === "zubatto") return "🔎確認 税務・経営前提で答えた。前提が違うなら言って。";
-  if (dialect === "kansai" && stance === "sanbo") return "🔎確認 税務・経営前提でお答えしましたで。前提が違うなら言うてくださいな。";
+  if (dialect === "standard" && stance === "sanbo")
+    return "🔎確認 税務・経営前提で回答しました。前提が違う場合はお知らせください。";
+  if (dialect === "standard" && stance === "zubatto")
+    return "🔎確認 税務・経営前提で答えた。前提が違うなら言って。";
+  if (dialect === "kansai" && stance === "sanbo")
+    return "🔎確認 税務・経営前提でお答えしましたで。前提が違うなら言うてくださいな。";
   return "🔎確認 税務・経営前提で答えたで。前提が違うなら言うてな。";
 }
 
@@ -1132,11 +1271,21 @@ function inquiryLineWithAuditCTA(dialect: Dialect, stance: Stance, subjectTopic:
 function stripInternalLeaks(text: string): string {
   let s = String(text ?? "").replace(/\r\n/g, "\n");
   s = s.replace(/[\(（][^()（）]*(未登録|ここに|DB|データベース|育成|internal|TODO)[^()（）]*[\)）]/gi, "");
-  const ng = [/未登録/gi, /ここに/gi, /\bDB\b/gi, /データベース/gi, /育成知見/gi, /\binternal\b/gi, /\bTODO\b/gi, /開発用/gi];
+  const ng = [
+    /未登録/gi,
+    /ここに/gi,
+    /\bDB\b/gi,
+    /データベース/gi,
+    /育成知見/gi,
+    /\binternal\b/gi,
+    /\bTODO\b/gi,
+    /開発用/gi,
+  ];
   const lines = s.split("\n");
   const out = lines.filter((line) => !ng.some((re) => re.test(line)));
   s = out.join("\n").trim();
-  if (!s) s = "🥄ちょうど良いライン：**一般論で整理する**。必要なら条件を揃えて深掘りする。";
+  if (!s)
+    s = "🥄ちょうど良いライン：**一般論で整理する**。必要なら条件を揃えて深掘りする。";
   return s;
 }
 
@@ -1261,7 +1410,7 @@ async function generateAnswerStrict(params: {
   inquiryOverride?: string | null;
   llmIntent?: string | null;
 }): Promise<string> {
-  const { message, promptPartsBase, dialect, stance } = params;
+  const { promptPartsBase, dialect, stance } = params;
   const forbidden = forbiddenFor(dialect, stance);
   let last = "";
   let lastHits: string[] = [];
@@ -1281,7 +1430,7 @@ async function generateAnswerStrict(params: {
       injectedRules: [...(promptPartsBase.injectedRules ?? []), ...extra],
     };
 
-    const result = await generateAnswer({ message, promptParts });
+    const result = await generateAnswer({ message: params.message, promptParts });
 
     last = postProcessAnswer(result.answer, dialect, stance, {
       usedKnowledge: params.usedKnowledge,
@@ -1358,7 +1507,11 @@ function limitQaMax6(params: {
   itemsForPrompt: KnowledgeItem[];
   subjectTopic: string;
   auditAxis: boolean;
-}): { limitedItemsForPrompt: KnowledgeItem[]; pickedQa: KnowledgeItem[]; bucketCounts: { subject: number; audit: number; other: number } } {
+}): {
+  limitedItemsForPrompt: KnowledgeItem[];
+  pickedQa: KnowledgeItem[];
+  bucketCounts: { subject: number; audit: number; other: number };
+} {
   const { itemsForPrompt, subjectTopic, auditAxis } = params;
 
   const nonQa = (itemsForPrompt ?? []).filter((it) => it.kind !== "qa");
@@ -1382,7 +1535,11 @@ function limitQaMax6(params: {
   const cAudit = pickedQa.filter((x) => x.topic === TOPIC_TAX_AUDIT).length;
   const cOther = pickedQa.length - cSubject - cAudit;
 
-  return { limitedItemsForPrompt, pickedQa, bucketCounts: { subject: cSubject, audit: cAudit, other: cOther } };
+  return {
+    limitedItemsForPrompt,
+    pickedQa,
+    bucketCounts: { subject: cSubject, audit: cAudit, other: cOther },
+  };
 }
 
 /** ===== meta builders ===== */
@@ -1391,7 +1548,12 @@ function buildPickedQaMeta(items: KnowledgeItem[], limit = 3): PickedQaMeta[] {
     .filter((it) => it.kind === "qa")
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
     .slice(0, Math.max(0, Math.min(10, limit)));
-  return rows.map((it) => ({ id: it.id, title: it.title, priority: it.priority, topic: it.topic }));
+  return rows.map((it) => ({
+    id: it.id,
+    title: it.title,
+    priority: it.priority,
+    topic: it.topic,
+  }));
 }
 function buildPickedLinesMeta(picked: { attack: KnowledgeLine | null; defense: KnowledgeLine | null }): PickedLineMeta[] {
   const out: PickedLineMeta[] = [];
@@ -1402,7 +1564,7 @@ function buildPickedLinesMeta(picked: { attack: KnowledgeLine | null; defense: K
       lens: picked.attack.lens,
       stance: picked.attack.stance,
       priority: picked.attack.priority,
-      role: picked.attack.role,
+      role: picked.attack.role ?? null,
     });
   if (picked.defense)
     out.push({
@@ -1411,7 +1573,7 @@ function buildPickedLinesMeta(picked: { attack: KnowledgeLine | null; defense: K
       lens: picked.defense.lens,
       stance: picked.defense.stance,
       priority: picked.defense.priority,
-      role: picked.defense.role,
+      role: picked.defense.role ?? null,
     });
   return out.slice(0, 3);
 }
@@ -1485,7 +1647,8 @@ function followupFooter(axisTopic: string, dialect: Dialect, stance: Stance): st
 
 /** ===== POST ===== */
 export async function POST(req: Request) {
-  const topicMode: "regex" | "llm" = (process.env.TOPIC_MODE || "regex") === "llm" ? "llm" : "regex";
+  const topicMode: "regex" | "llm" =
+    (process.env.TOPIC_MODE || "regex") === "llm" ? "llm" : "regex";
 
   // LLM decision outputs
   let llmOk = false;
@@ -1503,7 +1666,11 @@ export async function POST(req: Request) {
 
   try {
     const token = bearer(req);
-    if (!token) return NextResponse.json({ ok: false, error: "Missing bearer token" } satisfies ChatRes, { status: 401 });
+    if (!token)
+      return NextResponse.json(
+        { ok: false, error: "Missing bearer token" } satisfies ChatRes,
+        { status: 401 }
+      );
 
     const body = await req.json().catch(() => null);
 
@@ -1514,16 +1681,32 @@ export async function POST(req: Request) {
     const stance = normalizeStance(safeStr(body?.stance).trim() as any);
     const conversationId = conversationIdRaw ? conversationIdRaw : null;
 
-    if (!message) return NextResponse.json({ ok: false, error: "message is required" } satisfies ChatRes, { status: 400 });
-    if (!idempotencyKey) return NextResponse.json({ ok: false, error: "idempotencyKey is required" } satisfies ChatRes, { status: 400 });
-    if (!isUuid(idempotencyKey)) return NextResponse.json({ ok: false, error: "idempotencyKey must be uuid" } satisfies ChatRes, { status: 400 });
+    if (!message)
+      return NextResponse.json(
+        { ok: false, error: "message is required" } satisfies ChatRes,
+        { status: 400 }
+      );
+    if (!idempotencyKey)
+      return NextResponse.json(
+        { ok: false, error: "idempotencyKey is required" } satisfies ChatRes,
+        { status: 400 }
+      );
+    if (!isUuid(idempotencyKey))
+      return NextResponse.json(
+        { ok: false, error: "idempotencyKey must be uuid" } satisfies ChatRes,
+        { status: 400 }
+      );
 
     const url = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
     const anon = mustEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
     const authClient = createClient(url, anon, { auth: { persistSession: false } });
     const { data: userRes, error: userErr } = await authClient.auth.getUser(token);
-    if (userErr || !userRes?.user) return NextResponse.json({ ok: false, error: "Invalid session" } satisfies ChatRes, { status: 401 });
+    if (userErr || !userRes?.user)
+      return NextResponse.json(
+        { ok: false, error: "Invalid session" } satisfies ChatRes,
+        { status: 401 }
+      );
     const user = userRes.user;
 
     const db = createClient(url, anon, {
@@ -1536,7 +1719,10 @@ export async function POST(req: Request) {
     const limit = limitFromPlan(plan);
 
     if (limit <= 0) {
-      return NextResponse.json({ ok: false, error: "Plan does not allow chat", used_talks: 0, limit_talks: 0 } satisfies ChatRes, { status: 403 });
+      return NextResponse.json(
+        { ok: false, error: "Plan does not allow chat", used_talks: 0, limit_talks: 0 } satisfies ChatRes,
+        { status: 403 }
+      );
     }
 
     const gr = judgeGuardrails(message);
@@ -1547,7 +1733,12 @@ export async function POST(req: Request) {
       );
     }
 
-    const convId = await ensureConversationId({ db, userId: user.id, conversationId, firstUserMessage: message });
+    const convId = await ensureConversationId({
+      db,
+      userId: user.id,
+      conversationId,
+      firstUserMessage: message,
+    });
 
     let answer = "";
 
@@ -1565,7 +1756,9 @@ export async function POST(req: Request) {
 
         if (!rows || rows.length === 0) return null;
         const current = message.trim();
-        const candidates = rows.map((r) => (r.content ?? "").trim()).filter((c) => c && c !== current);
+        const candidates = rows
+          .map((r) => (r.content ?? "").trim())
+          .filter((c) => c && c !== current);
         for (const c of candidates) if (!isWeakUtterance(c)) return c;
         return candidates[0] ?? null;
       })();
@@ -1591,7 +1784,8 @@ export async function POST(req: Request) {
       // followup 判定（短文誤爆抑制）
       const shiftedRaw = topicShiftLikelyLite(prevUserMessage, message);
       const followupOnlyRaw = isFollowupOnlyText(message);
-      const followupOnly = followupOnlyRaw && !clarifyPrevAnswer && !looksQuestionish(message) && !shiftedRaw;
+      const followupOnly =
+        followupOnlyRaw && !clarifyPrevAnswer && !looksQuestionish(message) && !shiftedRaw;
 
       const weakUtterance = isWeakUtterance(message);
       const followupExplicitRaw = wantsAttackDefenseDetail(message, prevUserMessage);
@@ -1685,11 +1879,13 @@ export async function POST(req: Request) {
           // 最終反映（LLMが言うsubject/axis/auditがあるなら優先）
           decision = {
             ...decision,
-            subjectTopic: llmSubject || decision.subjectTopic,
-            axisTopic: llmAxis || decision.axisTopic,
+            subjectTopic: llmSubject || (decision as any).subjectTopic,
+            axisTopic: llmAxis || (decision as any).axisTopic,
             auditAxis: llmAudit,
             taxAuditSticky: llmAudit,
             reason: `llm:${llmIntent}:${llmConfidence.toFixed(2)}:${llmReason || ""}`,
+            nudgeLines: llmNudgeLines,
+            nudgeReason: llmNudgeReason,
           } as any;
         } else {
           llmOk = false;
@@ -1698,13 +1894,11 @@ export async function POST(req: Request) {
       }
 
       const topicsNow =
-        topicMode === "llm"
-          ? (llmOk ? llmTopicsNow.slice(0, 3) : topicsNowRegex)
-          : topicsNowRegex;
+        topicMode === "llm" ? (llmOk ? llmTopicsNow.slice(0, 3) : topicsNowRegex) : topicsNowRegex;
 
       // ===== 2) normalize subject (single source of truth) =====
-      let subjectTopic = String(decision.subjectTopic ?? "").trim();
-      let auditAxis = Boolean(decision.auditAxis);
+      let subjectTopic = String((decision as any).subjectTopic ?? "").trim();
+      let auditAxis = Boolean((decision as any).auditAxis);
 
       // “合言葉の直後” は主題を prev で固定（聞き返し禁止）
       const prevNudgeApplied = Boolean(prevDebug?.prevNudgeApplied);
@@ -1715,7 +1909,7 @@ export async function POST(req: Request) {
         subjectTopic = prevSubject;
       }
 
-      // ★ 根本修正：弱発話/合言葉 で subject が空なら、prevSubject を借りる（KB借りより先）
+      // 弱発話/合言葉 で subject が空なら、prevSubject を借りる（KB借りより先）
       const shouldBorrowSubject =
         !subjectTopic &&
         Boolean(prevSubject) &&
@@ -1728,14 +1922,19 @@ export async function POST(req: Request) {
       // implicit shift で sticky を外す
       const hasAuditWordsNow = hasTaxAuditWordsLite(message);
       const implicitShiftUnstick =
-        implicitShift && Boolean((decision as any)?.taxAuditSticky) && !hasAuditWordsNow && !lineRequest && !followupExplicit && !followupOnly;
+        implicitShift &&
+        Boolean((decision as any)?.taxAuditSticky) &&
+        !hasAuditWordsNow &&
+        !lineRequest &&
+        !followupExplicit &&
+        !followupOnly;
 
       if (implicitShiftUnstick) {
         auditAxis = false;
       }
 
       // axisTopic
-      const historyAxisRaw = implicitShift ? "" : (inferTopicFromHistory(prevUserMessage, prevAssistantMessage) || "");
+      const historyAxisRaw = implicitShift ? "" : inferTopicFromHistory(prevUserMessage, prevAssistantMessage) || "";
       const decisionAxisCandidate = (() => {
         const x = String((decision as any).axisTopic ?? "").trim();
         if (!x) return "";
@@ -1743,12 +1942,15 @@ export async function POST(req: Request) {
         return x;
       })();
 
-      const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : (subjectTopic || decisionAxisCandidate || historyAxisRaw || "");
+      const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : subjectTopic || decisionAxisCandidate || historyAxisRaw || "";
 
-      const shifted = implicitShift ? true : (Boolean((decision as any)?.taxAuditSticky) ? false : shiftedRaw);
+      const shifted = implicitShift ? true : Boolean((decision as any)?.taxAuditSticky) ? false : shiftedRaw;
 
       // ===== 3) lens =====
       const lensInputUsePrev = (followupOnly || weakUtterance) && Boolean(prevUserMessage);
+      const lensMessage =
+        lensInputUsePrev && prevUserMessage ? String(prevUserMessage) : message;
+
       const lensRule: Lens = inferLensWithContext({
         message,
         axisTopic,
@@ -1757,17 +1959,20 @@ export async function POST(req: Request) {
       });
 
       const usedSajikagen = /さじかげん/.test(message ?? "");
-      const lensLLM = await inferLensByLLM({ message });
+
+      // ★ followup の合言葉は “lensMessage（前の実質問）” を見て判定する
+      const lensLLM = await inferLensByLLM({ message: lensMessage });
 
       const lensMerged: Lens = lensLLM.confidence >= 0.6 ? lensLLM.lens : lensRule;
       let lensPre: Lens = lensMerged;
 
-      if (llmIntent === "need_lines") lensPre = "amount";
+      // need_lines でも「金額相談の根拠」がある時だけ amount を強める（無条件上書きはしない）
+      if (llmIntent === "need_lines" && isAmountAsk(lensMessage)) lensPre = "amount";
       if (llmIntent === "clarify") lensPre = "substance";
 
       const lens: Lens = adjustLensByConversation({
         lens: lensPre,
-        message,
+        lensMessage,
         subjectTopic,
         axisTopic,
         llmIntent,
@@ -1791,20 +1996,25 @@ export async function POST(req: Request) {
       if (lineRequestEffective) forceNormalAnswer = false;
 
       const keepLines = lineRequestEffective || lensChanged;
-      const linesKeepReason = keepLines
-        ? lineRequestEffective
-          ? (linesBlockedNoSubject ? "keep:line_request_blocked:llm_no_subject" : "keep:line_request")
-          : `keep:lens_changed:${prevLens}->${lens}`
-        : "cooldown:prev_was_lines";
-
       const linesCooldown = prevWasLines && !keepLines;
       if (linesCooldown) forceNormalAnswer = true;
+
+      // ★ keep_reason の整合（applied とズレない）
+      const linesKeepReason = lineRequestEffective
+        ? linesBlockedNoSubject
+          ? "keep:line_request_blocked:llm_no_subject"
+          : "keep:line_request"
+        : lensChanged
+        ? `keep:lens_changed:${prevLens}->${lens}`
+        : linesCooldown
+        ? "cooldown:prev_was_lines"
+        : "no_keep";
 
       // ===== 5) knowledge fetch =====
       const globalRules = await retrieveGlobalRules({ db });
 
       // topicsNow0 は “KB拾いの補助”として subject/topicNow を使う（空で突っ込まない）
-      const topicsNowForKb = topicsNow.length > 0 ? topicsNow : (subjectTopic ? [subjectTopic] : []);
+      const topicsNowForKb = topicsNow.length > 0 ? topicsNow : subjectTopic ? [subjectTopic] : [];
       let topicKbItems = await retrieveKnowledgeByBuckets({
         db,
         auditAxis,
@@ -1812,20 +2022,6 @@ export async function POST(req: Request) {
         topicsNow: topicsNowForKb,
         maxTotal: 10,
       });
-
-      // KB借り（主題は既に借りてるので messageだけ借りる）
-      const shouldBorrowPrevTopicKb =
-        followup && topicKbItems.length === 0 && topicsNow.length === 0 && Boolean(prevUserMessage) && (weakUtterance || !shifted);
-
-      if (shouldBorrowPrevTopicKb && prevUserMessage) {
-        topicKbItems = await retrieveKnowledgeByBuckets({
-          db,
-          auditAxis,
-          subjectTopic,
-          topicsNow: topicsNowForKb,
-          maxTotal: 10,
-        });
-      }
 
       const linesPrefaceQa = pickLinesPrefaceQa(topicKbItems);
 
@@ -1845,41 +2041,28 @@ export async function POST(req: Request) {
       const cAudit = qaLimited.bucketCounts.audit;
       const cOther = qaLimited.bucketCounts.other;
 
+      // ===== meta（判定順に並べる：まず「事実」→「決定」→「取得」→「出力」） =====
       const meta: DebugMeta = {
-        picked_qa: buildPickedQaMeta(pickedQaForPrompt, 10),
-        picked_lines: [],
-        axis_topic: axisTopic,
-        subject_topic: subjectTopic,
-        audit_axis: auditAxis,
-        used_sajikagen: usedSajikagen,
-
+        // input
         topic_raw: message,
         topic_raw_json: JSON.stringify(message),
         topic_codepoints_tail: codepointsTail(message, 30),
         topic_normalized: topicsNowDbg.normalized,
         topic_hits: topicsNowDbg.hits,
 
-        prev_debug_path: prevDebug?.path ?? "",
-        prev_debug_lens: prevDebug?.lens ?? "",
-        lines_cooldown_applied: Boolean(linesCooldown),
-        lines_keep_reason: linesKeepReason,
-        lines_blocked_no_subject: Boolean(linesBlockedNoSubject),
-        lines_suppressed_short_ack: Boolean(suppressLinesByShortAck),
-
-        borrowed_prev_topic: Boolean(shouldBorrowSubject),
-        weak_utterance: weakUtterance,
+        // prev
         prev_user_head: dbgHead(prevUserMessage ?? "", 80),
         prev_user_len: (prevUserMessage ?? "").length,
+        prev_debug_path: prevDebug?.path ?? "",
+        prev_debug_lens: prevDebug?.lens ?? "",
 
-        kb_bucket_counts: { subject: cSubject, audit: cAudit, other: cOther },
-        tax_audit_sticky_reason: implicitShiftUnstick ? `implicit_shift_unstick:${(decision as any).reason}` : String((decision as any).reason ?? ""),
-
+        // followup/clarify
+        weak_utterance: weakUtterance,
         clarify_prev_answer: clarifyPrevAnswer,
         clarify_term: clarify.term || "",
         clarify_matched: clarify.matched || "",
-        implicit_shift: Boolean(implicitShift),
-        implicit_shift_unstick: Boolean(implicitShiftUnstick),
 
+        // topic decision
         topic_mode: topicMode,
         llm_topic_ok: llmOk,
         llm_topic_error: llmErr,
@@ -1887,128 +2070,137 @@ export async function POST(req: Request) {
         llm_intent: llmIntent,
         llm_confidence: llmConfidence,
         llm_reason: llmReason,
+
+        subject_topic: subjectTopic,
+        axis_topic: axisTopic,
+        audit_axis: auditAxis,
+
+        borrowed_prev_topic: Boolean(shouldBorrowSubject),
+        implicit_shift: Boolean(implicitShift),
+        implicit_shift_unstick: Boolean(implicitShiftUnstick),
+        tax_audit_sticky_reason: implicitShiftUnstick
+          ? `implicit_shift_unstick:${String((decision as any).reason ?? "")}`
+          : String((decision as any).reason ?? ""),
+
+        // lens decision
+        lens_message_head: dbgHead(lensMessage, 80),
+        lens_rule: lensRule,
+        lens_llm: lensLLM.lens,
+        lens_llm_confidence: lensLLM.confidence,
+        lens_pre: lensPre,
+        lens_final: lens,
+
+        // lines gating
+        line_request_effective: Boolean(lineRequestEffective),
+        allow_lines: Boolean(allowLines),
+        lines_keep_reason: linesKeepReason,
+        lines_cooldown_applied: Boolean(linesCooldown),
+        lines_blocked_no_subject: Boolean(linesBlockedNoSubject),
+        lines_suppressed_short_ack: Boolean(suppressLinesByShortAck),
+
+        // lines ctx/pick（デフォルト：未試行/失敗）
+        topic_for_lines: "",
+        lens_for_lines: lens,
+        lines_pick_attempted: false,
+        lines_pick_success: false,
+        lines_pick_lens_used: null,
+        picked_lines: [],
+
+        // knowledge
+        kb_bucket_counts: { subject: cSubject, audit: cAudit, other: cOther },
+        picked_kb_items: (topicKbItemsForPrompt ?? []).slice(0, 10).map((it) => ({
+          id: it.id,
+          kind: it.kind,
+          topic: it.topic,
+          title: it.title,
+          priority: it.priority,
+        })),
+        picked_qa: buildPickedQaMeta(pickedQaForPrompt, 10),
+
+        // output flags（後で埋める）
+        used_sajikagen: usedSajikagen,
+        built_head: "",
+        answer_has_rice: false,
+        answer_has_salt: false,
+        answer_has_attack_plain: false,
+        answer_has_defense_plain: false,
+        answer_head: "",
+        nudge_lines_llm: Boolean((decision as any).nudgeLines),
+        nudge_lines_reason: String((decision as any).nudgeReason ?? ""),
+        nudge_lines_applied: false,
       };
-
-      meta.lens_rule = lensRule;
-      meta.lens_llm = lensLLM.lens;
-      meta.lens_llm_confidence = lensLLM.confidence;
-      meta.lens_pre = lensPre;
-      meta.lens_final = lens;
-      meta.nudge_lines_llm = Boolean((decision as any).nudgeLines);
-      meta.nudge_lines_reason = String((decision as any).nudgeReason ?? "");
-
-      meta.picked_kb_items = (topicKbItemsForPrompt ?? []).slice(0, 10).map((it) => ({
-        id: it.id,
-        kind: it.kind,
-        topic: it.topic,
-        title: it.title,
-        priority: it.priority,
-      }));
 
       let usedLinesPick = false;
       let path: DebugTrace["path"] = "normal_llm";
 
-      // ===== A) followup_lines =====
-      // 偽Lines根絶：allowLines でも topicForLines が空ならここに入らない（normalへ）
+      // ===== A) followup_lines（Linesのみ：取れなければ🍚🧂体裁に入らない） =====
       if (!answer && allowLines && !forceNormalAnswer && (subjectTopic || axisTopic)) {
         const header = stance === "zubatto" ? "判断の軸だけ整理する。" : "判断の軸だけ整理します。";
         const topicForLines = subjectTopic || axisTopic;
 
-        let built: string | null = null;
+        meta.topic_for_lines = topicForLines;
+        meta.lens_for_lines = lens;
+        meta.lines_pick_attempted = true;
 
         const picked = await retrieveKnowledgeLines({
           db,
           topic: topicForLines,
           lens,
-          messageForMatch: message,
+          messageForMatch: lensMessage, // ★ followup は前の実質問をマッチ材料にする
         });
 
-        built = buildFollowupAnswerFromLines(picked);
+        meta.lines_pick_lens_used = picked.lensUsed;
+
+        const built = buildFollowupAnswerFromLines(picked);
+
         if (built) {
           usedLinesPick = true;
           path = "followup_lines";
-          meta.picked_lines = buildPickedLinesMeta(picked);
-        }
+          meta.lines_pick_success = true;
+          meta.picked_lines = buildPickedLinesMeta({ attack: picked.attack, defense: picked.defense });
+          meta.built_head = dbgHead(built, 240);
 
-        if (!built) {
-          const hit = buildFollowupAnswerFromKbWithPick(topicKbItems);
-          if (hit) {
-            built = hit.text;
-            path = "followup_kb";
-            meta.picked_qa =
-              hit.picked.kind === "qa"
-                ? [{ id: hit.picked.id, title: hit.picked.title, priority: hit.picked.priority, topic: hit.picked.topic }]
-                : meta.picked_qa;
-          }
-        }
+          const pre = buildLinesPreamble({
+            topic: topicForLines,
+            axisTopic,
+            dialect,
+            stance,
+            qa: linesPrefaceQa,
+          });
 
-        if (!built) {
-          const fb = fallbackAttackDefense(topicForLines, lens);
-          built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
-          path = "followup_fallback";
-        }
+          const footer = followupFooter(axisTopic, dialect, stance);
 
-        // 最終検品：片側欠損禁止
-        const builtOk =
-          !!built &&
-          /🍚\s*攻め\s*[:：]\s*\S/.test(built) &&
-          /🧂\s*守り\s*[:：]\s*\S/.test(built);
+          const inquiryOverride =
+            auditAxis && subjectTopic && AUDIT_OVERLAY_TOPICS.has(subjectTopic)
+              ? inquiryLineWithAuditCTA(dialect, stance, subjectTopic)
+              : inquiryLine(dialect, stance);
 
-        if (!builtOk) {
-          usedLinesPick = false;
-          meta.picked_lines = [];
-          const fb = fallbackAttackDefense(topicForLines, lens);
-          built = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
-          path = "followup_fallback";
-        }
+          const parts: string[] = [];
+          parts.push(header, "", pre.text, "", built);
+          if (footer) parts.push("", footer);
+          parts.push("", inquiryOverride);
 
-        const pre = buildLinesPreamble({ topic: topicForLines, axisTopic, dialect, stance, qa: linesPrefaceQa });
-        const footer = followupFooter(axisTopic, dialect, stance);
-
-        const inquiryOverride =
-          auditAxis && subjectTopic && AUDIT_OVERLAY_TOPICS.has(subjectTopic)
-            ? inquiryLineWithAuditCTA(dialect, stance, subjectTopic)
-            : inquiryLine(dialect, stance);
-
-        const parts: string[] = [];
-        parts.push(header, "", pre.text, "", built);
-        if (footer) parts.push("", footer);
-        parts.push("", inquiryOverride);
-
-        meta.built_head = dbgHead(built ?? "", 240);
-
-        answer = postProcessAnswer(parts.join("\n").trim(), dialect, stance, {
-          usedKnowledge: true,
-          allowAttackDefenseDetail: true,
-          inquiryOverride,
-        });
-
-        const reAttack = /(^|\n)\s*🍚\s*攻め\s*[:：]\s*\S/;
-        const reDefense = /(^|\n)\s*🧂\s*守り\s*[:：]\s*\S/;
-        if (!reAttack.test(answer) || !reDefense.test(answer)) {
-          usedLinesPick = false;
-          meta.picked_lines = [];
-          const fb = fallbackAttackDefense(topicForLines, lens);
-          const built2 = `🍚攻め：${fb.attack}\n🧂守り：${fb.defense}`.trim();
-          meta.built_head = dbgHead(built2, 240);
-          path = "followup_fallback";
-
-          const parts2: string[] = [];
-          parts2.push(header, "", pre.text, "", built2);
-          if (footer) parts2.push("", footer);
-          parts2.push("", inquiryOverride);
-
-          answer = postProcessAnswer(parts2.join("\n").trim(), dialect, stance, {
+          answer = postProcessAnswer(parts.join("\n").trim(), dialect, stance, {
             usedKnowledge: true,
             allowAttackDefenseDetail: true,
             inquiryOverride,
           });
+        } else {
+          // ★ Lines が取れない＝偽🍚🧂は禁止。normal_llm に落とす（メタだけ残す）
+          usedLinesPick = false;
+          meta.lines_pick_success = false;
+          meta.picked_lines = [];
         }
       }
 
       // ===== B) topic未確定だけ clarify（弱発話の時だけ）=====
       const needTopicClarify =
-        !answer && !axisTopic && !subjectTopic && topicsNow.length === 0 && topicKbItemsForPrompt.length === 0 && (followupOnly || weakUtterance);
+        !answer &&
+        !axisTopic &&
+        !subjectTopic &&
+        topicsNow.length === 0 &&
+        topicKbItemsForPrompt.length === 0 &&
+        (followupOnly || weakUtterance);
 
       const topicClarifyInquiry =
         "🔎確認 どの話の相談かだけ教えて（例：交際費/出張手当/外注/家事按分/福利厚生/役員報酬/車両/消費税/税務調査/退職金/不動産/相続・承継）。";
@@ -2037,12 +2229,12 @@ export async function POST(req: Request) {
         meta.qa_pick_reason = isQaMore ? `${pickedQa.reason}|qa_more:second_qa` : pickedQa.reason;
       }
 
-      // ===== C) normal_llm =====
+      // ===== C) normal_llm（LLMは🍚🧂を生成しない。LinesはLinesのみ） =====
       if (!answer) {
         const usedKnowledge = topicKbItemsForPrompt.length > 0;
 
-        const allowAttackDefenseDetail = allowLines && lineRequestEffective;
-        const allowAttackDefenseDetailEffective = allowAttackDefenseDetail && !linesCooldown && !forceNormalAnswer;
+        // ★ ここが肝：LLMに🍚🧂を作らせない（偽Lines根絶）
+        const allowAttackDefenseDetailEffective = false;
 
         const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefenseDetailEffective });
 
@@ -2065,21 +2257,23 @@ export async function POST(req: Request) {
 
         const systemBias =
           lens === "system"
-            ? ["重要：制度（規程/届出/要件）の説明だけで終わらず、最初に『実態の地雷（運用のズレ）』を1つ提示してから制度の話に入る。ネット一般論の羅列は禁止。"]
+            ? [
+                "重要：制度（規程/届出/要件）の説明だけで終わらず、最初に『実態の地雷（運用のズレ）』を1つ提示してから制度の話に入る。ネット一般論の羅列は禁止。",
+              ]
             : [];
 
         const amountBias =
           lens === "amount"
             ? [
-                allowAttackDefenseDetail
-                  ? "重要：金額/レンジの相談。🍚攻め・🧂守りの各行に、条件付きの目安レンジ（例：〜円〜〜円）を必ず入れる。断定しない。"
-                  : "重要：金額/レンジの相談。🥄ちょうど良いラインの中で『守り寄りの目安』『攻め寄りの目安』を2行で必ず出す。🍚攻め/🧂守りは初回は出さない。断定しない。",
+                "重要：金額/レンジの相談。🥄ちょうど良いラインの中で『守り寄りの目安』『攻め寄りの目安』を2行で必ず出す。断定しない。",
               ]
             : [];
 
         const auditIntakeHint =
           axisTopic === TOPIC_TAX_AUDIT && /(最初|初動|電話|連絡|窓口|誰に)/.test(message)
-            ? ["重要：顧問税理士がいる前提。税務調査の初動連絡は税理士宛/会社宛どちらもあり得るが、社長が単独で抱えない。「税理士に確認して折り返す」でOK。"]
+            ? [
+                "重要：顧問税理士がいる前提。税務調査の初動連絡は税理士宛/会社宛どちらもあり得るが、社長が単独で抱えない。「税理士に確認して折り返す」でOK。",
+              ]
             : [];
 
         const clarifyBias =
@@ -2125,7 +2319,7 @@ export async function POST(req: Request) {
           usedKnowledge,
           allowAttackDefenseDetail: allowAttackDefenseDetailEffective,
           inquiryOverride,
-          llmIntent: (topicMode === "llm" && llmOk ? llmIntent : null),
+          llmIntent: topicMode === "llm" && llmOk ? llmIntent : null,
         });
 
         path = "normal_llm";
@@ -2166,6 +2360,8 @@ export async function POST(req: Request) {
       if (implicitShiftUnstick && prevAxisTopic === TOPIC_TAX_AUDIT) {
         answer = insertLineBeforeInquiry(answer, auditEssenceOneLine(dialect, stance));
         meta.audit_essence_injected = true;
+      } else {
+        meta.audit_essence_injected = false;
       }
 
       const trace: DebugTrace = {
@@ -2190,7 +2386,10 @@ export async function POST(req: Request) {
       emitDebug(trace);
       await writeDebugEvent({ db, trace });
     } catch (e: any) {
-      return NextResponse.json({ ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes, { status: 502 });
+      return NextResponse.json(
+        { ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes,
+        { status: 502 }
+      );
     }
 
     const { data, error } = await db.rpc("consume_talk_v2", {
@@ -2199,13 +2398,29 @@ export async function POST(req: Request) {
       p_idempotency_key: idempotencyKey,
     });
 
-    if (error) return NextResponse.json({ ok: false, error: `consume_talk_v2 failed: ${error.message}` } satisfies ChatRes, { status: 500 });
+    if (error)
+      return NextResponse.json(
+        { ok: false, error: `consume_talk_v2 failed: ${error.message}` } satisfies ChatRes,
+        { status: 500 }
+      );
 
     const usage = (Array.isArray(data) ? data[0] : data) as ConsumeTalkV2Result | null;
-    if (!usage) return NextResponse.json({ ok: false, error: "consume_talk_v2: empty result" } satisfies ChatRes, { status: 500 });
+    if (!usage)
+      return NextResponse.json(
+        { ok: false, error: "consume_talk_v2: empty result" } satisfies ChatRes,
+        { status: 500 }
+      );
 
     if (!usage.allowed) {
-      return NextResponse.json({ ok: false, error: "Monthly quota exceeded", used_talks: usage.used_talks, limit_talks: usage.limit_talks } satisfies ChatRes, { status: 429 });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Monthly quota exceeded",
+          used_talks: usage.used_talks,
+          limit_talks: usage.limit_talks,
+        } satisfies ChatRes,
+        { status: 429 }
+      );
     }
 
     try {
@@ -2216,10 +2431,20 @@ export async function POST(req: Request) {
     } catch {}
 
     return NextResponse.json(
-      { ok: true, plan, used_talks: usage.used_talks, limit_talks: usage.limit_talks, conversation_id: convId, message: answer } satisfies ChatRes,
+      {
+        ok: true,
+        plan,
+        used_talks: usage.used_talks,
+        limit_talks: usage.limit_talks,
+        conversation_id: convId,
+        message: answer,
+      } satisfies ChatRes,
       { status: 200 }
     );
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" } satisfies ChatRes, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e?.message ?? "Unknown error" } satisfies ChatRes,
+      { status: 500 }
+    );
   }
 }
