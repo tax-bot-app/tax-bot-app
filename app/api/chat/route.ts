@@ -255,6 +255,7 @@ type DebugMeta = {
   answer_has_attack_plain?: boolean;
   answer_has_defense_plain?: boolean;
   answer_head?: string;
+  answer_full?: string;
 
   nudge_lines_llm?: boolean;
   nudge_lines_reason?: string;
@@ -2191,6 +2192,7 @@ export async function POST(req: Request) {
         answer_has_attack_plain: false,
         answer_has_defense_plain: false,
         answer_head: "",
+        answer_full: "",
         nudge_lines_llm: Boolean((decision as any).nudgeLines),
         nudge_lines_reason: String((decision as any).nudgeReason ?? ""),
         nudge_lines_applied: false,
@@ -2416,33 +2418,40 @@ export async function POST(req: Request) {
       answer = stripInternalLeaks(answer);
 
       // ===== nudge (catchphrase) gate =====
-      const reAttack = /(^|\n)\s*🍚\s*攻め\s*[:：]\s*\S/;
-      const reDefense = /(^|\n)\s*🧂\s*守り\s*[:：]\s*\S/;
-      meta.answer_has_rice = answer.includes("🍚");
-      meta.answer_has_salt = answer.includes("🧂");
-      meta.answer_has_attack_plain = reAttack.test(answer);
-      meta.answer_has_defense_plain = reDefense.test(answer);
-      meta.answer_head = dbgHead(answer, 200);
+const reAttack = /(^|\n)\s*🍚\s*攻め\s*[:：]\s*\S/;
+const reDefense = /(^|\n)\s*🧂\s*守り\s*[:：]\s*\S/;
 
-      const alreadyHasLines = meta.answer_has_attack_plain || meta.answer_has_defense_plain;
-      const alreadyPrompted = /攻め守りで|さじかげんよろ|さじかげんよろしく|さじかげん/.test(answer);
+// nudge 判定用（最終セットは後でやるので、ここでは暫定判定だけ）
+const hasAttackPlainBefore = reAttack.test(answer);
+const hasDefensePlainBefore = reDefense.test(answer);
+const alreadyHasLines = hasAttackPlainBefore || hasDefensePlainBefore;
+const alreadyPrompted = /攻め守りで|さじかげんよろ|さじかげんよろしく|さじかげん/.test(answer);
 
-      const wantNudgeByLLM = topicMode === "llm" && llmOk && Boolean((decision as any).nudgeLines);
+const wantNudgeByLLM = topicMode === "llm" && llmOk && Boolean((decision as any).nudgeLines);
 
-      const allowNudge =
-        wantNudgeByLLM &&
-        !alreadyHasLines &&
-        !alreadyPrompted &&
-        llmIntent !== "clarify" &&
-        !weakUtterance &&
-        !isShortAckLike(message);
+const allowNudge =
+  wantNudgeByLLM &&
+  !alreadyHasLines &&
+  !alreadyPrompted &&
+  llmIntent !== "clarify" &&
+  !weakUtterance &&
+  !isShortAckLike(message);
 
-      if (allowNudge) {
-        answer = `${answer}\n\n${catchphraseFor(dialect, stance)}`;
-        meta.nudge_lines_applied = true;
-      } else {
-        meta.nudge_lines_applied = false;
-      }
+if (allowNudge) {
+  answer = `${answer}\n\n${catchphraseFor(dialect, stance)}`;
+  meta.nudge_lines_applied = true;
+} else {
+  meta.nudge_lines_applied = false;
+}
+
+// ★ここで「最終 answer」に対して1回だけセット（CSVに出すのはこれ）
+meta.answer_full = answer;
+meta.answer_has_rice = answer.includes("🍚");
+meta.answer_has_salt = answer.includes("🧂");
+meta.answer_has_attack_plain = reAttack.test(answer);
+meta.answer_has_defense_plain = reDefense.test(answer);
+meta.answer_head = dbgHead(answer, 200);
+
 
       const prevAxisTopic = (prevDebug?.axisTopic ?? "").trim();
       if (implicitShiftUnstick && prevAxisTopic === TOPIC_TAX_AUDIT) {

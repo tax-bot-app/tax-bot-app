@@ -52,7 +52,7 @@ function toCsv(rows: Record<string, unknown>[], headers: string[]): string {
 
 function jsonish(v: unknown): string {
   if (v === null || v === undefined) return "";
-  if (typeof v === "string") return v; // 既にJSON文字列として入ってるケースもある
+  if (typeof v === "string") return v;
   try {
     return JSON.stringify(v);
   } catch {
@@ -109,7 +109,6 @@ export async function GET(req: Request) {
 
     const u = new URL(req.url);
     const limit = clampInt(u.searchParams.get("limit"), 50, 1, 200);
-
     const topic = safeStr(u.searchParams.get("topic")).trim();
     const lens = safeStr(u.searchParams.get("lens")).trim();
     const path = safeStr(u.searchParams.get("path")).trim();
@@ -118,12 +117,9 @@ export async function GET(req: Request) {
     const q = safeStr(u.searchParams.get("q")).trim();
     const format = safeStr(u.searchParams.get("format")).trim().toLowerCase();
 
-    // NEW: created_at range
-    const from = safeStr(u.searchParams.get("from")).trim(); // ISO string 推奨
+    // created_at range（NEW/任意）
+    const from = safeStr(u.searchParams.get("from")).trim();
     const to = safeStr(u.searchParams.get("to")).trim();
-
-    // NEW: conversation_id filter
-    const conversationId = safeStr(u.searchParams.get("conversation_id")).trim();
 
     let query = db
       .from("chat_debug_events")
@@ -136,7 +132,6 @@ export async function GET(req: Request) {
     if (from) query = query.gte("created_at", from);
     if (to) query = query.lte("created_at", to);
 
-    if (conversationId) query = query.eq("conversation_id", conversationId);
     if (topic) query = query.eq("inferred_topic", topic);
     if (lens) query = query.eq("lens", lens);
     if (path) query = query.eq("path", path);
@@ -153,32 +148,24 @@ export async function GET(req: Request) {
 
     if (format === "csv") {
       const headers = [
-        // 基本
         "created_at",
         "conversation_id",
         "message_head",
         "topics_now",
         "inferred_topic",
-        "lens",
-        "followup",
-        "shifted",
-        "path",
-        "used_knowledge",
-        "used_lines_pick",
-
-        // トピック/軸
         "subject_topic",
         "axis_topic",
         "audit_axis",
-        "topic_mode",
+        "lens",
 
-        // LLM intent
+        // LLM
+        "topic_mode",
         "llm_intent",
         "llm_confidence",
         "llm_topic_ok",
         "llm_reason",
 
-        // レンズ（肝）
+        // lens（肝）
         "prefer_rule_lens",
         "lens_pre",
         "lens_rule",
@@ -192,73 +179,70 @@ export async function GET(req: Request) {
         "picked_lines",
         "allow_lines",
 
-        // Lines pick の実行状況
-        "lines_pick_attempted",
-        "lines_pick_lens_used",
-        "lines_pick_success",
+        // flow
+        "followup",
+        "shifted",
+        "borrowed_prev_topic",
+        "implicit_shift",
+        "weak_utterance",
 
-        // nudge lines（肝）
-        "nudge_lines_llm",
-        "nudge_lines_applied",
-        "nudge_lines_reason",
+        // output（★追加）
+        "answer_head",
+        "answer_full",
 
-        // topic debug
+        // debug extras
         "topic_raw",
         "topic_raw_json",
         "topic_codepoints_tail",
         "topic_normalized",
         "topic_hits",
 
-        // flow debug
         "prev_debug_path",
         "prev_debug_lens",
-        "borrowed_prev_topic",
-        "weak_utterance",
+
         "lines_cooldown_applied",
         "lines_keep_reason",
         "lines_blocked_no_subject",
         "lines_suppressed_short_ack",
 
-        // clarify / implicit shift
+        "lines_pick_attempted",
+        "lines_pick_success",
+        "lines_pick_lens_used",
+
+        "nudge_lines_llm",
+        "nudge_lines_applied",
+        "nudge_lines_reason",
+
         "clarify_prev_answer",
         "clarify_term",
         "clarify_matched",
-        "implicit_shift",
         "implicit_shift_unstick",
         "audit_essence_injected",
       ];
 
       const csvRows = rows.map((r: any) => {
         const meta = r?.meta ?? {};
+
         return {
-          // 基本
           created_at: safeStr(r?.created_at),
           conversation_id: safeStr(r?.conversation_id),
           message_head: safeStr(r?.message_head),
           topics_now: Array.isArray(r?.topics_now) ? r.topics_now.join(" | ") : safeStr(r?.topics_now),
-          inferred_topic: safeStr(r?.inferred_topic),
-          lens: safeStr(r?.lens),
-          followup: String(Boolean(r?.followup)),
-          shifted: String(Boolean(r?.shifted)),
-          path: safeStr(r?.path),
-          used_knowledge: String(Boolean(r?.used_knowledge)),
-          used_lines_pick: String(Boolean(r?.used_lines_pick)),
 
-          // トピック/軸
+          inferred_topic: safeStr(r?.inferred_topic),
           subject_topic: safeStr(meta?.subject_topic ?? ""),
           axis_topic: safeStr(meta?.axis_topic ?? ""),
           audit_axis: String(Boolean(meta?.audit_axis)),
-          topic_mode: safeStr(meta?.topic_mode ?? ""),
+          lens: safeStr(r?.lens),
 
           // LLM
+          topic_mode: safeStr(meta?.topic_mode ?? ""),
           llm_intent: safeStr(meta?.llm_intent ?? ""),
-          llm_confidence:
-            meta?.llm_confidence === undefined || meta?.llm_confidence === null ? "" : String(meta.llm_confidence),
-          llm_topic_ok:
-            meta?.llm_topic_ok === undefined || meta?.llm_topic_ok === null ? "" : String(Boolean(meta.llm_topic_ok)),
+          llm_confidence: meta?.llm_confidence === undefined || meta?.llm_confidence === null ? "" : String(meta.llm_confidence),
+          llm_topic_ok: meta?.llm_topic_ok === undefined || meta?.llm_topic_ok === null ? "" : String(Boolean(meta.llm_topic_ok)),
           llm_reason: safeStr(meta?.llm_reason ?? ""),
 
-          // レンズ（肝）
+          // lens
           prefer_rule_lens: String(Boolean(meta?.prefer_rule_lens)),
           lens_pre: safeStr(meta?.lens_pre ?? ""),
           lens_rule: safeStr(meta?.lens_rule ?? ""),
@@ -272,15 +256,16 @@ export async function GET(req: Request) {
           picked_lines: pickedLinesSimple(meta),
           allow_lines: String(Boolean(meta?.allow_lines)),
 
-          // lines pick
-          lines_pick_attempted: String(Boolean(meta?.lines_pick_attempted)),
-          lines_pick_lens_used: meta?.lines_pick_lens_used === null || meta?.lines_pick_lens_used === undefined ? "" : String(meta.lines_pick_lens_used),
-          lines_pick_success: String(Boolean(meta?.lines_pick_success)),
+          // flow
+          followup: String(Boolean(r?.followup)),
+          shifted: String(Boolean(r?.shifted)),
+          borrowed_prev_topic: String(Boolean(meta?.borrowed_prev_topic)),
+          implicit_shift: String(Boolean(meta?.implicit_shift)),
+          weak_utterance: String(Boolean(meta?.weak_utterance)),
 
-          // nudge lines
-          nudge_lines_llm: String(Boolean(meta?.nudge_lines_llm)),
-          nudge_lines_applied: String(Boolean(meta?.nudge_lines_applied)),
-          nudge_lines_reason: safeStr(meta?.nudge_lines_reason ?? ""),
+          // output（★追加）
+          answer_head: safeStr(meta?.answer_head ?? ""),
+          answer_full: safeStr(meta?.answer_full ?? ""),
 
           // topic debug
           topic_raw: safeStr(meta?.topic_raw ?? ""),
@@ -292,18 +277,27 @@ export async function GET(req: Request) {
           // flow debug
           prev_debug_path: safeStr(meta?.prev_debug_path ?? ""),
           prev_debug_lens: safeStr(meta?.prev_debug_lens ?? ""),
-          borrowed_prev_topic: String(Boolean(meta?.borrowed_prev_topic)),
-          weak_utterance: String(Boolean(meta?.weak_utterance)),
+
+          // lines gating
           lines_cooldown_applied: String(Boolean(meta?.lines_cooldown_applied)),
           lines_keep_reason: safeStr(meta?.lines_keep_reason ?? ""),
           lines_blocked_no_subject: String(Boolean(meta?.lines_blocked_no_subject)),
           lines_suppressed_short_ack: String(Boolean(meta?.lines_suppressed_short_ack)),
 
+          // lines pick
+          lines_pick_attempted: String(Boolean(meta?.lines_pick_attempted)),
+          lines_pick_success: String(Boolean(meta?.lines_pick_success)),
+          lines_pick_lens_used: meta?.lines_pick_lens_used === null || meta?.lines_pick_lens_used === undefined ? "" : String(meta.lines_pick_lens_used),
+
+          // nudge
+          nudge_lines_llm: String(Boolean(meta?.nudge_lines_llm)),
+          nudge_lines_applied: String(Boolean(meta?.nudge_lines_applied)),
+          nudge_lines_reason: safeStr(meta?.nudge_lines_reason ?? ""),
+
           // clarify / implicit shift
           clarify_prev_answer: String(Boolean(meta?.clarify_prev_answer)),
           clarify_term: safeStr(meta?.clarify_term ?? ""),
           clarify_matched: safeStr(meta?.clarify_matched ?? ""),
-          implicit_shift: String(Boolean(meta?.implicit_shift)),
           implicit_shift_unstick: String(Boolean(meta?.implicit_shift_unstick)),
           audit_essence_injected: String(Boolean(meta?.audit_essence_injected)),
         };
