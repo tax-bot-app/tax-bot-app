@@ -1627,9 +1627,14 @@ async function writeDebugEvent(params: { db: any; trace: DebugTrace }) {
       force_normal_answer: trace.forceNormalAnswer,
       meta: trace.meta ?? {},
     });
-  } catch (e) {
-    console.error("[chat-debug-db-failed]", e);
-  }
+  } catch (e: any) {
+  console.error("[chat-debug-db-failed]", {
+    message: String(e?.message ?? e ?? ""),
+    details: e?.details,
+    hint: e?.hint,
+    code: e?.code,
+  });
+}
 }
 function emitDebug(trace: DebugTrace) {
   console.log(`[chat-trace] ${JSON.stringify(trace)}`);
@@ -1841,40 +1846,39 @@ if (gr.action === "block") {
       if (mErr) throw mErr;
     }
 
-    // ③ chat_debug_events にも必ず残す（CSVに出る）
-    // nullable想定でも、booleanは明示で入れて事故回避
-    const { error: dErr } = await db.from("chat_debug_events").insert({
-  user_id: user.id,
-  conversation_id: convId,
-  created_at: nowIso,
+    // ③ chat_debug_events（共通関数経由で書く：形式を統一＆失敗理由をログで見える化）
+await writeDebugEvent({
+  db,
+  trace: {
+    userId: user.id,
+    convId: convId || null,
+    messageHead: message.slice(0, 80),
 
-  message_head: message.slice(0, 80),
+    topicsNow: null,
+    inferredTopic: null,
+    lens: null,
 
-  // boolean系は全部埋めて事故らせない
-  followup: false,
-  followup_phase: false,
-  followup_explicit: false,
-  line_request: false,
-  force_normal_answer: false,
-  shifted: false,
-  used_knowledge: false,
-  used_lines_pick: false,
+    followup: false,
+    shifted: false,
 
-  topics_now: null,
-  inferred_topic: null,
-  lens: null,
+    usedKnowledge: false,
+    usedLinesPick: false,
 
-  path: "guardrail:block",
-  meta: {
-    guardrail_action: "block",
-    guardrail_reason: (gr as any)?.reason ?? null,
-    dialect,
-    stance,
-  },
+    followupPhase: false,
+    followupExplicit: false,
+    lineRequest: false,
+    forceNormalAnswer: false,
+
+    path: "guardrail:block",
+    meta: {
+      guardrail_action: "block",
+      guardrail_reason: (gr as any)?.reason ?? null,
+      dialect,
+      stance,
+    },
+  } as any,
 });
 
-
-    if (dErr) throw dErr;
   } catch (e) {
     // DB側でコケても “ユーザーには回答返す”
     // （ここで throw すると again thinking 地獄になる）
