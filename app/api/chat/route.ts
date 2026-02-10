@@ -1606,7 +1606,6 @@ function buildPickedLinesMeta(picked: { attack: KnowledgeLine | null; defense: K
 }
 
 /** ===== debug write ===== */
-/** ===== debug write ===== */
 async function writeDebugEvent(params: { db: any; trace: DebugTrace }) {
   const { db, trace } = params;
 
@@ -1638,6 +1637,7 @@ async function writeDebugEvent(params: { db: any; trace: DebugTrace }) {
     });
   }
 }
+
 
 function emitDebug(trace: DebugTrace) {
   console.log(`[chat-trace] ${JSON.stringify(trace)}`);
