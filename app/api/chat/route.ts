@@ -114,16 +114,22 @@ type ChatRes =
       limit_talks: number | null;
       conversation_id: string | null;
       message: string;
-      / ★追加（任意）
-      guardrail_block?: boolean;
-      guardrail_action?: "block" | "inject" | "none";
+// ★追加（任意）
+guardrail_block?: boolean;
+guardrail_action?: "block" | "inject" | "none";
     }
   | {
       ok: false;
       error: string;
       used_talks?: number | null;
       limit_talks?: number | null;
+      conversation_id?: string | null;
+
+      // ★追加（任意）
+      guardrail_block?: boolean;
+      guardrail_action?: "block" | "inject" | "none";
     };
+
 
 type Dialect = "kansai" | "standard";
 type Stance = "zubatto" | "sanbo";
@@ -1838,29 +1844,35 @@ if (gr.action === "block") {
     // ③ chat_debug_events にも必ず残す（CSVに出る）
     // nullable想定でも、booleanは明示で入れて事故回避
     const { error: dErr } = await db.from("chat_debug_events").insert({
-      user_id: user.id,
-      conversation_id: convId,
-      created_at: nowIso,
+  user_id: user.id,
+  conversation_id: convId,
+  created_at: nowIso,
 
-      // ここは “CSVの見やすさ” のため
-      message_head: message.slice(0, 80),
+  message_head: message.slice(0, 80),
 
-      followup: false,
-      shifted: false,
-      used_knowledge: false,
-      used_lines_pick: false,
+  // boolean系は全部埋めて事故らせない
+  followup: false,
+  followup_phase: false,
+  followup_explicit: false,
+  line_request: false,
+  force_normal_answer: false,
+  shifted: false,
+  used_knowledge: false,
+  used_lines_pick: false,
 
-      inferred_topic: null,
-      lens: null,
-      topics_now: null,
+  topics_now: null,
+  inferred_topic: null,
+  lens: null,
 
-      path: "guardrail:block",
-      meta: {
-        guardrail_action: "block",
-        // judge.ts の型に reason があるなら残す（なければ null）
-        guardrail_reason: (gr as any)?.reason ?? null,
-      },
-    });
+  path: "guardrail:block",
+  meta: {
+    guardrail_action: "block",
+    guardrail_reason: (gr as any)?.reason ?? null,
+    dialect,
+    stance,
+  },
+});
+
 
     if (dErr) throw dErr;
   } catch (e) {
