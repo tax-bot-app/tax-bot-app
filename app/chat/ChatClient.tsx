@@ -36,7 +36,30 @@ type ChatOk = {
   message: string;
 };
 type ChatNg = { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
-type ChatRes = ChatOk | ChatNg;
+
+type ChatRes =
+  | {
+      ok: true;
+      plan: string;
+      used_talks: number | null;
+      limit_talks: number | null;
+      message: string;
+      conversation_id: string | null;
+
+      guardrail_block?: boolean;
+      guardrail_action?: "block" | "inject" | "none";
+    }
+  | {
+      ok: false;
+      error: string;
+      used_talks?: number | null;
+      limit_talks?: number | null;
+      conversation_id?: string | null;
+
+      guardrail_block?: boolean;
+      guardrail_action?: "block" | "inject" | "none";
+    };
+
 
 type Dialect = "kansai" | "standard";
 type Stance = "zubatto" | "sanbo";
@@ -502,6 +525,8 @@ export default function ChatClient() {
         return;
       }
 
+      const isGuardrailBlock = Boolean((json as any)?.guardrail_block);
+
       const assistantId = crypto.randomUUID();
       const tempAssistant: MessageRow = {
         id: assistantId,
@@ -535,8 +560,8 @@ export default function ChatClient() {
       });
 
       setPlan(json.plan);
-      setUsedTalks(json.used_talks);
-      setLimitTalks(json.limit_talks);
+if (json.used_talks !== null && json.used_talks !== undefined) setUsedTalks(json.used_talks);
+if (json.limit_talks !== null && json.limit_talks !== undefined) setLimitTalks(json.limit_talks);
 
       const convId = json.conversation_id && isUuid(json.conversation_id) ? json.conversation_id : null;
 
@@ -547,8 +572,15 @@ export default function ChatClient() {
       }
 
       const effectiveConvId = convId || activeConversationId;
-      await loadThreads();
-      if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
+
+if (isGuardrailBlock && !effectiveConvId) {
+  // DB再読込すると表示が消える可能性があるのでスキップ
+  return;
+}
+
+await loadThreads();
+if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
+
     } catch (e: any) {
       if (await handleAuthishError(e)) return;
       setErrMsg(String(e?.message || "send failed"));

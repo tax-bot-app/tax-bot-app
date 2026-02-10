@@ -114,6 +114,9 @@ type ChatRes =
       limit_talks: number | null;
       conversation_id: string | null;
       message: string;
+      / ★追加（任意）
+      guardrail_block?: boolean;
+      guardrail_action?: "block" | "inject" | "none";
     }
   | {
       ok: false;
@@ -1783,12 +1786,105 @@ export async function POST(req: Request) {
     }
 
     const gr = judgeGuardrails(message);
-    if (gr.action === "block") {
-      return NextResponse.json(
-        { ok: true, plan, used_talks: null, limit_talks: null, conversation_id: null, message: gr.userMessage } satisfies ChatRes,
-        { status: 200 }
-      );
+
+if (gr.action === "block") {
+  const nowIso = new Date().toISOString();
+
+  // 既存 conversationId が来てれば使う（body の名前はあなたの route.ts に合わせて）
+  let convId: string | null =
+    typeof (body as any)?.conversationId === "string" ? String((body as any).conversationId) : null;
+
+  try {
+    // ① conversation を確保
+    if (!convId) {
+      const { data: conv, error: convErr } = await db
+        .from("conversations")
+        .insert({
+          user_id: user.id,
+          title: "（無題）",
+          summary: "",
+          summary_updated_at: nowIso,
+        })
+        .select("id")
+        .single();
+
+      if (convErr) throw convErr;
+      convId = conv?.id ? String(conv.id) : null;
     }
+
+    // ② messages に user / assistant を保存（loadMessagesで消えない）
+    if (convId) {
+      const rows = [
+        {
+          user_id: user.id,
+          conversation_id: convId,
+          role: "user",
+          content: message,
+          created_at: nowIso,
+        },
+        {
+          user_id: user.id,
+          conversation_id: convId,
+          role: "assistant",
+          content: gr.userMessage,
+          created_at: nowIso,
+        },
+      ];
+
+      const { error: mErr } = await db.from("messages").insert(rows);
+      if (mErr) throw mErr;
+    }
+
+    // ③ chat_debug_events にも必ず残す（CSVに出る）
+    // nullable想定でも、booleanは明示で入れて事故回避
+    const { error: dErr } = await db.from("chat_debug_events").insert({
+      user_id: user.id,
+      conversation_id: convId,
+      created_at: nowIso,
+
+      // ここは “CSVの見やすさ” のため
+      message_head: message.slice(0, 80),
+
+      followup: false,
+      shifted: false,
+      used_knowledge: false,
+      used_lines_pick: false,
+
+      inferred_topic: null,
+      lens: null,
+      topics_now: null,
+
+      path: "guardrail:block",
+      meta: {
+        guardrail_action: "block",
+        // judge.ts の型に reason があるなら残す（なければ null）
+        guardrail_reason: (gr as any)?.reason ?? null,
+      },
+    });
+
+    if (dErr) throw dErr;
+  } catch (e) {
+    // DB側でコケても “ユーザーには回答返す”
+    // （ここで throw すると again thinking 地獄になる）
+  }
+
+  // ④ レスポンス（フロントが判別できるフラグ付き）
+  return NextResponse.json(
+    {
+      ok: true,
+      plan,
+      used_talks: null,
+      limit_talks: null,
+      conversation_id: convId,
+      message: gr.userMessage,
+      guardrail_block: true,
+      guardrail_action: "block",
+    } as any,
+    { status: 200 }
+  );
+}
+
+
 
     const convId = await ensureConversationId({
       db,
