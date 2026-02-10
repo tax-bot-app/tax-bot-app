@@ -1606,36 +1606,39 @@ function buildPickedLinesMeta(picked: { attack: KnowledgeLine | null; defense: K
 }
 
 /** ===== debug write ===== */
+/** ===== debug write ===== */
 async function writeDebugEvent(params: { db: any; trace: DebugTrace }) {
   const { db, trace } = params;
-  try {
-    await db.from("chat_debug_events").insert({
-      user_id: trace.userId,
-      conversation_id: trace.convId || null,
-      message_head: trace.messageHead,
-      topics_now: trace.topicsNow,
-      inferred_topic: trace.inferredTopic,
-      lens: trace.lens,
-      followup: trace.followup,
-      shifted: trace.shifted,
-      path: trace.path,
-      used_knowledge: trace.usedKnowledge,
-      used_lines_pick: trace.usedLinesPick,
-      followup_phase: trace.followupPhase,
-      followup_explicit: trace.followupExplicit,
-      line_request: trace.lineRequest,
-      force_normal_answer: trace.forceNormalAnswer,
-      meta: trace.meta ?? {},
-    });
-  } catch (e: any) {
-  console.error("[chat-debug-db-failed]", {
-    message: String(e?.message ?? e ?? ""),
-    details: e?.details,
-    hint: e?.hint,
-    code: e?.code,
+
+  const { error } = await db.from("chat_debug_events").insert({
+    user_id: trace.userId,
+    conversation_id: trace.convId || null,
+    message_head: trace.messageHead,
+    topics_now: trace.topicsNow,
+    inferred_topic: trace.inferredTopic,
+    lens: trace.lens,
+    followup: trace.followup,
+    shifted: trace.shifted,
+    path: trace.path,
+    used_knowledge: trace.usedKnowledge,
+    used_lines_pick: trace.usedLinesPick,
+    followup_phase: trace.followupPhase,
+    followup_explicit: trace.followupExplicit,
+    line_request: trace.lineRequest,
+    force_normal_answer: trace.forceNormalAnswer,
+    meta: trace.meta ?? {},
   });
+
+  if (error) {
+    console.error("[chat-debug-db-failed]", {
+      message: error.message,
+      details: (error as any).details,
+      hint: (error as any).hint,
+      code: (error as any).code,
+    });
+  }
 }
-}
+
 function emitDebug(trace: DebugTrace) {
   console.log(`[chat-trace] ${JSON.stringify(trace)}`);
 }
