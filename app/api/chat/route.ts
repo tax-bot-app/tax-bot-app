@@ -1860,7 +1860,13 @@ export async function POST(req: Request) {
       const followupPhase = followupPhaseRaw && continuationLike;
       const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shiftedRaw);
 
-      const implicitShift = !clarifyPrevAnswer && !continuationLike && shiftedRaw && !isShortAckLike(message);
+      const implicitShift =
+  !weakUtterance &&
+  !clarifyPrevAnswer &&
+  !continuationLike &&
+  shiftedRaw &&
+  !isShortAckLike(message);
+
 
       let forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance;
       if (clarifyPrevAnswer && !lineRequest) forceNormalAnswer = true;
@@ -1964,15 +1970,21 @@ export async function POST(req: Request) {
         subjectTopic = prevSubject;
       }
 
-      // 弱発話/合言葉 で subject が空なら、prevSubject を借りる（KB借りより先）
-      const shouldBorrowSubject =
-        !subjectTopic &&
-        Boolean(prevSubject) &&
-        (followup && (lineRequestByPhrase || isShortAckLike(message) || weakUtterance));
+      // 弱発話/合言葉/短文追撃 で subject が空なら、prevSubject を借りる（KB借りより先）
+// ※ followup判定が外れても借りられるように「原因側（weak/ack/phase）」で判定する
+const shouldBorrowSubject =
+  !subjectTopic &&
+  Boolean(prevSubject) &&
+  (weakUtterance ||
+    isShortAckLike(message) ||
+    lineRequestByPhrase ||
+    followupOnly ||
+    followupPhase);
 
-      if (shouldBorrowSubject) {
-        subjectTopic = prevSubject;
-      }
+if (shouldBorrowSubject) {
+  subjectTopic = prevSubject;
+}
+
 
       // implicit shift で sticky を外す
       const hasAuditWordsNow = hasTaxAuditWordsLite(message);
@@ -1999,7 +2011,12 @@ export async function POST(req: Request) {
 
       const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : subjectTopic || decisionAxisCandidate || historyAxisRaw || "";
 
-      const shifted = implicitShift ? true : Boolean((decision as any)?.taxAuditSticky) ? false : shiftedRaw;
+      const shifted =
+  shouldBorrowSubject ? false :
+  implicitShift ? true :
+  Boolean((decision as any)?.taxAuditSticky) ? false :
+  shiftedRaw;
+
 
       // ===== 3) lens =====
       const lensInputUsePrev = (followupOnly || weakUtterance) && Boolean(prevUserMessage);
