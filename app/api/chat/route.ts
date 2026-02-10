@@ -1857,9 +1857,9 @@ await writeDebugEvent({
     convId: convId || null,
     messageHead: message.slice(0, 80),
 
-    topicsNow: null,
-    inferredTopic: null,
-    lens: null,
+    topicsNow: [],          // ★null禁止
+  inferredTopic: "",      // ★nullが怖いなら空文字
+  lens: "system",         // ★nullが怖いなら適当でOK（blockはsystem扱いで筋が良い）
 
     followup: false,
     shifted: false,
