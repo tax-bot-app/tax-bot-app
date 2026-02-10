@@ -192,6 +192,10 @@ type DebugMeta = {
   llm_intent?: string;
   llm_confidence?: number;
   llm_reason?: string;
+    // ★NEW: 話題転換の空気（LLM）
+  llm_shift_cue?: boolean;
+  llm_shift_cue_reason?: string;
+
 
   subject_topic?: string;
   axis_topic?: string;
@@ -202,6 +206,7 @@ type DebugMeta = {
   implicit_shift?: boolean;
   implicit_shift_unstick?: boolean;
   tax_audit_sticky_reason?: string;
+
 
   // ===== lens decision =====
   lens_message_head?: string;
@@ -1860,102 +1865,114 @@ export async function POST(req: Request) {
       const followupPhase = followupPhaseRaw && continuationLike;
       const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shiftedRaw);
 
-      const implicitShift =
-  !weakUtterance &&
+let llmShiftCue = false;
+let llmShiftCueReason = "";
+
+// ★ implicitShift は LLM結果も反映して後で確定する
+let implicitShift = false;
+
+let forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance;
+if (clarifyPrevAnswer && !lineRequest) forceNormalAnswer = true;
+
+// topic debug (regex)
+const topicsNowDbg = inferTopicsDebug(message, { max: 3 });
+const topicsNowRegex = topicsNowDbg.topics;
+
+const topicsPrevDbg = prevUserMessage ? inferTopicsDebug(prevUserMessage, { max: 3 }) : null;
+const topicsPrev = topicsPrevDbg?.topics ?? [];
+
+const recentUserMsgs = await (async () => {
+  const { data: rows } = await db
+    .from("messages")
+    .select("content")
+    .eq("conversation_id", convId)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(6);
+  return (rows ?? []).map((r) => String(r.content ?? ""));
+})();
+
+// ===== 1) decide topic (axis/subject) =====
+let decision = decideAxisSubject({
+  message,
+  topicsNow: topicMode === "regex" ? topicsNowRegex : [],
+  topicsPrev,
+  prevAssistantMessage,
+  recentUserMsgs,
+  continuationLike,
+  llmNudgeLines: false,
+  llmNudgeReason: "",
+});
+
+if (topicMode === "llm") {
+  const availableTopics = await fetchAvailableTopics(db);
+  const llm = await decideTopicByLLM({
+    message,
+    prevUserMessage: prevUserMessage ?? null,
+    prevAssistantMessage: prevAssistantMessage ?? null,
+    recentUserMsgs,
+    availableTopics,
+  });
+
+  llmRaw = llm.rawText ?? "";
+
+  if (llm.ok) {
+    llmOk = true;
+    llmIntent = llm.decision.intent;
+    llmConfidence = llm.decision.confidence;
+    llmReason = llm.decision.reason;
+    llmTopicsNow = llm.decision.topicsNow ?? [];
+    llmSubject = llm.decision.subjectTopic ?? "";
+    llmAxis = llm.decision.axisTopic ?? "";
+    llmAudit = Boolean(llm.decision.auditAxis);
+    llmNudgeLines = Boolean(llm.decision.nudgeLines);
+    llmNudgeReason = String(llm.decision.nudgeReason ?? "");
+
+    // ★NEW: 話題転換の空気（キーワード依存を避ける）
+    llmShiftCue = Boolean((llm.decision as any).shiftCue);
+    llmShiftCueReason = String((llm.decision as any).shiftCueReason ?? "");
+
+    decision = decideAxisSubject({
+      message,
+      topicsNow: llmTopicsNow.slice(0, 3),
+      topicsPrev,
+      prevAssistantMessage,
+      recentUserMsgs,
+      continuationLike,
+      llmNudgeLines,
+      llmNudgeReason,
+    });
+
+    // 最終反映（LLMが言うsubject/axis/auditがあるなら優先）
+    decision = {
+      ...decision,
+      subjectTopic: llmSubject || (decision as any).subjectTopic,
+      axisTopic: llmAxis || (decision as any).axisTopic,
+      auditAxis: llmAudit,
+      taxAuditSticky: llmAudit,
+      reason: `llm:${llmIntent}:${llmConfidence.toFixed(2)}:${llmReason || ""}`,
+      nudgeLines: llmNudgeLines,
+      nudgeReason: llmNudgeReason,
+    } as any;
+  } else {
+    llmOk = false;
+    llmErr = llm.error;
+  }
+}
+
+const topicsNow =
+  topicMode === "llm" ? (llmOk ? llmTopicsNow.slice(0, 3) : topicsNowRegex) : topicsNowRegex;
+
+// ★ここで implicitShift を確定（LLM shiftCue を反映）
+implicitShift =
+  (!weakUtterance || llmShiftCue) &&
   !clarifyPrevAnswer &&
   !continuationLike &&
   shiftedRaw &&
   !isShortAckLike(message);
+  
 
-
-      let forceNormalAnswer = followupPhase && !followupExplicit && !followupOnly && !lineRequest && !weakUtterance;
-      if (clarifyPrevAnswer && !lineRequest) forceNormalAnswer = true;
-
-      // topic debug (regex)
-      const topicsNowDbg = inferTopicsDebug(message, { max: 3 });
-      const topicsNowRegex = topicsNowDbg.topics;
-
-      const topicsPrevDbg = prevUserMessage ? inferTopicsDebug(prevUserMessage, { max: 3 }) : null;
-      const topicsPrev = topicsPrevDbg?.topics ?? [];
-
-      const recentUserMsgs = await (async () => {
-        const { data: rows } = await db
-          .from("messages")
-          .select("content")
-          .eq("conversation_id", convId)
-          .eq("role", "user")
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: false })
-          .limit(6);
-        return (rows ?? []).map((r) => String(r.content ?? ""));
-      })();
-
-      // ===== 1) decide topic (axis/subject) =====
-      let decision = decideAxisSubject({
-        message,
-        topicsNow: topicMode === "regex" ? topicsNowRegex : [],
-        topicsPrev,
-        prevAssistantMessage,
-        recentUserMsgs,
-        continuationLike,
-        llmNudgeLines: false,
-        llmNudgeReason: "",
-      });
-
-      if (topicMode === "llm") {
-        const availableTopics = await fetchAvailableTopics(db);
-        const llm = await decideTopicByLLM({
-          message,
-          prevUserMessage: prevUserMessage ?? null,
-          prevAssistantMessage: prevAssistantMessage ?? null,
-          recentUserMsgs,
-          availableTopics,
-        });
-
-        llmRaw = llm.rawText ?? "";
-
-        if (llm.ok) {
-          llmOk = true;
-          llmIntent = llm.decision.intent;
-          llmConfidence = llm.decision.confidence;
-          llmReason = llm.decision.reason;
-          llmTopicsNow = llm.decision.topicsNow ?? [];
-          llmSubject = llm.decision.subjectTopic ?? "";
-          llmAxis = llm.decision.axisTopic ?? "";
-          llmAudit = Boolean(llm.decision.auditAxis);
-          llmNudgeLines = Boolean(llm.decision.nudgeLines);
-          llmNudgeReason = String(llm.decision.nudgeReason ?? "");
-
-          decision = decideAxisSubject({
-            message,
-            topicsNow: llmTopicsNow.slice(0, 3),
-            topicsPrev,
-            prevAssistantMessage,
-            recentUserMsgs,
-            continuationLike,
-            llmNudgeLines,
-            llmNudgeReason,
-          });
-
-          // 最終反映（LLMが言うsubject/axis/auditがあるなら優先）
-          decision = {
-            ...decision,
-            subjectTopic: llmSubject || (decision as any).subjectTopic,
-            axisTopic: llmAxis || (decision as any).axisTopic,
-            auditAxis: llmAudit,
-            taxAuditSticky: llmAudit,
-            reason: `llm:${llmIntent}:${llmConfidence.toFixed(2)}:${llmReason || ""}`,
-            nudgeLines: llmNudgeLines,
-            nudgeReason: llmNudgeReason,
-          } as any;
-        } else {
-          llmOk = false;
-          llmErr = llm.error;
-        }
-      }
-
-      const topicsNow =
-        topicMode === "llm" ? (llmOk ? llmTopicsNow.slice(0, 3) : topicsNowRegex) : topicsNowRegex;
 
       // ===== 2) normalize subject (single source of truth) =====
       let subjectTopic = String((decision as any).subjectTopic ?? "").trim();
@@ -1971,8 +1988,9 @@ export async function POST(req: Request) {
       }
 
       // 弱発話/合言葉/短文追撃 で subject が空なら、prevSubject を借りる（KB借りより先）
-// ※ followup判定が外れても借りられるように「原因側（weak/ack/phase）」で判定する
+// ※ ただし LLM が「話題転換の空気あり」と判断したら借りない（キーワード依存を避ける）
 const shouldBorrowSubject =
+  !llmShiftCue &&
   !subjectTopic &&
   Boolean(prevSubject) &&
   (weakUtterance ||
@@ -1984,6 +2002,7 @@ const shouldBorrowSubject =
 if (shouldBorrowSubject) {
   subjectTopic = prevSubject;
 }
+
 
 
       // implicit shift で sticky を外す
@@ -2012,10 +2031,12 @@ if (shouldBorrowSubject) {
       const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : subjectTopic || decisionAxisCandidate || historyAxisRaw || "";
 
       const shifted =
+  llmShiftCue ? true :
   shouldBorrowSubject ? false :
   implicitShift ? true :
   Boolean((decision as any)?.taxAuditSticky) ? false :
   shiftedRaw;
+
 
 
       // ===== 3) lens =====
@@ -2153,6 +2174,11 @@ if (shouldBorrowSubject) {
         llm_intent: llmIntent,
         llm_confidence: llmConfidence,
         llm_reason: llmReason,
+        // ★NEW: shift cue（LLM）
+llm_shift_cue: Boolean(llmShiftCue),
+llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
+        
+
 
         subject_topic: subjectTopic,
         axis_topic: axisTopic,

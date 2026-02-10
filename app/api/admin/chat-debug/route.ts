@@ -164,6 +164,8 @@ export async function GET(req: Request) {
         "llm_confidence",
         "llm_topic_ok",
         "llm_reason",
+        "llm_shift_cue",
+"llm_shift_cue_reason",
 
         // lens（肝）
         "prefer_rule_lens",
