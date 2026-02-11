@@ -63,7 +63,12 @@ function jsonish(v: unknown): string {
 function pickedQaTitles(meta: any): string {
   const arr = Array.isArray(meta?.picked_qa) ? meta.picked_qa : [];
   return arr
-    .map((q: any) => safeStr(q?.title).trim())
+    .map((q: any) => {
+      const id = safeStr(q?.id).trim();
+      const title = safeStr(q?.title).trim();
+      const pr = q?.priority ?? "";
+      return [id && `#${id}`, title, pr !== "" ? `p${pr}` : ""].filter(Boolean).join(" ");
+    })
     .filter(Boolean)
     .join(" | ");
 }
@@ -181,6 +186,15 @@ export async function GET(req: Request) {
         "picked_lines",
         "allow_lines",
 
+                // QA hybrid（NEW）
+        "qa_hybrid_candidate_n",
+        "qa_hybrid_candidates_50",
+        "qa_hybrid_llm_ok",
+        "qa_hybrid_llm_error",
+        "qa_hybrid_selected_ids",
+        "qa_hybrid_selected_reasons",
+
+
         // flow
         "followup",
         "shifted",
@@ -243,6 +257,9 @@ export async function GET(req: Request) {
           llm_confidence: meta?.llm_confidence === undefined || meta?.llm_confidence === null ? "" : String(meta.llm_confidence),
           llm_topic_ok: meta?.llm_topic_ok === undefined || meta?.llm_topic_ok === null ? "" : String(Boolean(meta.llm_topic_ok)),
           llm_reason: safeStr(meta?.llm_reason ?? ""),
+          llm_shift_cue: String(Boolean(meta?.llm_shift_cue)),
+llm_shift_cue_reason: safeStr(meta?.llm_shift_cue_reason ?? ""),
+
 
           // lens
           prefer_rule_lens: String(Boolean(meta?.prefer_rule_lens)),
@@ -257,6 +274,23 @@ export async function GET(req: Request) {
           picked_qa: pickedQaTitles(meta),
           picked_lines: pickedLinesSimple(meta),
           allow_lines: String(Boolean(meta?.allow_lines)),
+
+                    // QA hybrid（NEW）
+          qa_hybrid_candidate_n: meta?.qa_hybrid_candidate_n === undefined || meta?.qa_hybrid_candidate_n === null
+            ? ""
+            : String(meta.qa_hybrid_candidate_n),
+
+          qa_hybrid_candidates_50: jsonish(meta?.qa_hybrid_candidates_50 ?? ""),
+          qa_hybrid_llm_ok: meta?.qa_hybrid_llm_ok === undefined || meta?.qa_hybrid_llm_ok === null
+            ? ""
+            : String(Boolean(meta.qa_hybrid_llm_ok)),
+
+          qa_hybrid_llm_error: safeStr(meta?.qa_hybrid_llm_error ?? ""),
+          qa_hybrid_selected_ids: Array.isArray(meta?.qa_hybrid_selected_ids)
+            ? meta.qa_hybrid_selected_ids.join(" | ")
+            : safeStr(meta?.qa_hybrid_selected_ids ?? ""),
+
+          qa_hybrid_selected_reasons: jsonish(meta?.qa_hybrid_selected_reasons ?? ""),
 
           // flow
           followup: String(Boolean(r?.followup)),

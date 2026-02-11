@@ -23,6 +23,8 @@ import {
 // LLM topic decision
 import { decideTopicByLLM } from "../../lib2/ai/topicDecisionLlm";
 import { inferLensByLLM } from "../../lib2/ai/inferLensByLLM";
+import { chooseQaByLLM } from "../../lib2/ai/chooseQaByLLM";
+
 
 export const runtime = "nodejs";
 
@@ -257,6 +259,22 @@ type DebugMeta = {
   qa_keypoint_used_title?: string;
   qa_keypoint_used?: string;
   qa_pick_reason?: string;
+
+  // ===== QA hybrid pick =====
+  qa_hybrid_candidate_n?: number;
+  qa_hybrid_candidates_50?: Array<{
+    id: string;
+    title: string;
+    topic: string;
+    priority: number;
+    bucket: "subject" | "audit" | "other";
+    score: number;
+  }>;
+  qa_hybrid_llm_ok?: boolean;
+  qa_hybrid_llm_error?: string;
+  qa_hybrid_llm_raw?: string;
+  qa_hybrid_selected_ids?: string[];
+  qa_hybrid_selected_reasons?: Record<string, string>;
 
   // ===== output/debug =====
   used_sajikagen?: boolean;
@@ -1116,12 +1134,11 @@ function hasAttackOrDefense(answer: string): boolean {
   const hasDefense = answer.includes("🧂守り") || answer.includes("🧂 守り");
   return hasAttack || hasDefense;
 }
+
 function isCatchphraseLine(line: string): boolean {
   const t = line.trim();
   if (!t) return false;
-   function isCatchphraseLine(line: string): boolean {
-   const t = line.trim();
-   if (!t) return false;
+
   // 🍚🧂の本文に「とはいえ」が混ざるのは普通に起こる。
   // Linesの行まで消すと片側欠損になるので除外する。
   if (t.startsWith("🍚") || t.startsWith("🧂")) return false;
@@ -1130,11 +1147,10 @@ function isCatchphraseLine(line: string): boolean {
   // 決めゼリフ“単独行”だけを除去する（本文内の語は残す）
   if (/^とはいえ[、,\s]/.test(t)) return true;
   if (/税務の世界.*答え/.test(t) && !/[。！？]/.test(t.replace(/税務の世界.*答え/, ""))) return true;
-   return false;
- }
 
   return false;
 }
+
 
 function extractSection(answer: string, head: "🥄" | "✅" | "⚠️" | "🔎"): string[] {
   const lines = answer.replace(/\r\n/g, "\n").split("\n");
@@ -1480,94 +1496,209 @@ async function generateAnswerStrict(params: {
   return last;
 }
 
-/** ===== QA limit (max 6) ===== */
-function sortByPriorityDesc(qas: KnowledgeItem[]): KnowledgeItem[] {
-  return [...qas].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-}
-function pickTwoBy70and50Preference(qas: KnowledgeItem[]): KnowledgeItem[] {
-  const sorted = sortByPriorityDesc(qas);
-  if (sorted.length === 0) return [];
+type QaBucket = "subject" | "audit" | "other";
+type QaCand = KnowledgeItem & { _bucket: QaBucket; _score: number };
 
-  const picked: KnowledgeItem[] = [];
-  const used = new Set<string>();
+function scoreQaShallow(qa: KnowledgeItem, message: string): number {
+  const m = (message ?? "").trim();
+  if (!m) return 0;
 
-  const pick = (pred: (x: KnowledgeItem) => boolean) => {
-    const x = sorted.find((it) => !used.has(it.id) && pred(it));
-    if (!x) return null;
-    used.add(x.id);
-    picked.push(x);
-    return x;
-  };
+  const tokens = messageTokens3(m);
+  const hay = ((qa.title ?? "") + "\n" + (qa.content ?? "")).toLowerCase();
 
-  pick((it) => (it.priority ?? 0) >= 70) ?? pick(() => true);
-  pick((it) => (it.priority ?? 0) < 70) ?? pick(() => true);
+  let s = 0;
+  for (const t of tokens) if (t && hay.includes(t.toLowerCase())) s += 1;
 
-  return picked.slice(0, 2);
-}
-function pickOtherUpTo2Prefer50(qas: KnowledgeItem[], alreadyPickedIds: Set<string>): KnowledgeItem[] {
-  const sorted = sortByPriorityDesc(qas).filter((it) => !alreadyPickedIds.has(it.id));
-  if (sorted.length === 0) return [];
-
-  const picked: KnowledgeItem[] = [];
-  const used = new Set<string>(alreadyPickedIds);
-
-  const pick = (pred: (x: KnowledgeItem) => boolean) => {
-    const x = sorted.find((it) => !used.has(it.id) && pred(it));
-    if (!x) return null;
-    used.add(x.id);
-    picked.push(x);
-    return x;
-  };
-
-  pick((it) => (it.priority ?? 0) < 70);
-  pick((it) => (it.priority ?? 0) < 70);
-
-  while (picked.length < 2) {
-    const x = sorted.find((it) => !used.has(it.id));
-    if (!x) break;
-    used.add(x.id);
-    picked.push(x);
+  // amount / リスク系の軽いブースト
+  if (/(いくら|なんぼ|上限|どこまで|安全|セーフ|アウト|リスク|グレー|危ない)/.test(m)) {
+    if (/(いくら|なんぼ|上限|どこまで|安全|セーフ|アウト|リスク|グレー|危ない)/.test(hay)) s += 2;
   }
-  return picked.slice(0, 2);
+  return s;
 }
-function limitQaMax6(params: {
+
+function extractIntentPatternsLine(content: string): string {
+  const text = (content ?? "").replace(/\r\n/g, "\n");
+  const line = text.split("\n").find((l) => l.includes("intent_patterns"));
+  return (line ?? "").trim();
+}
+
+function extractSummary2Lines(content: string): string {
+  const text = (content ?? "").replace(/\r\n/g, "\n");
+  const lines = text
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // intent_patterns は薄切りに混ぜる（ある時だけ）
+  const intent = extractIntentPatternsLine(text);
+  const picked: string[] = [];
+  if (intent) picked.push(intent);
+
+  // 「✅要点」「【✅要点】」周辺の2行優先
+  const idxKey = lines.findIndex((l) => l.includes("✅要点"));
+  if (idxKey >= 0) {
+    for (let i = idxKey; i < lines.length && picked.length < 3; i++) {
+      const l = lines[i];
+      if (l.length > 180) continue;
+      picked.push(l);
+    }
+  }
+
+  // 足りなければ先頭から補う（長すぎる行は捨てる）
+  for (const l of lines) {
+    if (picked.length >= 3) break;
+    if (l.length > 180) continue;
+    if (picked.includes(l)) continue;
+    picked.push(l);
+  }
+
+  // 3行以内に収める（intent + 2行のイメージ）
+  const out = picked.slice(0, 3).join(" / ");
+  return out.length <= 360 ? out : out.slice(0, 360) + "…";
+}
+
+function splitQaForHybrid(params: {
   itemsForPrompt: KnowledgeItem[];
   subjectTopic: string;
   auditAxis: boolean;
-}): {
-  limitedItemsForPrompt: KnowledgeItem[];
-  pickedQa: KnowledgeItem[];
-  bucketCounts: { subject: number; audit: number; other: number };
-} {
-  const { itemsForPrompt, subjectTopic, auditAxis } = params;
+  message: string;
+  candidate50N: number; // 12
+}) {
+  const { itemsForPrompt, subjectTopic, auditAxis, message, candidate50N } = params;
 
   const nonQa = (itemsForPrompt ?? []).filter((it) => it.kind !== "qa");
   const qasAll = (itemsForPrompt ?? []).filter((it) => it.kind === "qa");
 
   const qasSubject = subjectTopic ? qasAll.filter((q) => q.topic === subjectTopic) : [];
-  const qasAudit = auditAxis ? qasAll.filter((q) => q.topic === TOPIC_TAX_AUDIT) : [];
 
-  const pickedSubject = pickTwoBy70and50Preference(qasSubject);
-  const pickedAudit = pickTwoBy70and50Preference(qasAudit);
+  const pickFixed70 = (pool: KnowledgeItem[]) => {
+    const cands = pool
+      .filter((q) => (q.priority ?? 0) >= 70)
+      .map((q) => ({ q, s: scoreQaShallow(q, message) }))
+      .sort((a, b) => b.s - a.s || (b.q.priority ?? 0) - (a.q.priority ?? 0));
+    return cands[0]?.q ?? null;
+  };
 
-  const usedIds = new Set<string>([...pickedSubject, ...pickedAudit].map((x) => x.id));
-  const pickedOther = pickOtherUpTo2Prefer50(qasAll, usedIds);
+  // 70（憲法）固定：まずは subject から1枚（方針どおり）
+  const fixed70: KnowledgeItem[] = [];
+  const fixedSubject70 = pickFixed70(qasSubject);
+  if (fixedSubject70) fixed70.push(fixedSubject70);
 
-  const pickedQa = [...pickedSubject, ...pickedAudit, ...pickedOther].slice(0, 6);
-  const pickedQaIds = new Set(pickedQa.map((x) => x.id));
+  const fixedIds = new Set(fixed70.map((x) => x.id));
 
-  const limitedItemsForPrompt = [...nonQa, ...qasAll.filter((q) => pickedQaIds.has(q.id))];
+  const markBucket = (q: KnowledgeItem): QaCand => {
+    const bucket: QaBucket =
+      subjectTopic && q.topic === subjectTopic
+        ? "subject"
+        : auditAxis && q.topic === TOPIC_TAX_AUDIT
+        ? "audit"
+        : "other";
+    return { ...(q as any), _bucket: bucket, _score: scoreQaShallow(q, message) } as QaCand;
+  };
 
-  const cSubject = pickedQa.filter((x) => x.topic === subjectTopic).length;
-  const cAudit = pickedQa.filter((x) => x.topic === TOPIC_TAX_AUDIT).length;
-  const cOther = pickedQa.length - cSubject - cAudit;
+  // 50候補：priority<70 だけを候補化（方針どおり）
+  const cand50 = qasAll
+    .filter((q) => !fixedIds.has(q.id))
+    .filter((q) => (q.priority ?? 0) < 70)
+    .map(markBucket)
+    .sort((a, b) => b._score - a._score || (b.priority ?? 0) - (a.priority ?? 0))
+    .slice(0, Math.max(2, Math.min(30, candidate50N)));
+
+  return { nonQa, fixed70, cand50 };
+}
+
+async function pick50ByHybridLLM(params: {
+  message: string;
+  cand50: QaCand[];
+}): Promise<{
+  selected50: KnowledgeItem[];
+  llmOk: boolean;
+  llmError: string;
+  llmRaw: string;
+  reasons: Record<string, string>;
+  selectedIds: string[];
+}> {
+  const { message, cand50 } = params;
+
+  // 候補が少ない時はそのまま上位2つ
+  if (!cand50 || cand50.length <= 2) {
+    const ids = (cand50 ?? []).slice(0, 2).map((x) => x.id);
+    return {
+      selected50: (cand50 ?? []).slice(0, 2),
+      llmOk: false,
+      llmError: "skip:too_few_candidates",
+      llmRaw: "",
+      reasons: {},
+      selectedIds: ids,
+    };
+  }
+
+  const thin = cand50.map((c) => ({
+    id: c.id,
+    title: c.title,
+    summary: extractSummary2Lines(c.content ?? ""),
+    priority: c.priority ?? 0,
+    bucket: c._bucket,
+  }));
+
+  const llm = await chooseQaByLLM({ message, candidates: thin });
+
+  const idToCand = new Map(cand50.map((c) => [c.id, c]));
+  const pickFromIds = (ids: string[]) =>
+    ids.map((id) => idToCand.get(id)).filter(Boolean) as QaCand[];
+
+  let selectedIds = (llm.selectedIds ?? []).filter(Boolean);
+
+  // 2枚に満たない/不正なら fallback（上位スコア順）
+  if (!llm.ok || selectedIds.length < 2) {
+    const fb = cand50.slice(0, 2);
+    return {
+      selected50: fb,
+      llmOk: false,
+      llmError: llm.error || "fallback:invalid_llm_selection",
+      llmRaw: llm.rawText ?? "",
+      reasons: llm.reasons ?? {},
+      selectedIds: fb.map((x) => x.id),
+    };
+  }
+
+  // 重複・候補外を除去して2枚確保
+  selectedIds = Array.from(new Set(selectedIds)).filter((id) => idToCand.has(id));
+  if (selectedIds.length < 2) {
+    const fb = cand50.slice(0, 2);
+    return {
+      selected50: fb,
+      llmOk: false,
+      llmError: "fallback:filtered_too_short",
+      llmRaw: llm.rawText ?? "",
+      reasons: llm.reasons ?? {},
+      selectedIds: fb.map((x) => x.id),
+    };
+  }
+
+  const picked = pickFromIds(selectedIds).slice(0, 2);
+  if (picked.length < 2) {
+    const fb = cand50.slice(0, 2);
+    return {
+      selected50: fb,
+      llmOk: false,
+      llmError: "fallback:pick_failed",
+      llmRaw: llm.rawText ?? "",
+      reasons: llm.reasons ?? {},
+      selectedIds: fb.map((x) => x.id),
+    };
+  }
 
   return {
-    limitedItemsForPrompt,
-    pickedQa,
-    bucketCounts: { subject: cSubject, audit: cAudit, other: cOther },
+    selected50: picked,
+    llmOk: true,
+    llmError: "",
+    llmRaw: llm.rawText ?? "",
+    reasons: llm.reasons ?? {},
+    selectedIds: picked.map((x) => x.id),
   };
 }
+
 
 /** ===== meta builders ===== */
 function buildPickedQaMeta(items: KnowledgeItem[], limit = 3): PickedQaMeta[] {
@@ -2248,17 +2379,36 @@ if (shouldBorrowSubject) {
         ? topicKbItems
         : topicKbItems.filter((x) => !(x.kind === "qa" && (x.title ?? "").includes(LINES_PREFACE_TAG)));
 
-      const qaLimited = limitQaMax6({
-        itemsForPrompt: topicKbItemsForPrompt0,
-        subjectTopic,
-        auditAxis,
-      });
+      // ===== QA hybrid (70 fixed + 50 candidates 12 -> LLM picks 2) =====
+const hybridBase = splitQaForHybrid({
+  itemsForPrompt: topicKbItemsForPrompt0,
+  subjectTopic,
+  auditAxis,
+  message: lensMessage,      // followupは「実質問」を使う
+  candidate50N: 12,
+});
 
-      const topicKbItemsForPrompt = qaLimited.limitedItemsForPrompt;
-      const pickedQaForPrompt = qaLimited.pickedQa;
-      const cSubject = qaLimited.bucketCounts.subject;
-      const cAudit = qaLimited.bucketCounts.audit;
-      const cOther = qaLimited.bucketCounts.other;
+const llmPick = await pick50ByHybridLLM({
+  message: lensMessage,
+  cand50: hybridBase.cand50,
+});
+
+const pickedQaForPrompt: KnowledgeItem[] = [
+  ...hybridBase.fixed70,
+  ...llmPick.selected50,
+].slice(0, 3); // 70×1 + 50×2
+
+const pickedQaIds = new Set(pickedQaForPrompt.map((x) => x.id));
+const topicKbItemsForPrompt: KnowledgeItem[] = [
+  ...hybridBase.nonQa,
+  ...((topicKbItemsForPrompt0 ?? []).filter((it) => it.kind === "qa" && pickedQaIds.has(it.id))),
+];
+
+// bucket counts（picked側でカウント）
+const cSubject = pickedQaForPrompt.filter((x) => x.topic === subjectTopic).length;
+const cAudit = pickedQaForPrompt.filter((x) => x.topic === TOPIC_TAX_AUDIT).length;
+const cOther = pickedQaForPrompt.length - cSubject - cAudit;
+
 
       // ===== meta（判定順に並べる：まず「事実」→「決定」→「取得」→「出力」） =====
       const meta: DebugMeta = {
@@ -2341,6 +2491,21 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
           priority: it.priority,
         })),
         picked_qa: buildPickedQaMeta(pickedQaForPrompt, 10),
+
+                qa_hybrid_candidate_n: 12,
+        qa_hybrid_candidates_50: (hybridBase.cand50 ?? []).slice(0, 12).map((c) => ({
+          id: c.id,
+          title: c.title,
+          topic: c.topic,
+          priority: c.priority,
+          bucket: c._bucket,
+          score: c._score,
+        })),
+        qa_hybrid_llm_ok: Boolean(llmPick.llmOk),
+        qa_hybrid_llm_error: String(llmPick.llmError ?? ""),
+        qa_hybrid_llm_raw: llmPick.llmRaw ? clampForContext(llmPick.llmRaw, 800) : "",
+        qa_hybrid_selected_ids: llmPick.selectedIds ?? [],
+        qa_hybrid_selected_reasons: llmPick.reasons ?? {},
 
         // output flags（後で埋める）
         used_sajikagen: usedSajikagen,
