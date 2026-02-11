@@ -1515,7 +1515,7 @@ function scoreQaShallow(qa: KnowledgeItem, message: string): number {
   for (const t of tokens) if (t && hay.includes(t.toLowerCase())) s += 1;
 
   // 2文字のドメイン語（売上/現金など）は tokens3 で落ちるので、ここで拾う
-  const dom2 = ["売上", "現金", "外注", "交際費", "給与", "日当", "入金", "請求", "納品", "検収"];
+  const dom2 = ["売上", "現金", "外注", "交際費", "給与", "日当", "入金", "請求", "納品", "検収","検収","領収書","レシート"];
   for (const w of dom2) {
     if (m.includes(w) && hay.includes(w)) s += 2; // 強めに
   }
