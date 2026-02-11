@@ -186,6 +186,11 @@ export async function GET(req: Request) {
         "picked_lines",
         "allow_lines",
 
+        // QA cross（NEW）
+        "qa_cross_keywords",
+        "qa_cross_hit_count",
+        "qa_cross_candidates_50",
+
                 // QA hybrid（NEW）
         "qa_hybrid_candidate_n",
         "qa_hybrid_candidates_50",
@@ -274,6 +279,18 @@ llm_shift_cue_reason: safeStr(meta?.llm_shift_cue_reason ?? ""),
           picked_qa: pickedQaTitles(meta),
           picked_lines: pickedLinesSimple(meta),
           allow_lines: String(Boolean(meta?.allow_lines)),
+
+                    // QA cross（NEW）
+          qa_cross_keywords: Array.isArray(meta?.qa_cross_keywords)
+            ? meta.qa_cross_keywords.join(" | ")
+            : safeStr(meta?.qa_cross_keywords ?? ""),
+
+          qa_cross_hit_count:
+            meta?.qa_cross_hit_count === undefined || meta?.qa_cross_hit_count === null
+              ? ""
+              : String(meta.qa_cross_hit_count),
+
+          qa_cross_candidates_50: jsonish(meta?.qa_cross_candidates_50 ?? ""),
 
                     // QA hybrid（NEW）
           qa_hybrid_candidate_n: meta?.qa_hybrid_candidate_n === undefined || meta?.qa_hybrid_candidate_n === null

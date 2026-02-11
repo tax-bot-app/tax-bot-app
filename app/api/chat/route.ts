@@ -260,6 +260,11 @@ type DebugMeta = {
   qa_keypoint_used?: string;
   qa_pick_reason?: string;
 
+   // ===== QA cross (ilike) =====
+  qa_cross_keywords?: string[];
+  qa_cross_hit_count?: number;
+  qa_cross_candidates_50?: Array<{ id: string; title: string; topic: string; priority: number; score: number }>;
+
   // ===== QA hybrid pick =====
   qa_hybrid_candidate_n?: number;
   qa_hybrid_candidates_50?: Array<{
@@ -1557,6 +1562,74 @@ function extractSummary2Lines(content: string): string {
   return out.length <= 360 ? out : out.slice(0, 360) + "…";
 }
 
+function extractCrossKeywords(message: string, max = 8): string[] {
+  const m = (message ?? "").trim();
+  if (!m) return [];
+  const hits: string[] = [];
+
+  // 強ワード（まずは固定辞書でOK：実験フェーズ）
+  const rules: Array<{ re: RegExp; kw: string }> = [
+    { re: /(現金売上|現金商売|現金)/, kw: "現金" },
+    { re: /(売上)/, kw: "売上" },
+    { re: /(レシート|領収書なし|領収書無し|領収書(なし|無し)|領収書)/, kw: "領収書" },
+    { re: /(他人名義|名義)/, kw: "他人名義" },
+    { re: /(割勘|割り勘|ワリカン)/, kw: "割勘" },
+    { re: /(立替|立て替え|建替)/, kw: "立替" },
+    { re: /(手渡し|手渡)/, kw: "手渡し" },
+    { re: /(証拠|メモ|名刺)/, kw: "メモ" },
+    { re: /(通帳|入金|出金)/, kw: "入金" },
+    { re: /(簿外|抜く|抜け)/, kw: "簿外" },
+  ];
+
+  for (const r of rules) {
+    if (r.re.test(m)) hits.push(r.kw);
+    if (hits.length >= max) break;
+  }
+
+  // 3文字以上トークンも少し混ぜる（表記ゆれ拾い）
+  for (const t of messageTokens3(m)) {
+    if (hits.length >= max) break;
+    // 数字トークンや単なる汎用語を避ける（雑でOK）
+    if (/^\d+$/.test(t)) continue;
+    if (t.length >= 6) continue; // 長すぎはノイズになりがち
+    if (!hits.includes(t)) hits.push(t);
+  }
+
+  return hits.slice(0, max);
+}
+
+async function fetchCrossQaByIlike(params: {
+  db: any;
+  keywords: string[];
+  limit: number;
+}): Promise<KnowledgeItem[]> {
+  const { db } = params;
+  const keywords = Array.from(new Set((params.keywords ?? []).map((x) => String(x ?? "").trim()).filter(Boolean)));
+  const limit = Math.max(1, Math.min(80, params.limit ?? 30));
+  if (keywords.length === 0) return [];
+
+  // Supabase .or は "A,B,C" で OR。title と content の両方に OR を掛ける。
+  const ors = keywords
+    .flatMap((k) => {
+      const esc = k.replace(/%/g, "\\%").replace(/_/g, "\\_"); // 軽いエスケープ
+      return [`title.ilike.%${esc}%`, `content.ilike.%${esc}%`];
+    })
+    .join(",");
+
+  const { data, error } = await db
+    .from("knowledge_items")
+    .select("id, kind, topic, title, content, amounts, conditions, priority")
+    .eq("is_active", true)
+    .eq("kind", "qa")
+    .or(ors)
+    .order("priority", { ascending: false })
+    .limit(limit);
+
+  if (error) return [];
+  return (data ?? []) as KnowledgeItem[];
+}
+
+
 function splitQaForHybrid(params: {
   itemsForPrompt: KnowledgeItem[];
   subjectTopic: string;
@@ -2379,8 +2452,8 @@ if (shouldBorrowSubject) {
         ? topicKbItems
         : topicKbItems.filter((x) => !(x.kind === "qa" && (x.title ?? "").includes(LINES_PREFACE_TAG)));
 
-      // ===== QA hybrid (70 fixed + 50 candidates 12 -> LLM picks 2) =====
-const hybridBase = splitQaForHybrid({
+      // ===== QA hybrid base (70 fixed + 50 candidates pool) =====
+      const hybridBase = splitQaForHybrid({
   itemsForPrompt: topicKbItemsForPrompt0,
   subjectTopic,
   auditAxis,
@@ -2388,10 +2461,55 @@ const hybridBase = splitQaForHybrid({
   candidate50N: 12,
 });
 
-const llmPick = await pick50ByHybridLLM({
-  message: lensMessage,
-  cand50: hybridBase.cand50,
-});
+// ===== cross candidates (ilike) =====
+      const qaCrossKeywords = extractCrossKeywords(lensMessage, 8);
+      const crossRaw = await fetchCrossQaByIlike({ db, keywords: qaCrossKeywords, limit: 60 });
+
+      // topic系 6 + cross系 6 → 合計12（重複は除外、足りなければtopic系で埋める）
+      const topicTop6 = (hybridBase.cand50 ?? []).slice(0, 6);
+      const usedIds0 = new Set<string>([
+        ...(hybridBase.fixed70 ?? []).map((x) => x.id),
+        ...topicTop6.map((x) => x.id),
+      ]);
+
+      const cross50 = (crossRaw ?? [])
+        .filter((q) => q && q.kind === "qa")
+        .filter((q) => (q.priority ?? 0) < 70) // 50帯だけ
+        .filter((q) => !usedIds0.has(q.id))
+        .map((q) => {
+          const score = scoreQaShallow(q, lensMessage);
+          return { q, score };
+        })
+        .sort((a, b) => b.score - a.score || (b.q.priority ?? 0) - (a.q.priority ?? 0))
+        .slice(0, 6)
+        .map(({ q, score }) => ({ ...(q as any), _bucket: "other", _score: score } as QaCand));
+
+      const usedIds1 = new Set<string>([...usedIds0, ...cross50.map((x) => x.id)]);
+
+      // 最終cand50_12を作る
+      const cand50_12: QaCand[] = [];
+      for (const x of topicTop6) if (x && !usedIds1.has(x.id)) cand50_12.push(x);
+      // ↑ここは usedIds1 に topicTop6 は入ってるけど、念のため
+      cand50_12.length === 0 && cand50_12.push(...topicTop6);
+
+      // topicTop6 を確実に先頭に
+      const candTmp: QaCand[] = [...topicTop6];
+      for (const x of cross50) if (x && !candTmp.some((y) => y.id === x.id)) candTmp.push(x);
+
+      // 足りなければ残りを topic pool から埋める
+      const pool = hybridBase.cand50 ?? [];
+      for (const x of pool) {
+        if (candTmp.length >= 12) break;
+        if (!x) continue;
+        if (candTmp.some((y) => y.id === x.id)) continue;
+        candTmp.push(x);
+      }
+      const cand50Final = candTmp.slice(0, 12);
+
+      const llmPick = await pick50ByHybridLLM({
+        message: lensMessage,
+        cand50: cand50Final,
+      });
 
 const pickedQaForPrompt: KnowledgeItem[] = [
   ...hybridBase.fixed70,
@@ -2491,9 +2609,19 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
           priority: it.priority,
         })),
         picked_qa: buildPickedQaMeta(pickedQaForPrompt, 10),
+        // cross (ilike)
+        qa_cross_keywords: qaCrossKeywords,
+        qa_cross_hit_count: (crossRaw ?? []).length,
+        qa_cross_candidates_50: (cross50 ?? []).slice(0, 6).map((c) => ({
+          id: c.id,
+          title: c.title,
+          topic: c.topic,
+          priority: c.priority,
+          score: c._score,
+        })),
 
                 qa_hybrid_candidate_n: 12,
-        qa_hybrid_candidates_50: (hybridBase.cand50 ?? []).slice(0, 12).map((c) => ({
+        qa_hybrid_candidates_50: (cand50Final ?? []).slice(0, 12).map((c) => ({
           id: c.id,
           title: c.title,
           topic: c.topic,
