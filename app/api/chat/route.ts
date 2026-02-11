@@ -2891,6 +2891,7 @@ const allowNudge =
   !alreadyHasLines &&
   !alreadyPrompted &&
   llmIntent !== "clarify" &&
+  llmIntent !== "qa_more" &&   // ★これ追加
   !weakUtterance &&
   !isShortAckLike(message);
 
