@@ -809,6 +809,27 @@ function messageTokens3(s: string): string[] {
   );
 }
 
+async function fetchAllQaByTopic(params: {
+  db: any;
+  topic: string;
+}): Promise<KnowledgeItem[]> {
+  const { db, topic } = params;
+  if (!topic) return [];
+
+  const { data, error } = await db
+    .from("knowledge_items")
+    .select("id, kind, topic, title, content, amounts, conditions, priority")
+    .eq("is_active", true)
+    .eq("kind", "qa")
+    .eq("topic", topic)
+    .order("priority", { ascending: false })
+    .order("id", { ascending: true }); // 安定化
+
+  if (error) return [];
+  return (data ?? []) as KnowledgeItem[];
+}
+
+
 async function retrieveKnowledgeByBuckets(params: {
   db: any;
   auditAxis: boolean;
@@ -2458,9 +2479,13 @@ if (shouldBorrowSubject) {
         ? topicKbItems
         : topicKbItems.filter((x) => !(x.kind === "qa" && (x.title ?? "").includes(LINES_PREFACE_TAG)));
 
-      // ===== QA hybrid base (70 fixed + 50 candidates pool) =====
+      // ★ QA候補は subjectTopic の全QAを土俵に上げる
+const topicQaAll = subjectTopic
+  ? await fetchAllQaByTopic({ db, topic: subjectTopic })
+  : [];
+
       const hybridBase = splitQaForHybrid({
-  itemsForPrompt: topicKbItemsForPrompt0,
+  itemsForPrompt: topicQaAll,   // ← 新しく取る
   subjectTopic,
   auditAxis,
   message: lensMessage,      // followupは「実質問」を使う
