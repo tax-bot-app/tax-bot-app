@@ -2489,7 +2489,7 @@ const topicQaAll = subjectTopic
   subjectTopic,
   auditAxis,
   message: lensMessage,      // followupは「実質問」を使う
-  candidate50N: 12,
+  candidate50N: 30,
 });
 
 // ===== cross candidates (ilike) =====
@@ -2535,7 +2535,7 @@ const topicQaAll = subjectTopic
         if (candTmp.some((y) => y.id === x.id)) continue;
         candTmp.push(x);
       }
-      const cand50Final = candTmp.slice(0, 12);
+      const cand50Final = candTmp.slice(0, 30);
 
       const llmPick = await pick50ByHybridLLM({
         message: lensMessage,

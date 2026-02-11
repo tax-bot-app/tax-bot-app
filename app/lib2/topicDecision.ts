@@ -29,19 +29,10 @@ function looksReferral(text: string): boolean {
 }
 
 // 「この主題が出たら “税務調査軸” を自然に重ねる」対象
-export const AUDIT_OVERLAY_TOPICS = new Set<string>([
-  "交際費",
-  "外注",
-  "家事按分",
-  "福利厚生",
-  "出張手当",
-  "役員報酬",
-  "車両",
-  "消費税",
-  "家族給与・家族役員",
-  "退職金",
-  "紹介料",
-]);
+
+
+// overlayは廃止：税務調査軸は LLM の auditAxis=true のときだけ（route.ts側で制御）
+export const AUDIT_OVERLAY_TOPICS = new Set<string>();
 
 // ===== 税務調査を「原則重ねたくない」topic =====
 export const AUDIT_STICKY_EXEMPT_TOPICS = new Set<string>([
@@ -254,7 +245,7 @@ export function decideAxisSubject(input: DecideAxisSubjectInput): DecideAxisSubj
   const hasAuditRecent = hasTaxAuditWords(recentText) || hasTaxAuditWords(prevAssistantMessage ?? "");
   const taxAuditContextActive = hasAuditNow || topicsPrev.includes(TOPIC_TAX_AUDIT) || hasAuditRecent;
 
-  const overlayWanted = !explicitTaxOff && Boolean(subjectTopic) && AUDIT_OVERLAY_TOPICS.has(subjectTopic);
+  const overlayWanted = false;
 
   const lineRequest = looksLineRequest(message);
   const subjectIsExempt = Boolean(subjectTopic) && AUDIT_STICKY_EXEMPT_TOPICS.has(subjectTopic);
@@ -268,7 +259,7 @@ export function decideAxisSubject(input: DecideAxisSubjectInput): DecideAxisSubj
 
   const taxAuditSticky = taxAuditContextActive && !explicitTaxOff && !explicitTopicShift && !shouldUnstickForExempt;
 
-  const auditAxis = !explicitTaxOff && (taxAuditSticky || topicsNow.includes(TOPIC_TAX_AUDIT) || overlayWanted);
+  const auditAxis = !explicitTaxOff && (taxAuditSticky || topicsNow.includes(TOPIC_TAX_AUDIT));
 
   const axisTopic = auditAxis ? TOPIC_TAX_AUDIT : topicsNow[0] ?? "";
 
@@ -277,7 +268,6 @@ export function decideAxisSubject(input: DecideAxisSubjectInput): DecideAxisSubj
   else if (explicitTopicShift) reason = "explicit_topic_shift";
   else if (topicsNow.includes(TOPIC_TAX_AUDIT)) reason = "message_mentions_tax_audit";
   else if (taxAuditSticky) reason = "sticky_tax_audit_context";
-  else if (overlayWanted) reason = "overlay_by_subject";
   else reason = "no_audit_axis";
 
   return {
