@@ -2493,14 +2493,20 @@ const topicQaAll = subjectTopic
 });
 
 // ===== cross candidates (ilike) =====
+      // ===== hybrid cand policy =====
+      // subject(topic)は厚め、crossは6固定（ノイズ抑制）
+      const HYBRID_CAND_TOTAL = 30;
+      const HYBRID_CROSS_N = 6;
+      const HYBRID_TOPIC_N = HYBRID_CAND_TOTAL - HYBRID_CROSS_N; // 24
+      
       const qaCrossKeywords = extractCrossKeywords(lensMessage, 8);
       const crossRaw = await fetchCrossQaByIlike({ db, keywords: qaCrossKeywords, limit: 60 });
 
-      // topic系 6 + cross系 6 → 合計12（重複は除外、足りなければtopic系で埋める）
-      const topicTop6 = (hybridBase.cand50 ?? []).slice(0, 6);
+            // topic系 24 + cross系 6 → 合計30（重複は除外、足りなければtopic系で埋める）
+      const topicTopN = (hybridBase.cand50 ?? []).slice(0, HYBRID_TOPIC_N);
       const usedIds0 = new Set<string>([
         ...(hybridBase.fixed70 ?? []).map((x) => x.id),
-        ...topicTop6.map((x) => x.id),
+        ...topicTopN.map((x) => x.id),
       ]);
 
       const cross50 = (crossRaw ?? [])
@@ -2512,30 +2518,24 @@ const topicQaAll = subjectTopic
           return { q, score };
         })
         .sort((a, b) => b.score - a.score || (b.q.priority ?? 0) - (a.q.priority ?? 0))
-        .slice(0, 6)
+        .slice(0, HYBRID_CROSS_N)
         .map(({ q, score }) => ({ ...(q as any), _bucket: "other", _score: score } as QaCand));
 
       const usedIds1 = new Set<string>([...usedIds0, ...cross50.map((x) => x.id)]);
 
-      // 最終cand50_12を作る
-      const cand50_12: QaCand[] = [];
-      for (const x of topicTop6) if (x && !usedIds1.has(x.id)) cand50_12.push(x);
-      // ↑ここは usedIds1 に topicTop6 は入ってるけど、念のため
-      cand50_12.length === 0 && cand50_12.push(...topicTop6);
-
-      // topicTop6 を確実に先頭に
-      const candTmp: QaCand[] = [...topicTop6];
+      // topicTopN を確実に先頭に
+      const candTmp: QaCand[] = [...topicTopN];
       for (const x of cross50) if (x && !candTmp.some((y) => y.id === x.id)) candTmp.push(x);
 
       // 足りなければ残りを topic pool から埋める
       const pool = hybridBase.cand50 ?? [];
       for (const x of pool) {
-        if (candTmp.length >= 12) break;
+        if (candTmp.length >= HYBRID_CAND_TOTAL) break;
         if (!x) continue;
         if (candTmp.some((y) => y.id === x.id)) continue;
         candTmp.push(x);
       }
-      const cand50Final = candTmp.slice(0, 30);
+      const cand50Final = candTmp.slice(0, HYBRID_CAND_TOTAL);
 
       const llmPick = await pick50ByHybridLLM({
         message: lensMessage,
@@ -2651,8 +2651,8 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
           score: c._score,
         })),
 
-                qa_hybrid_candidate_n: 12,
-        qa_hybrid_candidates_50: (cand50Final ?? []).slice(0, 12).map((c) => ({
+                qa_hybrid_candidate_n: HYBRID_CAND_TOTAL,
+       qa_hybrid_candidates_50: (cand50Final ?? []).slice(0, HYBRID_CAND_TOTAL).map((c) => ({
           id: c.id,
           title: c.title,
           topic: c.topic,
