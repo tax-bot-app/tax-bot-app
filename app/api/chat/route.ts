@@ -1514,6 +1514,12 @@ function scoreQaShallow(qa: KnowledgeItem, message: string): number {
   let s = 0;
   for (const t of tokens) if (t && hay.includes(t.toLowerCase())) s += 1;
 
+  // 2文字のドメイン語（売上/現金など）は tokens3 で落ちるので、ここで拾う
+  const dom2 = ["売上", "現金", "外注", "交際費", "給与", "日当", "入金", "請求", "納品", "検収"];
+  for (const w of dom2) {
+    if (m.includes(w) && hay.includes(w)) s += 2; // 強めに
+  }
+
   // amount / リスク系の軽いブースト
   if (/(いくら|なんぼ|上限|どこまで|安全|セーフ|アウト|リスク|グレー|危ない)/.test(m)) {
     if (/(いくら|なんぼ|上限|どこまで|安全|セーフ|アウト|リスク|グレー|危ない)/.test(hay)) s += 2;
