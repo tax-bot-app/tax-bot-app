@@ -2489,15 +2489,15 @@ const topicQaAll = subjectTopic
   subjectTopic,
   auditAxis,
   message: lensMessage,      // followupは「実質問」を使う
-  candidate50N: 30,
+  candidate50N: 50,
 });
 
 // ===== cross candidates (ilike) =====
       // ===== hybrid cand policy =====
       // subject(topic)は厚め、crossは6固定（ノイズ抑制）
-      const HYBRID_CAND_TOTAL = 30;
-      const HYBRID_CROSS_N = 6;
-      const HYBRID_TOPIC_N = HYBRID_CAND_TOTAL - HYBRID_CROSS_N; // 24
+      const HYBRID_CAND_TOTAL = 50;
+      const HYBRID_CROSS_N = 10;
+      const HYBRID_TOPIC_N = HYBRID_CAND_TOTAL - HYBRID_CROSS_N; 
       
       const qaCrossKeywords = extractCrossKeywords(lensMessage, 8);
       const crossRaw = await fetchCrossQaByIlike({ db, keywords: qaCrossKeywords, limit: 60 });
