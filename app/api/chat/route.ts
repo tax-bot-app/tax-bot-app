@@ -1368,6 +1368,7 @@ function postProcessAnswer(
     inquiryOverride?: string | null;
     llmIntent?: string | null;
     subjectTopic?: string | null;
+    topicsNow?: string[] | null;
   }
 ): string {
   const llmIntent = safeStr(opts.llmIntent ?? "").trim();
@@ -1409,8 +1410,9 @@ function postProcessAnswer(
 
   const alreadyCatch = a.split("\n").some((line) => isCatchphraseLine(line));
   const isQaFirst = llmIntent === "qa_first";
-  const suppressCta =
-    (opts?.subjectTopic ?? "") === "私的混在・実態論点";
+   const suppressCta =
+    (opts?.subjectTopic ?? "") === "私的混在・実態論点" ||
+    (opts?.topicsNow ?? []).includes("私的混在・実態論点");
 
    if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch && !suppressCta) {
     if (isQaFirst) {
@@ -1480,6 +1482,7 @@ async function generateAnswerStrict(params: {
   usedKnowledge: boolean;
   allowAttackDefenseDetail: boolean;
   subjectTopic?: string | null;
+  topicsNow?: string[] | null;
   inquiryOverride?: string | null;
   llmIntent?: string | null;
 }): Promise<string> {
@@ -1511,6 +1514,7 @@ async function generateAnswerStrict(params: {
       inquiryOverride: params.inquiryOverride ?? null,
       llmIntent: params.llmIntent ?? null,
       subjectTopic: params.subjectTopic ?? null,
+      topicsNow: params.topicsNow ?? null,
     });
 
     if (params.allowAttackDefenseDetail && hasAttackOrDefense(last) && !hasThreePatterns(last)) {
@@ -2967,6 +2971,7 @@ const noApportionmentBias: string[] = [
           usedKnowledge,
           allowAttackDefenseDetail: allowAttackDefenseDetailEffective,
           subjectTopic,
+          topicsNow,
           inquiryOverride,
           llmIntent: topicMode === "llm" && llmOk ? llmIntent : null,
         });
