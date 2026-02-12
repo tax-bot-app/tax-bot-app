@@ -2532,7 +2532,9 @@ const topicQaAll = subjectTopic
       const HYBRID_CROSS_N = 10;
       const HYBRID_TOPIC_N = HYBRID_CAND_TOTAL - HYBRID_CROSS_N; 
       
-      const qaCrossKeywords = extractCrossKeywords(lensMessage, 8);
+      // ★ cross検索は「今回のユーザー発話」で固定（前の話題混入を防ぐ）
+      const crossMessage = message;
+      const qaCrossKeywords = extractCrossKeywords(crossMessage, 8);
       const crossRaw = await fetchCrossQaByIlike({ db, keywords: qaCrossKeywords, limit: 60 });
 
             // topic系 24 + cross系 6 → 合計30（重複は除外、足りなければtopic系で埋める）
@@ -2547,7 +2549,7 @@ const topicQaAll = subjectTopic
         .filter((q) => (q.priority ?? 0) < 70) // 50帯だけ
         .filter((q) => !usedIds0.has(q.id))
         .map((q) => {
-          const score = scoreQaShallow(q, lensMessage);
+          const score = scoreQaShallow(q, crossMessage);
           return { q, score };
         })
         .sort((a, b) => b.score - a.score || (b.q.priority ?? 0) - (a.q.priority ?? 0))
@@ -2570,8 +2572,9 @@ const topicQaAll = subjectTopic
       }
       const cand50Final = candTmp.slice(0, HYBRID_CAND_TOTAL);
 
+      // ★ 選抜も「今回のユーザー発話」で固定（followup救済は別レイヤ）
       const llmPick = await pick50ByHybridLLM({
-        message: lensMessage,
+        message: crossMessage,
         cand50: cand50Final,
       });
 
@@ -2901,6 +2904,16 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
               ]
             : [];
 
+            const apportionmentExceptionRule =
+  subjectTopic === "家事按分"
+    ? "【例外】この相談は『家事按分』。個人事業主（自宅兼事務所）の前提が確認できた場合のみ、按分割合の考え方と根拠の残し方を説明してよい。法人の話に戻る場合は按分を持ち出さない。"
+    : null;
+
+const noApportionmentBias: string[] = [
+  "【原則】法人の相談では『按分』を提案しない（私用混在は給与課税・経済的利益・社内規程/運用設計・科目整理で説明する）。",
+];
+
+
         const promptPartsBase: PromptParts = {
           context: contextLines,
           injectedRules: [
@@ -2911,6 +2924,8 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
             ...(qaKeyPointRule ? [qaKeyPointRule] : []),
             ...auditIntakeHint,
             ...amountBias,
+            ...noApportionmentBias,
+            ...(apportionmentExceptionRule ? [apportionmentExceptionRule] : []),
             ...systemBias,
             ...ambiguityBoost,
             ...styleRules,
