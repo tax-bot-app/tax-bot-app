@@ -2,6 +2,7 @@
 import { generateAnswer } from "../../lib2/ai/generateAnswer";
 import type { PromptParts } from "../../lib2/ai/prompt";
 import { judgeGuardrails } from "../../lib2/guardrails";
+import { decideSuppressBrandingByLLM } from "../../lib2/guardrails/brandSuppressByLLM";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -203,9 +204,9 @@ type DebugMeta = {
   llm_intent?: string;
   llm_confidence?: number;
   llm_reason?: string;
-    // ★NEW: 話題転換の空気（LLM）
   llm_shift_cue?: boolean;
   llm_shift_cue_reason?: string;
+
 
 
   subject_topic?: string;
@@ -297,6 +298,18 @@ type DebugMeta = {
   nudge_lines_llm?: boolean;
   nudge_lines_reason?: string;
   nudge_lines_applied?: boolean;
+
+    // ===== guardrails / branding suppress =====
+  guardrail_action?: "block" | "inject" | "none";
+  guardrail_reason?: string;
+
+  suppress_branding?: boolean;
+  suppress_branding_reason?: string;
+
+  // （任意だが便利）レスポンス整合のため残す
+  dialect?: Dialect;
+  stance?: Stance;
+
 };
 
 type DebugTrace = {
@@ -314,7 +327,7 @@ type DebugTrace = {
   forceNormalAnswer: boolean;
   usedKnowledge: boolean;
   usedLinesPick: boolean;
-  path: "followup_lines" | "normal_llm";
+    path: "followup_lines" | "normal_llm" | "guardrail:block";
   meta?: DebugMeta;
 };
 
@@ -1369,12 +1382,17 @@ function postProcessAnswer(
     llmIntent?: string | null;
     subjectTopic?: string | null;
     topicsNow?: string[] | null;
+
+    // ★追加
+    suppressBranding?: boolean;
   }
 ): string {
   const llmIntent = safeStr(opts.llmIntent ?? "").trim();
   const usedKnowledge = opts.usedKnowledge;
   const allowAttackDefenseDetail = opts.allowAttackDefenseDetail;
   const inquiryOverride = (opts.inquiryOverride ?? "").trim();
+
+  const suppressBranding = !!opts.suppressBranding;
 
   let a = String(raw ?? "").replace(/\r\n/g, "\n").trim();
   a = a.replace(/[\(（]最大[^)）]*[\)）]/g, "");
@@ -1408,6 +1426,21 @@ function postProcessAnswer(
       .trim();
   }
 
+  // ★追加：抑制時は 🥄 / 👉 / 🔎 を“先に”落とす（後工程で復活しないように）
+  if (suppressBranding) {
+    a = a
+      .split("\n")
+      .filter((line) => {
+        const t = line.trimStart();
+        if (t.startsWith("🥄")) return false;
+        if (t.startsWith("👉")) return false;
+        if (t.startsWith("🔎")) return false;
+        return true;
+      })
+      .join("\n")
+      .trim();
+  }
+
   const alreadyCatch = a.split("\n").some((line) => isCatchphraseLine(line));
   const isQaFirst = llmIntent === "qa_first";
 
@@ -1424,9 +1457,10 @@ function postProcessAnswer(
     (opts?.subjectTopic ?? "") === "私的混在・実態論点" ||
     topicsNow0.includes("私的混在・実態論点");
 
-  const suppressCta = isPrivateMix;
+  // CTA抑制（既存：私的混在）
+  const suppressCta = isPrivateMix || suppressBranding;
 
-   if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch && !suppressCta) {
+  if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch && !suppressCta) {
     if (isQaFirst) {
       const cta =
         dialect === "kansai"
@@ -1437,6 +1471,7 @@ function postProcessAnswer(
     }
   }
 
+  // 🔎 の（はい/いいえ）除去（既存）
   a = a
     .split("\n")
     .map((line) => {
@@ -1446,12 +1481,14 @@ function postProcessAnswer(
     .join("\n")
     .trim();
 
-  const desiredInquiry = isPrivateMix
-    ? inquiryLine(dialect, stance) // 静か版（=通常の🔎確認のみ）
-    : inquiryOverride
-    ? inquiryOverride
-    : inquiryLine(dialect, stance);
-
+  // ★変更：抑制時は desiredInquiry を空にして “差し替え/追加” を一切しない
+  const desiredInquiry = suppressBranding
+    ? ""
+    : isPrivateMix
+      ? inquiryLine(dialect, stance) // 静か版（=通常の🔎確認のみ）
+      : inquiryOverride
+        ? inquiryOverride
+        : inquiryLine(dialect, stance);
 
   {
     const lines = a.split("\n");
@@ -1464,32 +1501,48 @@ function postProcessAnswer(
         out.push(line);
         continue;
       }
+
+      // ★追加：抑制時は🔎を全部捨てる
+      if (suppressBranding) continue;
+
       if (placed) continue;
       out.push(desiredInquiry);
       placed = true;
     }
 
-    if (!placed && inquiryOverride) {
+    // ★変更：抑制時は追記しない
+    if (!suppressBranding && !placed && inquiryOverride) {
       if (out.length > 0 && out[out.length - 1].trim()) out.push("");
       out.push(desiredInquiry);
     }
+
     a = out.join("\n").trim();
   }
 
   if (stance === "zubatto") a = forceCasual(a, dialect);
 
   {
-    const lines = a.split("\n");
-    const inquiryLines = lines.filter((l) => l.trimStart().startsWith("🔎"));
-    if (inquiryLines.length > 0) {
-      const rest = lines.filter((l) => !l.trimStart().startsWith("🔎"));
-      a = [...rest, inquiryLines[0]].join("\n").trim();
+    // ★変更：抑制時は末尾寄せ処理をスキップ（保険で残骸も消す）
+    if (!suppressBranding) {
+      const lines = a.split("\n");
+      const inquiryLines = lines.filter((l) => l.trimStart().startsWith("🔎"));
+      if (inquiryLines.length > 0) {
+        const rest = lines.filter((l) => !l.trimStart().startsWith("🔎"));
+        a = [...rest, inquiryLines[0]].join("\n").trim();
+      }
+    } else {
+      a = a
+        .split("\n")
+        .filter((l) => !l.trimStart().startsWith("🔎"))
+        .join("\n")
+        .trim();
     }
   }
 
   a = a.replace(/^返事いらんメモ[:：].*$/gm, "").trim();
   return stripInternalLeaks(a);
 }
+
 
 async function generateAnswerStrict(params: {
   message: string;
@@ -1502,6 +1555,7 @@ async function generateAnswerStrict(params: {
   topicsNow?: string[] | null;
   inquiryOverride?: string | null;
   llmIntent?: string | null;
+  suppressBranding?: boolean; // ★追加
 }): Promise<string> {
   const { promptPartsBase, dialect, stance } = params;
   const forbidden = forbiddenFor(dialect, stance);
@@ -1532,6 +1586,7 @@ async function generateAnswerStrict(params: {
       llmIntent: params.llmIntent ?? null,
       subjectTopic: params.subjectTopic ?? null,
       topicsNow: params.topicsNow ?? null,
+      suppressBranding: Boolean(params.suppressBranding),
     });
 
     if (params.allowAttackDefenseDetail && hasAttackOrDefense(last) && !hasThreePatterns(last)) {
@@ -2091,6 +2146,8 @@ export async function POST(req: Request) {
 
     const gr = judgeGuardrails(message);
 
+    
+
 if (gr.action === "block") {
   const nowIso = new Date().toISOString();
 
@@ -2144,12 +2201,12 @@ await writeDebugEvent({
   db,
   trace: {
     userId: user.id,
-    convId: convId || null,
+    convId: convId || "", // ★DebugTraceはstringなので空文字で寄せる
     messageHead: message.slice(0, 80),
 
-    topicsNow: [],          // ★null禁止
-  inferredTopic: "",      // ★nullが怖いなら空文字
-  lens: "system",         // ★nullが怖いなら適当でOK（blockはsystem扱いで筋が良い）
+    topicsNow: [],
+    inferredTopic: "",
+    lens: "system",
 
     followup: false,
     shifted: false,
@@ -2165,12 +2222,15 @@ await writeDebugEvent({
     path: "guardrail:block",
     meta: {
       guardrail_action: "block",
-      guardrail_reason: (gr as any)?.reason ?? null,
+      guardrail_reason: String((gr as any)?.reason ?? ""),
+      suppress_branding: true,
+      suppress_branding_reason: `rule:block:${String((gr as any)?.reason ?? "")}`,
       dialect,
       stance,
     },
-  } as any,
+  },
 });
+
 
   } catch (e) {
     // DB側でコケても “ユーザーには回答返す”
@@ -2193,6 +2253,9 @@ await writeDebugEvent({
   );
 }
 
+// ===== suppressBranding（LLM判定で確定）=====
+let suppressBranding = false;
+let suppressBrandingReason = "unset";
 
 
     const convId = await ensureConversationId({
@@ -2236,6 +2299,20 @@ await writeDebugEvent({
           .limit(1);
         return prevRows?.[0]?.content ?? null;
       })();
+
+            // ===== suppressBranding by LLM（blockは上でreturn済み）=====
+      {
+        const sup = await decideSuppressBrandingByLLM({
+          message,
+          prevUser: prevUserMessage ?? null,
+          prevAssistant: prevAssistantMessage ?? null,
+          guardrail: gr, // ここは inject|none に確定
+        });
+
+        suppressBranding = Boolean(sup.suppressBranding);
+        suppressBrandingReason = String(sup.reason ?? "llm:no_reason");
+      }
+
 
        // 直前ユーザー発話に紐づくdebugを優先（混線防止）。無ければ従来の最新1件。
       const prevDebug =
@@ -2650,10 +2727,18 @@ const cOther = pickedQaForPrompt.length - cSubject - cAudit;
         llm_intent: llmIntent,
         llm_confidence: llmConfidence,
         llm_reason: llmReason,
+                guardrail_action: gr.action,
+        guardrail_reason: String((gr as any)?.reason ?? ""),
+        suppress_branding: Boolean(suppressBranding),
+        suppress_branding_reason: String(suppressBrandingReason ?? ""),
+        dialect,
+        stance,
+
         // ★NEW: shift cue（LLM）
 llm_shift_cue: Boolean(llmShiftCue),
 llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
         
+
 
 
         subject_topic: subjectTopic,
@@ -2991,6 +3076,7 @@ const noApportionmentBias: string[] = [
           topicsNow,
           inquiryOverride,
           llmIntent: topicMode === "llm" && llmOk ? llmIntent : null,
+          suppressBranding,
         });
 
         path = "normal_llm";
@@ -3016,14 +3102,15 @@ const isPrivateMix =
 
 const allowNudge =
   wantNudgeByLLM &&
+  !suppressBranding &&
   !alreadyHasLines &&
   !alreadyPrompted &&
   llmIntent !== "clarify" &&
-  llmIntent !== "qa_more" &&   // ★これ追加
+  llmIntent !== "qa_more" &&  
   !weakUtterance &&
   !isShortAckLike(message) &&
  !isPrivateMix;
- 
+
 if (allowNudge) {
   answer = `${answer}\n\n${catchphraseFor(dialect, stance)}`;
   meta.nudge_lines_applied = true;
