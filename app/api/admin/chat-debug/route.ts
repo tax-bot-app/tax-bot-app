@@ -239,6 +239,14 @@ export async function GET(req: Request) {
         "clarify_matched",
         "implicit_shift_unstick",
         "audit_essence_injected",
+
+        "guardrail_action",
+"guardrail_reason",
+"suppress_branding",
+"suppress_branding_reason",
+
+        "meta_json",
+
       ];
 
       const csvRows = rows.map((r: any) => {
@@ -353,6 +361,15 @@ llm_shift_cue_reason: safeStr(meta?.llm_shift_cue_reason ?? ""),
           clarify_matched: safeStr(meta?.clarify_matched ?? ""),
           implicit_shift_unstick: String(Boolean(meta?.implicit_shift_unstick)),
           audit_essence_injected: String(Boolean(meta?.audit_essence_injected)),
+
+          guardrail_action: safeStr(meta?.guardrail_action ?? ""),
+guardrail_reason: safeStr(meta?.guardrail_reason ?? ""),
+suppress_branding: String(Boolean(meta?.suppress_branding)),
+suppress_branding_reason: safeStr(meta?.suppress_branding_reason ?? ""),
+
+
+          meta_json: jsonish(meta),
+
         };
       });
 
