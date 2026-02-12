@@ -1434,7 +1434,20 @@ function postProcessAnswer(
     .join("\n")
     .trim();
 
-  const desiredInquiry = inquiryOverride ? inquiryOverride : inquiryLine(dialect, stance);
+  const topicsNow0 = opts?.topicsNow ?? [];
+  const isPrivateMix =
+    (opts?.subjectTopic ?? "") === "私的混在・実態論点" ||
+    topicsNow0.includes("私的混在・実態論点");
+
+  // 私的混在は“静かに締める”（決めゼリフ・🍚誘導を出さない）
+  const quietInquiry = inquiryLine(dialect, stance);
+
+const desiredInquiry = isPrivateMix
+  ? inquiryLine(dialect, stance)   // ← これで十分
+  : inquiryOverride
+  ? inquiryOverride
+  : inquiryLine(dialect, stance);
+
 
   {
     const lines = a.split("\n");
