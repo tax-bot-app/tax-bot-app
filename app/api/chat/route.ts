@@ -1367,6 +1367,7 @@ function postProcessAnswer(
     allowAttackDefenseDetail: boolean;
     inquiryOverride?: string | null;
     llmIntent?: string | null;
+    subjectTopic?: string | null;
   }
 ): string {
   const llmIntent = safeStr(opts.llmIntent ?? "").trim();
@@ -1408,8 +1409,10 @@ function postProcessAnswer(
 
   const alreadyCatch = a.split("\n").some((line) => isCatchphraseLine(line));
   const isQaFirst = llmIntent === "qa_first";
+  const suppressCta =
+    (opts?.subjectTopic ?? "") === "私的混在・実態論点";
 
-  if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch) {
+   if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch && !suppressCta) {
     if (isQaFirst) {
       const cta =
         dialect === "kansai"
@@ -1476,6 +1479,7 @@ async function generateAnswerStrict(params: {
   stance: Stance;
   usedKnowledge: boolean;
   allowAttackDefenseDetail: boolean;
+  subjectTopic?: string | null;
   inquiryOverride?: string | null;
   llmIntent?: string | null;
 }): Promise<string> {
@@ -1506,6 +1510,7 @@ async function generateAnswerStrict(params: {
       allowAttackDefenseDetail: params.allowAttackDefenseDetail,
       inquiryOverride: params.inquiryOverride ?? null,
       llmIntent: params.llmIntent ?? null,
+      subjectTopic: params.subjectTopic ?? null,
     });
 
     if (params.allowAttackDefenseDetail && hasAttackOrDefense(last) && !hasThreePatterns(last)) {
@@ -2961,6 +2966,7 @@ const noApportionmentBias: string[] = [
           stance,
           usedKnowledge,
           allowAttackDefenseDetail: allowAttackDefenseDetailEffective,
+          subjectTopic,
           inquiryOverride,
           llmIntent: topicMode === "llm" && llmOk ? llmIntent : null,
         });
