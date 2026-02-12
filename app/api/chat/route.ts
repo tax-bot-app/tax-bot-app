@@ -1593,37 +1593,70 @@ function extractCrossKeywords(message: string, max = 8): string[] {
   const m = (message ?? "").trim();
   if (!m) return [];
   const hits: string[] = [];
+  const add = (kw: string) => {
+    if (!kw) return;
+    if (!hits.includes(kw)) hits.push(kw);
+  };
 
-  // 強ワード（まずは固定辞書でOK：実験フェーズ）
+  // 強ワード（固定辞書：税務の“構造語”を中心に）
+  // ※特定トピックの単語ではなく「支払い・証憑・名義・対価」の骨格を拾う
   const rules: Array<{ re: RegExp; kw: string }> = [
+    // ── 売上/現金/簿外
     { re: /(現金売上|現金商売|現金)/, kw: "現金" },
-    { re: /(売上)/, kw: "売上" },
+    { re: /(売上|請求|入金|出金|入金消込)/, kw: "売上" },
+    { re: /(簿外|抜く|抜け|除外|隠す|飛ばす)/, kw: "簿外" },
+
+    // ── 証憑/説明（税務署が見る“証拠ライン”）
     { re: /(レシート|領収書なし|領収書無し|領収書(なし|無し)|領収書)/, kw: "領収書" },
+    { re: /(証拠|メモ|名刺|議事録|要項|規程|ルール|基準)/, kw: "メモ" },
+
+    // ── 名義/立替/手渡し
     { re: /(他人名義|名義)/, kw: "他人名義" },
     { re: /(割勘|割り勘|ワリカン)/, kw: "割勘" },
     { re: /(立替|立て替え|建替)/, kw: "立替" },
-    { re: /(手渡し|手渡)/, kw: "手渡し" },
-    { re: /(証拠|メモ|名刺)/, kw: "メモ" },
-    { re: /(通帳|入金|出金)/, kw: "入金" },
-    { re: /(簿外|抜く|抜け)/, kw: "簿外" },
+    { re: /(手渡し|手渡|現金手渡し)/, kw: "手渡し" },
+
+    // ── 支払の性質（横断で効く）
+    // 「誰に何の対価で払うか」系：賞金/景品/謝礼/報酬/外注/給与/寄付…にまたがる
+    { re: /(賞金|景品|懸賞|副賞|ギフト|商品券|クオカード|ギフト券)/i, kw: "賞金" },
+    { re: /(謝礼|心付け|寸志|報酬|対価|コミッション|成功報酬)/, kw: "報酬" },
+    { re: /(給与|給料|賃金|アルバイト|源泉|源泉徴収|支払調書)/, kw: "源泉" },
+    { re: /(寄付|協賛|協賛金|賛助|寄贈)/, kw: "寄付" },
+
+    // ── 企画/イベント（科目が割れやすい領域）
+    { re: /(イベント|企画|コンテスト|キャンペーン|プロモーション|大会|募集|審査)/, kw: "企画" },
   ];
 
   for (const r of rules) {
-    if (r.re.test(m)) hits.push(r.kw);
+    if (r.re.test(m)) add(r.kw);
     if (hits.length >= max) break;
   }
 
-  // 3文字以上トークンも少し混ぜる（表記ゆれ拾い）
+  // 3文字以上トークン（既存）
   for (const t of messageTokens3(m)) {
     if (hits.length >= max) break;
-    // 数字トークンや単なる汎用語を避ける（雑でOK）
+    if (!t) continue;
     if (/^\d+$/.test(t)) continue;
-    if (t.length >= 6) continue; // 長すぎはノイズになりがち
+    if (t.length >= 8) continue; // 6→8（日本語は短語が弱いので少し緩める）
     if (!hits.includes(t)) hits.push(t);
+  }
+
+  // ★フォールバック：messageTokens3 が弱い/空の時でも日本語から拾う
+  // 連続する日本語文字列（漢字/ひらがな/カタカナ）を2〜6文字で抽出して混ぜる
+  if (hits.length === 0) {
+    const re = /[一-龠々ぁ-んァ-ヶー]{2,6}/g;
+    const ms = m.match(re) ?? [];
+    for (const w of ms) {
+      if (hits.length >= max) break;
+      // ありがちな汎用語は捨てる（雑でOK）
+      if (/(こと|感じ|どう|なん|いける|できる|したい|です|ます|これ|それ)/.test(w)) continue;
+      add(w);
+    }
   }
 
   return hits.slice(0, max);
 }
+
 
 async function fetchCrossQaByIlike(params: {
   db: any;
