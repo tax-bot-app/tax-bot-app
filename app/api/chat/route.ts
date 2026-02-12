@@ -1410,9 +1410,21 @@ function postProcessAnswer(
 
   const alreadyCatch = a.split("\n").some((line) => isCatchphraseLine(line));
   const isQaFirst = llmIntent === "qa_first";
-   const suppressCta =
+
+  // topicsNow は配列 or 文字列のどちらでも来る可能性があるので正規化
+  const topicsNowRaw = opts?.topicsNow ?? [];
+  const topicsNow0 = Array.isArray(topicsNowRaw)
+    ? topicsNowRaw
+    : String(topicsNowRaw)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+  const isPrivateMix =
     (opts?.subjectTopic ?? "") === "私的混在・実態論点" ||
-    (opts?.topicsNow ?? []).includes("私的混在・実態論点");
+    topicsNow0.includes("私的混在・実態論点");
+
+  const suppressCta = isPrivateMix;
 
    if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch && !suppressCta) {
     if (isQaFirst) {
@@ -1434,19 +1446,11 @@ function postProcessAnswer(
     .join("\n")
     .trim();
 
-  const topicsNow0 = opts?.topicsNow ?? [];
-  const isPrivateMix =
-    (opts?.subjectTopic ?? "") === "私的混在・実態論点" ||
-    topicsNow0.includes("私的混在・実態論点");
-
-  // 私的混在は“静かに締める”（決めゼリフ・🍚誘導を出さない）
-  const quietInquiry = inquiryLine(dialect, stance);
-
-const desiredInquiry = isPrivateMix
-  ? inquiryLine(dialect, stance)   // ← これで十分
-  : inquiryOverride
-  ? inquiryOverride
-  : inquiryLine(dialect, stance);
+  const desiredInquiry = isPrivateMix
+    ? inquiryLine(dialect, stance) // 静か版（=通常の🔎確認のみ）
+    : inquiryOverride
+    ? inquiryOverride
+    : inquiryLine(dialect, stance);
 
 
   {
@@ -3006,6 +3010,10 @@ const alreadyPrompted = /攻め守りで|さじかげんよろ|さじかげん�
 
 const wantNudgeByLLM = topicMode === "llm" && llmOk && Boolean((decision as any).nudgeLines);
 
+const isPrivateMix =
+  subjectTopic === "私的混在・実態論点" ||
+  (topicsNow ?? []).includes("私的混在・実態論点");
+
 const allowNudge =
   wantNudgeByLLM &&
   !alreadyHasLines &&
@@ -3013,8 +3021,9 @@ const allowNudge =
   llmIntent !== "clarify" &&
   llmIntent !== "qa_more" &&   // ★これ追加
   !weakUtterance &&
-  !isShortAckLike(message);
-
+  !isShortAckLike(message) &&
+ !isPrivateMix;
+ 
 if (allowNudge) {
   answer = `${answer}\n\n${catchphraseFor(dialect, stance)}`;
   meta.nudge_lines_applied = true;
