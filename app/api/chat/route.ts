@@ -2913,6 +2913,17 @@ const noApportionmentBias: string[] = [
   "【原則】法人の相談では『按分』を提案しない（私用混在は給与課税・経済的利益・社内規程/運用設計・科目整理で説明する）。",
 ];
 
+  // ===== 私的混在：例外可能性の“型”を1つだけ例示 =====
+  const privateMixPossibilityBias: string[] =
+    subjectTopic === "私的混在・実態論点"
+      ? [
+          "【私的混在：トーン】否定だけで終わらせず、例外的に整理できる“型”を1つだけ短く例示する（断定しない／数字を出さない）。",
+          "【私的混在：例示候補】(a) 会社アカウント等で継続発信し、採用・受注など成果に繋がった実績がある (b) 会社の来客導線（エントランス等）に恒常的に設置され業務目的が説明できる (c) 実際に秘書・事務として稼働し、役割・成果・契約/雇用の形が整っている —— のうち最も当てはまる1つだけ。",
+          "【私的混在：言い方】『ゼロではない』の匂いは出すが、セーフ/アウトの判定はしない。必要なら“運用と証拠”に落とす。",
+        ]
+      : [];
+
+
 
         const promptPartsBase: PromptParts = {
           context: contextLines,
@@ -2926,6 +2937,7 @@ const noApportionmentBias: string[] = [
             ...amountBias,
             ...noApportionmentBias,
             ...(apportionmentExceptionRule ? [apportionmentExceptionRule] : []),
+            ...privateMixPossibilityBias,
             ...systemBias,
             ...ambiguityBoost,
             ...styleRules,
