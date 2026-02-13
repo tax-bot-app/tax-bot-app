@@ -263,9 +263,13 @@ type DebugMeta = {
   qa_keypoint_used?: string;
   qa_pick_reason?: string;
 
-   // ===== QA cross (ilike) =====
-  qa_cross_keywords?: string[];
-  qa_cross_hit_count?: number;
+    // ===== QA cross (LLM召集) =====
+  qa_cross_pool_n?: number;
+  qa_cross_llm_ok?: boolean;
+  qa_cross_llm_error?: string;
+  qa_cross_llm_raw?: string;
+  qa_cross_selected_ids?: string[];
+  qa_cross_selected_reasons?: Record<string, string>;
   qa_cross_candidates_50?: Array<{ id: string; title: string; topic: string; priority: number; score: number }>;
 
   // ===== QA hybrid pick =====
@@ -1672,102 +1676,33 @@ function extractSummary2Lines(content: string): string {
   return out.length <= 360 ? out : out.slice(0, 360) + "…";
 }
 
-function extractCrossKeywords(message: string, max = 8): string[] {
-  const m = (message ?? "").trim();
-  if (!m) return [];
-  const hits: string[] = [];
-  const add = (kw: string) => {
-    if (!kw) return;
-    if (!hits.includes(kw)) hits.push(kw);
-  };
-
-  // 強ワード（固定辞書：税務の“構造語”を中心に）
-  // ※特定トピックの単語ではなく「支払い・証憑・名義・対価」の骨格を拾う
-  const rules: Array<{ re: RegExp; kw: string }> = [
-    // ── 売上/現金/簿外
-    { re: /(現金売上|現金商売|現金)/, kw: "現金" },
-    { re: /(売上|請求|入金|出金|入金消込)/, kw: "売上" },
-    { re: /(簿外|抜く|抜け|除外|隠す|飛ばす)/, kw: "簿外" },
-
-    // ── 証憑/説明（税務署が見る“証拠ライン”）
-    { re: /(レシート|領収書なし|領収書無し|領収書(なし|無し)|領収書)/, kw: "領収書" },
-    { re: /(証拠|メモ|名刺|議事録|要項|規程|ルール|基準)/, kw: "メモ" },
-
-    // ── 名義/立替/手渡し
-    { re: /(他人名義|名義)/, kw: "他人名義" },
-    { re: /(割勘|割り勘|ワリカン)/, kw: "割勘" },
-    { re: /(立替|立て替え|建替)/, kw: "立替" },
-    { re: /(手渡し|手渡|現金手渡し)/, kw: "手渡し" },
-
-    // ── 支払の性質（横断で効く）
-    // 「誰に何の対価で払うか」系：賞金/景品/謝礼/報酬/外注/給与/寄付…にまたがる
-    { re: /(賞金|景品|懸賞|副賞|ギフト|商品券|クオカード|ギフト券)/i, kw: "賞金" },
-    { re: /(謝礼|心付け|寸志|報酬|対価|コミッション|成功報酬)/, kw: "報酬" },
-    { re: /(給与|給料|賃金|アルバイト|源泉|源泉徴収|支払調書)/, kw: "源泉" },
-    { re: /(寄付|協賛|協賛金|賛助|寄贈)/, kw: "寄付" },
-
-    // ── 企画/イベント（科目が割れやすい領域）
-    { re: /(イベント|企画|コンテスト|キャンペーン|プロモーション|大会|募集|審査)/, kw: "企画" },
-  ];
-
-  for (const r of rules) {
-    if (r.re.test(m)) add(r.kw);
-    if (hits.length >= max) break;
-  }
-
-  // 3文字以上トークン（既存）
-  for (const t of messageTokens3(m)) {
-    if (hits.length >= max) break;
-    if (!t) continue;
-    if (/^\d+$/.test(t)) continue;
-    if (t.length >= 8) continue; // 6→8（日本語は短語が弱いので少し緩める）
-    if (!hits.includes(t)) hits.push(t);
-  }
-
-  // ★フォールバック：messageTokens3 が弱い/空の時でも日本語から拾う
-  // 連続する日本語文字列（漢字/ひらがな/カタカナ）を2〜6文字で抽出して混ぜる
-  if (hits.length === 0) {
-    const re = /[一-龠々ぁ-んァ-ヶー]{2,6}/g;
-    const ms = m.match(re) ?? [];
-    for (const w of ms) {
-      if (hits.length >= max) break;
-      // ありがちな汎用語は捨てる（雑でOK）
-      if (/(こと|感じ|どう|なん|いける|できる|したい|です|ます|これ|それ)/.test(w)) continue;
-      add(w);
-    }
-  }
-
-  return hits.slice(0, max);
-}
-
-
-async function fetchCrossQaByIlike(params: {
+async function fetchCrossQaPool(params: {
   db: any;
-  keywords: string[];
+  excludeTopics: string[];
   limit: number;
 }): Promise<KnowledgeItem[]> {
   const { db } = params;
-  const keywords = Array.from(new Set((params.keywords ?? []).map((x) => String(x ?? "").trim()).filter(Boolean)));
-  const limit = Math.max(1, Math.min(80, params.limit ?? 30));
-  if (keywords.length === 0) return [];
+  const limit = Math.max(50, Math.min(400, params.limit ?? 200));
+  const excludeTopics = Array.from(
+    new Set((params.excludeTopics ?? []).map((x) => String(x ?? "").trim()).filter(Boolean))
+  );
+  if (!db) return [];
 
-  // Supabase .or は "A,B,C" で OR。title と content の両方に OR を掛ける。
-  const ors = keywords
-    .flatMap((k) => {
-      const esc = k.replace(/%/g, "\\%").replace(/_/g, "\\_"); // 軽いエスケープ
-      return [`title.ilike.%${esc}%`, `content.ilike.%${esc}%`];
-    })
-    .join(",");
-
-  const { data, error } = await db
+  let q = db
     .from("knowledge_items")
     .select("id, kind, topic, title, content, amounts, conditions, priority")
     .eq("is_active", true)
     .eq("kind", "qa")
-    .or(ors)
+    .lt("priority", 70)
     .order("priority", { ascending: false })
     .limit(limit);
 
+  if (excludeTopics.length > 0) {
+    const inList = `(${excludeTopics.map((t) => `"${t.replace(/"/g, '\\"')}"`).join(",")})`;
+    q = q.not("topic", "in", inList);
+  }
+
+  const { data, error } = await q;
   if (error) return [];
   return (data ?? []) as KnowledgeItem[];
 }
@@ -1818,7 +1753,7 @@ function splitQaForHybrid(params: {
     .filter((q) => (q.priority ?? 0) < 70)
     .map(markBucket)
     .sort((a, b) => b._score - a._score || (b.priority ?? 0) - (a.priority ?? 0))
-    .slice(0, Math.max(2, Math.min(30, candidate50N)));
+    .slice(0, Math.max(2, Math.min(80, candidate50N)));
 
   return { nonQa, fixed70, cand50 };
 }
@@ -2679,9 +2614,29 @@ const topicQaAll = subjectTopic
       const HYBRID_TOPIC_N = HYBRID_CAND_TOTAL - HYBRID_CROSS_N; 
       
       // ★ cross検索は「今回のユーザー発話」で固定（前の話題混入を防ぐ）
+      // ★ cross召集は「LLMに寄せる」：DBから横断プールを機械取得 → LLMで10枚選ぶ
+      // （subjectTopic と 税務調査 は除外：重複は横断の意味がない）
       const crossMessage = message;
-      const qaCrossKeywords = extractCrossKeywords(crossMessage, 8);
-      const crossRaw = await fetchCrossQaByIlike({ db, keywords: qaCrossKeywords, limit: 60 });
+      const crossPool = await fetchCrossQaPool({
+        db,
+        excludeTopics: [subjectTopic, TOPIC_TAX_AUDIT].filter(Boolean),
+        limit: 200,
+      });
+
+      const crossThin = (crossPool ?? []).map((q) => ({
+        id: q.id,
+        title: String(q.title ?? ""),
+        summary: extractSummary2Lines(String(q.content ?? "")),
+        priority: q.priority ?? 0,
+        bucket: "other" as const,
+      }));
+
+      const crossPick = await chooseQaByLLM({
+        message: crossMessage,
+        candidates: crossThin,
+        pickN: HYBRID_CROSS_N,
+        preferBucket: "other",
+      });
 
             // topic系 24 + cross系 6 → 合計30（重複は除外、足りなければtopic系で埋める）
       const topicTopN = (hybridBase.cand50 ?? []).slice(0, HYBRID_TOPIC_N);
@@ -2690,19 +2645,19 @@ const topicQaAll = subjectTopic
         ...topicTopN.map((x) => x.id),
       ]);
 
-      const cross50 = (crossRaw ?? [])
+      const crossPickedIds = new Set<string>(
+        (crossPick.selectedIds ?? []).map((x) => String(x ?? "").trim()).filter(Boolean)
+      );
+
+      const cross50 = (crossPool ?? [])
         .filter((q) => q && q.kind === "qa")
         .filter((q) => (q.priority ?? 0) < 70) // 50帯だけ
+        .filter((q) => crossPickedIds.has(q.id))
         .filter((q) => !usedIds0.has(q.id))
         .map((q) => {
           const score = scoreQaShallow(q, crossMessage);
-          return { q, score };
-        })
-        .sort((a, b) => b.score - a.score || (b.q.priority ?? 0) - (a.q.priority ?? 0))
-        .slice(0, HYBRID_CROSS_N)
-        .map(({ q, score }) => ({ ...(q as any), _bucket: "other", _score: score } as QaCand));
-
-      const usedIds1 = new Set<string>([...usedIds0, ...cross50.map((x) => x.id)]);
+          return { ...(q as any), _bucket: "other", _score: score } as QaCand;
+        });
 
       // topicTopN を確実に先頭に
       const candTmp: QaCand[] = [...topicTopN];
@@ -2851,9 +2806,13 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
           priority: it.priority,
         })),
         picked_qa: buildPickedQaMeta(pickedQaForPrompt, 10),
-        // cross (ilike)
-        qa_cross_keywords: qaCrossKeywords,
-        qa_cross_hit_count: (crossRaw ?? []).length,
+         // cross (LLM召集)
+        qa_cross_pool_n: (crossPool ?? []).length,
+        qa_cross_llm_ok: Boolean(crossPick.ok),
+        qa_cross_llm_error: String((crossPick as any).error ?? ""),
+        qa_cross_llm_raw: String((crossPick as any).rawText ?? ""),
+        qa_cross_selected_ids: (crossPick.selectedIds ?? []).slice(0, 10),
+        qa_cross_selected_reasons: crossPick.reasons ?? {},
         qa_cross_candidates_50: (cross50 ?? []).slice(0, 6).map((c) => ({
           id: c.id,
           title: c.title,

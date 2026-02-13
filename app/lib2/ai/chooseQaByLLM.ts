@@ -25,6 +25,8 @@ export type ChooseQaResult = {
 export async function chooseQaByLLM(params: {
   message: string;
   candidates: QaCandidateThin[];
+   pickN?: number;
+  preferBucket?: "subject" | "audit" | "other";
 }): Promise<ChooseQaResult> {
   try {
     const openai = new OpenAI({
@@ -34,6 +36,8 @@ export async function chooseQaByLLM(params: {
     const model = process.env.OPENAI_MODEL || "gpt-5.2";
 
     const { message, candidates } = params;
+    const pickN = Math.max(1, Math.min(12, Number(params.pickN ?? 2)));
+    const preferBucket = params.preferBucket ?? "subject";
 
     const listText = candidates
       .map(
@@ -48,18 +52,18 @@ export async function chooseQaByLLM(params: {
 
     const instructions = `
 あなたはQAカードの選抜エンジンです。
-ユーザーの質問に最も適したカードを2枚だけ選んでください。
+ユーザーの質問に最も適したカードを${pickN}枚だけ選んでください。
 
 ルール：
-- 必ず2枚選ぶ
+- 必ず${pickN}枚選ぶ
 - priority70以上は選ばない（それは別途固定される）
-- subjectバケットを優先する
+- bucket="${preferBucket}" を優先する（ただし内容が刺さらないなら他bucketでも可）
 - 内容が具体的に刺さるものを優先する
 - 出力はJSONのみ
 
 出力形式:
 {
-  "selectedIds": ["id1", "id2"],
+  "selectedIds": ["id1", "id2", "..."],
   "reasons": {
     "id1": "理由20文字以内",
     "id2": "理由20文字以内"
@@ -92,10 +96,17 @@ ${listText}
 
     const parsed = JSON.parse(jsonText);
 
+    const selectedIds = Array.isArray(parsed.selectedIds) ? parsed.selectedIds.filter(Boolean) : [];
+    const reasons = parsed.reasons || {};
+
+    if (selectedIds.length < pickN) {
+      return { ok: false, selectedIds, reasons, rawText: raw, error: "too_few_selected" };
+    }
+
     return {
       ok: true,
-      selectedIds: parsed.selectedIds || [],
-      reasons: parsed.reasons || {},
+      selectedIds,
+      reasons,
       rawText: raw,
     };
   } catch (e: any) {
