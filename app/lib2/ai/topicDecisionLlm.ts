@@ -161,7 +161,11 @@ export async function decideTopicByLLM(params: {
     const obj = safeJsonParse(rawText);
     if (!obj || typeof obj !== "object") return { ok: false, error: "llm_topic: invalid json", rawText };
 
-    const subjectTopic = String(obj.subjectTopic ?? "").trim();
+        const TOPIC_DENYLIST = new Set(["制度基準", "一般論"]);
+
+    const subjectTopic0 = String(obj.subjectTopic ?? "").trim();
+    const subjectTopic = TOPIC_DENYLIST.has(subjectTopic0) ? "" : subjectTopic0;
+
     const axisTopic = String(obj.axisTopic ?? "").trim();
     const auditAxis = Boolean(obj.auditAxis);
     const intent = String(obj.intent ?? "").trim() as LlmTopicIntent;
@@ -174,9 +178,23 @@ export async function decideTopicByLLM(params: {
     const shiftCue = Boolean(obj.shiftCue);
     const shiftCueReason = String(obj.shiftCueReason ?? "").trim();
 
-    const topicsNow = Array.isArray(obj.topicsNow) ? obj.topicsNow.map((x: any) => String(x ?? "").trim()).filter(Boolean) : [];
+    const topicsNowRaw: string[] = (() => {
+  if (!Array.isArray(obj.topicsNow)) return [];
+  const arr = obj.topicsNow as any[];
+  const out: string[] = [];
+  for (const x of arr) {
+    const s = String(x ?? "").trim();
+    if (s) out.push(s);
+  }
+  return out;
+})();
+
+const topicsNow: string[] = topicsNowRaw.filter((t: string) => !TOPIC_DENYLIST.has(t));
+
+
 
     const allowSet = new Set(topics);
+
 
     // subjectTopic は「特定できる時だけ」allowed_topics から選ぶ。特定不能なら空文字を許可。
     if (subjectTopic !== "" && !allowSet.has(subjectTopic)) {
@@ -199,10 +217,14 @@ export async function decideTopicByLLM(params: {
     let finalIntent: LlmTopicIntent = intent;
     if (finalIntent === "need_lines" && subjectTopic === "") finalIntent = "clarify";
 
-    const fixedTopicsNow =
+        const fixedTopicsNow =
       subjectTopic === ""
         ? []
-        : uniq([subjectTopic, ...topicsNow]).filter((t) => allowSet.has(t)).slice(0, 3);
+        : uniq([subjectTopic, ...topicsNow])
+            .filter((t) => allowSet.has(t))
+            .filter((t) => !TOPIC_DENYLIST.has(t))
+            .slice(0, 3);
+
 
     const decision: LlmTopicDecision = {
       subjectTopic,
