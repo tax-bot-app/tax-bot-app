@@ -1,5 +1,6 @@
 // app/api/chat/route.ts
 import { generateAnswer } from "../../lib2/ai/generateAnswer";
+import { decideAnchorQaByLLM } from "../../lib2/ai/decideAnchorQaByLLM";
 import type { PromptParts } from "../../lib2/ai/prompt";
 import { judgeGuardrails } from "../../lib2/guardrails";
 import { decideSuppressBrandingByLLM } from "../../lib2/guardrails/brandSuppressByLLM";
@@ -287,6 +288,15 @@ type DebugMeta = {
   qa_hybrid_llm_raw?: string;
   qa_hybrid_selected_ids?: string[];
   qa_hybrid_selected_reasons?: Record<string, string>;
+
+  // ===== QA anchor（picked_qa内でドンピシャ判定）=====
+  qa_anchor_llm_ok?: boolean;
+  qa_anchor_llm_error?: string;
+  qa_anchor_llm_raw?: string;
+  qa_anchor_id?: string;
+  qa_anchor_confidence?: number;
+  qa_anchor_reason?: string;
+  qa_anchor_applied?: boolean;
 
   // ===== output/debug =====
   used_sajikagen?: boolean;
@@ -2620,7 +2630,7 @@ const topicQaAll = subjectTopic
       const crossPool = await fetchCrossQaPool({
         db,
         excludeTopics: [subjectTopic, TOPIC_TAX_AUDIT].filter(Boolean),
-        limit: 200,
+        limit: 400,
       });
 
       const crossThin = (crossPool ?? []).map((q) => ({
@@ -2683,6 +2693,24 @@ const pickedQaForPrompt: KnowledgeItem[] = [
   ...hybridBase.fixed70,
   ...llmPick.selected50,
 ].slice(0, 3); // 70×1 + 50×2
+
+// ===== QA anchor（picked_qa内のドンピシャ判定）=====
+const pickedQaOnly = (pickedQaForPrompt ?? []).filter((x) => x && x.kind === "qa");
+const anchorCandidates = pickedQaOnly.slice(0, 3).map((q) => ({
+  id: q.id,
+  title: String(q.title ?? ""),
+  summary: extractSummary2Lines(String(q.content ?? "")),
+  priority: q.priority ?? 0,
+  topic: String(q.topic ?? ""),
+}));
+
+const anchor = await decideAnchorQaByLLM({
+  message: String(message ?? ""),
+  candidates: anchorCandidates,
+});
+
+const anchorQaId = anchor.ok ? String(anchor.anchorQaId ?? "").trim() : "";
+const anchorQa = anchorQaId ? pickedQaOnly.find((q) => q.id === anchorQaId) ?? null : null;
 
 const pickedQaIds = new Set(pickedQaForPrompt.map((x) => x.id));
 const topicKbItemsForPrompt: KnowledgeItem[] = [
@@ -2806,6 +2834,15 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
           priority: it.priority,
         })),
         picked_qa: buildPickedQaMeta(pickedQaForPrompt, 10),
+
+         // anchor（picked_qa内ドンピシャ判定）
+        qa_anchor_llm_ok: Boolean(anchor.ok),
+        qa_anchor_llm_error: String(anchor.error ?? ""),
+        qa_anchor_llm_raw: anchor.rawText ? clampForContext(String(anchor.rawText), 800) : "",
+        qa_anchor_id: anchorQaId || "",
+        qa_anchor_confidence: anchor.ok ? anchor.confidence : 0,
+        qa_anchor_reason: String(anchor.reason ?? ""),
+        qa_anchor_applied: Boolean(anchorQaId),
          // cross (LLM召集)
         qa_cross_pool_n: (crossPool ?? []).length,
         qa_cross_llm_ok: Boolean(crossPick.ok),
@@ -3058,7 +3095,14 @@ const noApportionmentBias: string[] = [
         ]
       : [];
 
-
+        const anchorRule =
+          anchorQa
+            ? [
+                "【重要：アンカーQA】今回の質問に直撃しているQAが見つかった。以下のQAを回答の主軸に据え、内容を取りこぼさず反映する（要点/注意/具体の一手を優先）。他のQAは補足として使う。アンカーQAに書かれている具体の一手（初動・言い回し・注意）があるなら必ず含める。",
+                `【アンカーQA】title: ${String(anchorQa.title ?? "")}`,
+                `【アンカーQA】content: ${clampForContext(String(anchorQa.content ?? ""), 900)}`,
+              ].join("\n")
+            : null;
 
         const promptPartsBase: PromptParts = {
           context: contextLines,
@@ -3068,6 +3112,7 @@ const noApportionmentBias: string[] = [
             ...SERVICE_BASE_RULES,
             ...(axisTopic === TOPIC_TAX_AUDIT ? [TAX_AUDIT_ROLE_SPLIT_RULE] : []),
             ...doubleTopicRule,
+            ...(anchorRule ? [anchorRule] : []),
             ...(qaKeyPointRule ? [qaKeyPointRule] : []),
             ...auditIntakeHint,
             ...amountBias,

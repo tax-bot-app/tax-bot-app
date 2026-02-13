@@ -186,9 +186,13 @@ export async function GET(req: Request) {
         "picked_lines",
         "allow_lines",
 
-        // QA cross（NEW）
-        "qa_cross_keywords",
-        "qa_cross_hit_count",
+        // QA cross（LLM召集）
+        "qa_cross_pool_n",
+        "qa_cross_llm_ok",
+        "qa_cross_llm_error",
+        "qa_cross_llm_raw",
+        "qa_cross_selected_ids",
+        "qa_cross_selected_reasons",
         "qa_cross_candidates_50",
 
                 // QA hybrid（NEW）
@@ -198,6 +202,15 @@ export async function GET(req: Request) {
         "qa_hybrid_llm_error",
         "qa_hybrid_selected_ids",
         "qa_hybrid_selected_reasons",
+
+        // QA anchor（NEW）
+        "qa_anchor_llm_ok",
+        "qa_anchor_llm_error",
+        "qa_anchor_llm_raw",
+        "qa_anchor_id",
+        "qa_anchor_confidence",
+        "qa_anchor_reason",
+        "qa_anchor_applied",
 
 
         // flow
@@ -288,15 +301,25 @@ llm_shift_cue_reason: safeStr(meta?.llm_shift_cue_reason ?? ""),
           picked_lines: pickedLinesSimple(meta),
           allow_lines: String(Boolean(meta?.allow_lines)),
 
-                    // QA cross（NEW）
-          qa_cross_keywords: Array.isArray(meta?.qa_cross_keywords)
-            ? meta.qa_cross_keywords.join(" | ")
-            : safeStr(meta?.qa_cross_keywords ?? ""),
-
-          qa_cross_hit_count:
-            meta?.qa_cross_hit_count === undefined || meta?.qa_cross_hit_count === null
+                    // QA cross（LLM召集）
+          qa_cross_pool_n:
+            meta?.qa_cross_pool_n === undefined || meta?.qa_cross_pool_n === null
               ? ""
-              : String(meta.qa_cross_hit_count),
+              : String(meta.qa_cross_pool_n),
+
+          qa_cross_llm_ok:
+            meta?.qa_cross_llm_ok === undefined || meta?.qa_cross_llm_ok === null
+              ? ""
+              : String(Boolean(meta.qa_cross_llm_ok)),
+
+          qa_cross_llm_error: safeStr(meta?.qa_cross_llm_error ?? ""),
+          qa_cross_llm_raw: safeStr(meta?.qa_cross_llm_raw ?? ""),
+
+          qa_cross_selected_ids: Array.isArray(meta?.qa_cross_selected_ids)
+            ? meta.qa_cross_selected_ids.join(" | ")
+            : safeStr(meta?.qa_cross_selected_ids ?? ""),
+
+          qa_cross_selected_reasons: jsonish(meta?.qa_cross_selected_reasons ?? ""),
 
           qa_cross_candidates_50: jsonish(meta?.qa_cross_candidates_50 ?? ""),
 
@@ -316,6 +339,23 @@ llm_shift_cue_reason: safeStr(meta?.llm_shift_cue_reason ?? ""),
             : safeStr(meta?.qa_hybrid_selected_ids ?? ""),
 
           qa_hybrid_selected_reasons: jsonish(meta?.qa_hybrid_selected_reasons ?? ""),
+          // QA anchor（NEW）
+          qa_anchor_llm_ok:
+            meta?.qa_anchor_llm_ok === undefined || meta?.qa_anchor_llm_ok === null
+              ? ""
+              : String(Boolean(meta.qa_anchor_llm_ok)),
+
+          qa_anchor_llm_error: safeStr(meta?.qa_anchor_llm_error ?? ""),
+          qa_anchor_llm_raw: safeStr(meta?.qa_anchor_llm_raw ?? ""),
+          qa_anchor_id: safeStr(meta?.qa_anchor_id ?? ""),
+
+          qa_anchor_confidence:
+            meta?.qa_anchor_confidence === undefined || meta?.qa_anchor_confidence === null
+              ? ""
+              : String(meta.qa_anchor_confidence),
+
+          qa_anchor_reason: safeStr(meta?.qa_anchor_reason ?? ""),
+          qa_anchor_applied: String(Boolean(meta?.qa_anchor_applied)),
 
           // flow
           followup: String(Boolean(r?.followup)),
