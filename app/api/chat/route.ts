@@ -32,11 +32,13 @@ export const runtime = "nodejs";
 /** ===== constants ===== */
 const LINES_PREFACE_TAG = "【Lines前置き】";
 
-const SERVICE_ASSUMPTION_RULES: string[] = [
+const SERVICE_BASE_RULES: string[] = [
   "重要：このサービスは『顧問税理士がいる前提』で答える。顧問税理士がいない前提の案内（例：税理士の有無確認・選任の勧め・無い場合の段取り）は原則書かない。",
-  "税務調査の対応は『顧問税理士と連携して進める前提』で、社長がやること/税理士がやることを分けて書く。",
   "例外：ユーザーが明示的に『顧問税理士がいない』と言った場合だけ、その前提で答える。",
 ];
+
+const TAX_AUDIT_ROLE_SPLIT_RULE =
+"税務調査の話の時だけ、社長がやること/税理士がやることを分けて書く（それ以外は分けない）。";
 
 const INTERNAL_LEAK_RE = /(未登録|ここに|\bDB\b|データベース|育成知見|\binternal\b|\bTODO\b|開発用)/i;
 function isLeakyLine(text: string): boolean {
@@ -1991,7 +1993,15 @@ function emitDebug(trace: DebugTrace) {
 async function fetchPrevDebugLite(
   db: any,
   convId: string
-): Promise<{ path: string; lens: string; subjectTopic: string; axisTopic: string; prevNudgeApplied: boolean } | null> {
+): Promise<{
+  path: string;
+  lens: string;
+  subjectTopic: string;
+  axisTopic: string;
+  prevNudgeApplied: boolean;
+  guardrailAction: string;
+  suppressBranding: boolean;
+} | null> {
   try {
     const { data } = await db
       .from("chat_debug_events")
@@ -2010,6 +2020,8 @@ async function fetchPrevDebugLite(
       subjectTopic: String(meta.subject_topic ?? ""),
       axisTopic: String(meta.axis_topic ?? ""),
       prevNudgeApplied: Boolean(meta.nudge_lines_applied),
+       guardrailAction: String(meta.guardrail_action ?? ""),
+   suppressBranding: Boolean(meta.suppress_branding),
     };
   } catch {
     return null;
@@ -2020,7 +2032,15 @@ async function fetchPrevDebugForPrevUserMessage(
   db: any,
   convId: string,
   prevUserMessage: string | null
-): Promise<{ path: string; lens: string; subjectTopic: string; axisTopic: string; prevNudgeApplied: boolean } | null> {
+): Promise<{
+  path: string;
+  lens: string;
+  subjectTopic: string;
+  axisTopic: string;
+  prevNudgeApplied: boolean;
+  guardrailAction: string;
+  suppressBranding: boolean;
+} | null> {
   const msg = (prevUserMessage ?? "").trim();
   if (!msg) return null;
   const targetJson = JSON.stringify(msg);
@@ -2048,6 +2068,8 @@ async function fetchPrevDebugForPrevUserMessage(
       subjectTopic: String(meta.subject_topic ?? ""),
       axisTopic: String(meta.axis_topic ?? ""),
       prevNudgeApplied: Boolean(meta.nudge_lines_applied),
+      guardrailAction: String(meta.guardrail_action ?? ""),
+      suppressBranding: Boolean(meta.suppress_branding),
     };
   } catch {
     return null;
@@ -2300,21 +2322,7 @@ let suppressBrandingReason = "unset";
         return prevRows?.[0]?.content ?? null;
       })();
 
-            // ===== suppressBranding by LLM（blockは上でreturn済み）=====
-      {
-        const sup = await decideSuppressBrandingByLLM({
-          message,
-          prevUser: prevUserMessage ?? null,
-          prevAssistant: prevAssistantMessage ?? null,
-          guardrail: gr, // ここは inject|none に確定
-        });
-
-        suppressBranding = Boolean(sup.suppressBranding);
-        suppressBrandingReason = String(sup.reason ?? "llm:no_reason");
-      }
-
-
-       // 直前ユーザー発話に紐づくdebugを優先（混線防止）。無ければ従来の最新1件。
+      // 直前ユーザー発話に紐づくdebugを優先（混線防止）。無ければ従来の最新1件。
       const prevDebug =
         (await fetchPrevDebugForPrevUserMessage(db, convId, prevUserMessage)) ??
         (await fetchPrevDebugLite(db, convId));
@@ -2346,6 +2354,28 @@ let suppressBrandingReason = "unset";
 
       const followupPhase = followupPhaseRaw && continuationLike;
       const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shiftedRaw);
+
+      // ===== suppressBranding（順番重要：prevDebug と continuationLike が確定してから）=====
+      {
+        // 前回危険（inject/block/suppress）で、今回が“続きっぽい”なら抑制を持ち越す
+        const prevRisk =
+          Boolean((prevDebug as any)?.suppressBranding) ||
+          (prevDebug as any)?.guardrailAction === "inject" ||
+          (prevDebug as any)?.guardrailAction === "block";
+
+        const carryRisk = prevRisk && continuationLike && !shiftedRaw;
+
+        const sup = await decideSuppressBrandingByLLM({
+          message,
+          prevUser: prevUserMessage ?? null,
+          prevAssistant: prevAssistantMessage ?? null,
+          guardrail: gr, // blockは上でreturn済み。ここは inject|none
+          carryRisk,
+        } as any);
+
+        suppressBranding = Boolean((sup as any).suppressBranding);
+        suppressBrandingReason = String((sup as any).reason ?? "llm:no_reason");
+      }
 
 let llmShiftCue = false;
 let llmShiftCueReason = "";
@@ -2886,6 +2916,7 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
             usedKnowledge: true,
             allowAttackDefenseDetail: true,
             inquiryOverride,
+            suppressBranding,
           });
         } else {
           // ★ Lines が取れない＝偽🍚🧂は禁止。normal_llm に落とす（メタだけ残す）
@@ -3041,7 +3072,8 @@ const noApportionmentBias: string[] = [
           injectedRules: [
             ...outputRules,
             ...clarifyBias,
-            ...SERVICE_ASSUMPTION_RULES,
+            ...SERVICE_BASE_RULES,
+            ...(axisTopic === TOPIC_TAX_AUDIT ? [TAX_AUDIT_ROLE_SPLIT_RULE] : []),
             ...doubleTopicRule,
             ...(qaKeyPointRule ? [qaKeyPointRule] : []),
             ...auditIntakeHint,

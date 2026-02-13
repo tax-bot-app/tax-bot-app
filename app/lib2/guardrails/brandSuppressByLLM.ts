@@ -30,19 +30,28 @@ export type BrandSuppressDecision = {
   reason: string; // internal
 };
 
+// app/lib2/guardrails/brandSuppressByLLM.ts
+
 export async function decideSuppressBrandingByLLM(args: {
   message: string;
   prevUser?: string | null;
   prevAssistant?: string | null;
   guardrail: GuardrailDecision;
+  carryRisk?: boolean;
 }): Promise<BrandSuppressDecision> {
-  const { message, prevUser, prevAssistant, guardrail } = args;
+  const { message, prevUser, prevAssistant, guardrail, carryRisk } = args;
 
   // block はルール側で確定（LLM不要）
   if (guardrail.action === "block") {
     return { suppressBranding: true, reason: `rule:block:${guardrail.reason}` };
   }
 
+  // ★追加：inject も確定ON（LLM不要・ぶれさせない）
+  if (guardrail.action === "inject") {
+    return { suppressBranding: true, reason: `rule:inject:${guardrail.reason}` };
+  }
+
+  // ここから先は guardrail.action === "none" しか来ない
   const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
   const model = process.env.OPENAI_MODEL || "gpt-5.2";
 
@@ -58,17 +67,14 @@ export async function decideSuppressBrandingByLLM(args: {
     "",
     "次のとき suppressBranding=false：通常の税務相談・合法的な設計相談・前提確認。",
     "",
-    "必ず次の形式で返す：",
     `{"suppressBranding": true|false, "reason": "short_internal_reason"}`,
   ].join("\n");
 
   const input = [
     `message: ${message}`,
-    prevUser ? `prevUser: ${prevUser}` : "",
-    prevAssistant ? `prevAssistant: ${prevAssistant}` : "",
-    guardrail.action === "inject"
-      ? `guardrail: inject level=${guardrail.level} reason=${guardrail.reason}`
-      : "guardrail: none",
+    carryRisk ? (prevUser ? `prevUser: ${prevUser}` : "") : "",
+    carryRisk ? (prevAssistant ? `prevAssistant: ${prevAssistant}` : "") : "",
+    "guardrail: none",
   ]
     .filter(Boolean)
     .join("\n");
@@ -78,7 +84,6 @@ export async function decideSuppressBrandingByLLM(args: {
       model,
       instructions: instruction,
       input,
-      // 温度は低め（分類器としてぶれさせない）
       temperature: 0.2,
     } as any);
 
@@ -90,10 +95,8 @@ export async function decideSuppressBrandingByLLM(args: {
 
     return { suppressBranding: suppress, reason: `llm:${reason}` };
   } catch (e: any) {
-    // 失敗時のフォールバック：injectは抑制（品優先）、noneは非抑制（誤抑制回避）
-    if (guardrail.action === "inject") {
-      return { suppressBranding: true, reason: "fallback:inject" };
-    }
+    // ★ここには inject が来ないので分岐不要
     return { suppressBranding: false, reason: "fallback:none" };
   }
 }
+
