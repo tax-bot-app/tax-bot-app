@@ -2473,8 +2473,21 @@ if (topicMode === "llm") {
   }
 }
 
-const topicsNow =
-  topicMode === "llm" ? (llmOk ? llmTopicsNow.slice(0, 3) : topicsNowRegex) : topicsNowRegex;
+const TOPICS_NOW_DENYLIST = new Set(["制度基準", "一般論"]);
+
+// ★ 最終的に使う topicsNow はここで確定（LLMでもregexでも同じフィルタを通す）
+const topicsNowRaw =
+  topicMode === "llm"
+    ? (llmOk ? (llmTopicsNow ?? []).slice(0, 3) : topicsNowRegex)
+    : topicsNowRegex;
+
+const topicsNow = (topicsNowRaw ?? [])
+  .map((t) => String(t ?? "").trim())
+  .filter(Boolean)
+  .filter((t) => !TOPICS_NOW_DENYLIST.has(t))
+  .slice(0, 3);
+
+
 
 // ★ここで implicitShift を確定（LLM shiftCue を反映）
 implicitShift =
@@ -2753,7 +2766,28 @@ const cOther = pickedQaForPrompt.length - cSubject - cAudit;
         topic_mode: topicMode,
         llm_topic_ok: llmOk,
         llm_topic_error: llmErr,
-        llm_topic_raw: llmRaw ? clampForContext(llmRaw, 800) : "",
+        llm_topic_raw: llmOk
+  ? clampForContext(
+      JSON.stringify(
+        {
+          subjectTopic: llmSubject,
+          axisTopic: llmAxis,
+          auditAxis: llmAudit,
+          topicsNow: llmTopicsNow,
+          intent: llmIntent,
+          confidence: llmConfidence,
+          reason: llmReason,
+          nudgeLines: llmNudgeLines,
+          nudgeReason: llmNudgeReason,
+          shiftCue: llmShiftCue,
+          shiftCueReason: llmShiftCueReason,
+        },
+        null,
+        0
+      ),
+      800
+    )
+  : (llmRaw ? clampForContext(llmRaw, 800) : ""),
         llm_intent: llmIntent,
         llm_confidence: llmConfidence,
         llm_reason: llmReason,
