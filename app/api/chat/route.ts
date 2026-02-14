@@ -2991,76 +2991,69 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
             : [];
 
 // ✅ 会話的な締め（LLMフリー / 記号なし / 深掘り誘導）
-// 目的：通常回答でも「次に聞くと強くなる論点」を1〜2個だけ自然に添える（※Lines/追撃/危険時は除外）
+// ===== warm close gate =====
+// default は「交通整理スタンス（amb）」で締めを作る。
+// followupPhase は「続きの流れ」なので深掘り導線へ。
+// 例外：危険/抑制/Lines/lineRequest などは締めを出さない。
+
 const isAmbiguousOrShift =
   implicitShift || (topicMode === "llm" && llmOk && llmIntent === "clarify");
+
+const isFollowupLike = followupPhase;
 
 // 「明確税務」= subjectTopic or axisTopic が立ってる（税務調査も含む）
 const isClearTaxTopic = Boolean(subjectTopic) || Boolean(axisTopic);
 
-
-// weak発話でも「1行だけ」の締めは許す（質問は禁止）
-const weakWarmClose =
-  gr.action === "none" &&
-  !suppressBranding &&
-  !usedLinesPick &&
-  !lineRequestEffective &&
-  !followupExplicit &&
-  !followupOnly &&
-  weakUtterance &&
-  isClearTaxTopic; // topicが立ってる時だけ（ノートピックの弱発話は地獄になる）
-
+// ★基本は「出す」。止めるのは危険/抑制/Lines/lineRequest など。
 const wantWarmClose =
   gr.action === "none" &&
-  !suppressBranding &&
+  !suppressBranding &&        // ← ここ外したければ外してOK（後で判断）
   !usedLinesPick &&
   !lineRequestEffective &&
   !followupExplicit &&
-  !followupOnly &&
-  (
-    weakWarmClose ||
-    (!weakUtterance && (isAmbiguousOrShift || isClearTaxTopic))
-  );
+  !followupOnly;
 
+// closeMode：default=amb（交通整理スタンス）
+// followupPhase は followup を優先
+// 「違うな」と判断できる（明確税務など）なら light に落として良い
+let closeMode: "amb" | "followup" | "light" = "amb";
+if (isFollowupLike) closeMode = "followup";
 
+// LLMが「交通整理いらん」側に寄せたい時：明確税務＆曖昧じゃない＆ズレてない
+const allowLightClose = isClearTaxTopic && !isAmbiguousOrShift && !implicitShift;
+if (!isFollowupLike && allowLightClose) closeMode = "light";
 
-        // followupPhase は「続きの流れ」なので、締めは“交通整理”ではなく“深掘り導線”に寄せる
+// debug meta
 meta.allow_warm_close = Boolean(wantWarmClose);
 meta.warm_close_reason = wantWarmClose
-  ? "on"
-  : `off:gr=${gr.action}|sup=${suppressBranding}|lines=${usedLinesPick}|lineReq=${lineRequestEffective}|fuExp=${followupExplicit}|fuOnly=${followupOnly}|weak=${weakUtterance}|amb=${isAmbiguousOrShift}|clear=${isClearTaxTopic}`;
+  ? `on:mode=${closeMode}`
+  : `off:gr=${gr.action}|sup=${suppressBranding}|lines=${usedLinesPick}|lineReq=${lineRequestEffective}|fuExp=${followupExplicit}|fuOnly=${followupOnly}|mode=${closeMode}|amb=${isAmbiguousOrShift}|followup=${isFollowupLike}|clear=${isClearTaxTopic}`;
 
-const isFollowupLike = followupPhase;
-
-
-
+// ===== warm close rule =====
 const warmCloseRule = wantWarmClose
-  ? weakWarmClose
+  ? closeMode === "followup"
     ? [
-        "【締め】この条件では、最後に1行だけ軽く添える。質問は禁止。",
-        "【締め】記号やラベル（🔎・👉など）は使わない。括弧（）も使わない。",
-        "【締め】内容は『他に前提や条件があれば教えて』の一言で十分。脱線は禁止。",
+        "【締め】最後に自然な会話調で1〜3行の締めを付ける（基本付ける）。",
+        "【締め】記号やラベル（🔎・👉など）は使わない。箇条書き禁止。括弧（）も使わない。",
+        "【締め】質問は最大2つまで。『A？それともB？』の二択は1つの質問として数える。二択を2回やらない。",
+        "【締め】続きの流れでは交通整理はしない。代わりに、深掘りできる論点を1〜2個だけ提示して、軽い質問で次に繋げる。",
       ].join("\n")
-    : isAmbiguousOrShift
+    : closeMode === "light"
       ? [
-          "【締め】最後に自然な会話調で1〜3行の締めを付ける（ここは“省略可”ではなく基本付ける）。",
-          "【締め】記号やラベル（🔎・👉など）は使わない。箇条書き禁止。括弧（）も使わない。",
-          "【締め】質問は最大2つまで。語尾は冷たくせず『よかったら』『気になったら言うて』『どっち寄りで聞きたい？』の温度感にする。",
-          "【締め】『A？それともB？』の二択は“1つの質問”として数える。二択を2回やらない。",
-          "【締め】要点で十分な時は無理に深掘りしない。軽く『他に気になる点あったら言うて』で終えてよい（脱線は禁止）。",
-          "【締め】曖昧な時だけ交通整理。一般論の話か、税務の話かをやわらかく聞き分ける。",
+          "【締め】通常時は最後に軽い一言で締める（1行〜2行）。深掘り誘導は必須ではない。",
+          "【締め】記号やラベル（🔎・👉など）は使わない。括弧（）も使わない。",
+          "【締め】内容は『追加で聞きたいことあったら言うて』か『前提が増えたら教えて』のような短い一言。質問形で終えない。脱線は禁止。",
         ].join("\n")
       : [
-          "【締め】最後に自然な会話調で1〜3行の締めを付ける（ここは“省略可”ではなく基本付ける）。",
+          // default = amb
+          "【締め】最後に自然な会話調で1〜3行の締めを付ける（基本付ける）。",
           "【締め】記号やラベル（🔎・👉など）は使わない。箇条書き禁止。括弧（）も使わない。",
-          "【締め】質問は最大2つまで。語尾は冷たくせず『よかったら』『気になったら言うて』の温度感にする。",
-          "【締め】『A？それともB？』の二択は“1つの質問”として数える。二択を2回やらない。",
+          "【締め】質問は最大2つまで。『A？それともB？』の二択は1つの質問として数える。二択を2回やらない。",
+          "【締め】基本は交通整理スタンス：一般論の話か税務の話かをやわらかく聞き分ける。ただし押し付けない。",
           "【締め】要点で十分な時は無理に深掘りしない。軽く『他に気になる点あったら言うて』で終えてよい（脱線は禁止）。",
-          isFollowupLike
-            ? "【締め】続きの流れでは交通整理はしない。代わりに、深掘りできる論点を1〜2個だけ提示して、軽い質問で次に繋げる。"
-            : "【締め】交通整理はしない。代わりに、次に強くなる近接論点を1〜2個だけ示して、軽く問いかけて終える。例を出すなら1つだけ。断定や数字レンジは禁止。",
         ].join("\n")
   : null;
+
 
 
             const apportionmentExceptionRule =
