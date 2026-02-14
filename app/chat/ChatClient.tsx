@@ -179,12 +179,12 @@ function sleep(ms: number) {
 const WELCOME_SEEN_KEY = "chat:welcomeSeen:v3";
 const PINS_KEY = "chat:pins:v1";
 const WELCOME_MESSAGE = [
-  "はじめまして、AI野口です。",
-  "税務は「攻め」「守り」「ちょうど良いライン」で整理します。",
+  "はじめまして、税理士法人GLADZ代表税理士野口のAI、AI野口です。",
+  "あなたの税務の悩みを「ちょうどさじかげん」で整理します。",
   "",
   "口調はメニュー（⋯）から固定できます（関西弁 / ズバっと など）。",
   "",
-  "まずは気になることを、そのまま書いてください。",
+  "お好みのスタイルを選んで気軽にご相談ください",
 ].join("\n");
 
 /** ===== main ===== */
@@ -217,6 +217,10 @@ export default function ChatClient() {
   // iOSキーボード対策
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [keyboardPx, setKeyboardPx] = useState(0);
+
+  // ✅ Bottom Sheet入力（ChatGPT/Gemini寄せ）
+  const [inputSheetOpen, setInputSheetOpen] = useState(false);
+  const [inputSheetText, setInputSheetText] = useState("");
 
   // overlays
   const [threadsOverlayOpen, setThreadsOverlayOpen] = useState(false);
@@ -866,6 +870,9 @@ export default function ChatClient() {
        // ✅ CSS変数に反映（CSS側で bottom に使う）
       try {
         document.documentElement.style.setProperty("--kb", `${kb}px`);
+        // ✅ Sheetの“見た目”をOS寄せにするための viewport 変数
+        document.documentElement.style.setProperty("--vvh", `${Math.round(vv.height)}px`);
+        document.documentElement.style.setProperty("--vvo", `${Math.round(offsetTop)}px`);
       } catch {}
     };
     vv.addEventListener("resize", onResize);
@@ -910,7 +917,7 @@ export default function ChatClient() {
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [menuOpen, threadsOverlayOpen, aiProfileOpen, threadMenuOpen, composerOpen]);
+  }, [menuOpen, threadsOverlayOpen, aiProfileOpen, threadMenuOpen, composerOpen, inputSheetOpen]);
 
   /** ===== swipe left to open threads overlay ===== */
   const swipeRef = useRef<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false });
@@ -1195,21 +1202,41 @@ export default function ChatClient() {
             </div>
 
             {/* 入力（1行固定） */}
-            <div className={`chatInputWrap ${keyboardOpen ? "kbOpen" : ""}`}>
+            <div className={`chatInputWrap ${keyboardOpen ? "kbOpen" : ""} ${inputSheetOpen ? "hiddenWhenSheet" : ""}`}>
               <div className="inputRow">
-                <input
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      if (canSend) sendMessage();
-                    }
+                {/* PCは従来通り */}
+                <div className="pcOnly" style={{ display: "flex", gap: 8, alignItems: "center", width: "100%" }}>
+                  <input
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        if (canSend) sendMessage();
+                      }
+                    }}
+                    placeholder={loading ? "回答中…" : "相談内容を入力"}
+                    className="chatInput"
+                    disabled={!canSend}
+                  />
+
+                                  </div>
+
+                {/* SPは“ダミー”→タップでBottom Sheet */}
+                <button
+                  type="button"
+                  className="spOnly inputDock"
+                  onClick={() => {
+                    if (!canSend) return;
+                    setInputSheetText(input);
+                    setInputSheetOpen(true);
+                    // iOS: open直後フォーカスが外れることがあるので、sheet側でautoFocusする
                   }}
-                  placeholder={loading ? "回答中…" : "相談内容を入力"}
-                  className="chatInput"
                   disabled={!canSend}
-                />
+                >
+                  <span className="dockPlaceholder">{loading ? "回答中…" : "相談内容を入力"}</span>
+                  <span className="dockSend">送信</span>
+                </button>
 
                 {showExpand && (
                   <button
@@ -1520,6 +1547,71 @@ export default function ChatClient() {
           </div>
         </div>
       )}
+
+      {/* ===== SP: Bottom Sheet Input（ChatGPT/Gemini寄せ） ===== */}
+      {inputSheetOpen && (
+        <div
+          className="sheetOverlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => {
+            setInput(inputSheetText);
+            setInputSheetOpen(false);
+          }}
+        >
+          <div
+            className="inputSheet"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              top: "var(--vvo, 0px)",
+              height: "var(--vvh, 100dvh)",
+            }}
+          >
+            <div className="sheetTop">
+              <button
+                type="button"
+                className="sheetBtn"
+                onClick={() => {
+                  setInput(inputSheetText);
+                  setInputSheetOpen(false);
+                }}
+              >
+                戻る
+              </button>
+
+              <div className="sheetTitle">相談内容</div>
+
+              <button
+                type="button"
+                className={`sheetBtnPrimary ${!inputSheetText.trim() ? "disabled" : ""}`}
+                disabled={!inputSheetText.trim() || !canSend}
+                onClick={() => {
+                  if (!canSend) return;
+                  const v = inputSheetText.trim();
+                  if (!v) return;
+                  setInputSheetOpen(false);
+                  setInputSheetText("");
+                  sendMessage(v);
+                }}
+              >
+                送信
+              </button>
+            </div>
+
+            <div className="sheetBody">
+              <textarea
+                value={inputSheetText}
+                onChange={(e) => setInputSheetText(e.target.value)}
+                placeholder="相談内容を入力"
+                className="sheetTextarea"
+                autoFocus
+              />
+              <div className="sheetHint">※ 口調はメニュー（⋯）から固定できます。</div>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* ===== styles ===== */}
       <style jsx global>{`
@@ -1909,6 +2001,109 @@ export default function ChatClient() {
           padding-bottom: 8px;
         }
 
+         /* ✅ SPダミー入力（dock） */
+        .inputDock {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 12px 12px;
+          border-radius: 14px;
+          border: 1px solid #ddd;
+          background: #fff;
+          cursor: pointer;
+        }
+        .inputDock:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+        .dockPlaceholder {
+          color: #777;
+          font-size: 16px;
+        }
+        .dockSend {
+          padding: 8px 12px;
+          border-radius: 12px;
+          border: 1px solid #111;
+          background: #111;
+          color: #fff;
+          font-weight: 900;
+          font-size: 13px;
+          line-height: 1;
+        }
+
+        /* Sheet表示中は下の入力バーを隠す */
+        .hiddenWhenSheet { display: none; }
+
+        /* ✅ Bottom Sheet Overlay */
+        .sheetOverlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.18);
+          z-index: 260;
+        }
+        .inputSheet {
+          position: fixed;
+          left: 0;
+          right: 0;
+          background: #fff;
+          border-top-left-radius: 16px;
+          border-top-right-radius: 16px;
+          box-shadow: 0 -16px 40px rgba(0,0,0,0.12);
+          display: flex;
+          flex-direction: column;
+        }
+        .sheetTop {
+          padding: 10px 12px;
+          border-bottom: 1px solid #eee;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+        .sheetTitle { font-weight: 900; }
+        .sheetBtn {
+          padding: 8px 10px;
+          border-radius: 12px;
+          border: 1px solid #ddd;
+          background: #fff;
+          cursor: pointer;
+          font-size: 13px;
+        }
+        .sheetBtnPrimary {
+          padding: 8px 12px;
+          border-radius: 12px;
+          border: 1px solid #111;
+          background: #111;
+          color: #fff;
+          cursor: pointer;
+          font-size: 13px;
+          font-weight: 900;
+        }
+        .sheetBtnPrimary.disabled { opacity: 0.5; cursor: not-allowed; }
+        .sheetBody {
+          flex: 1 1 auto;
+          min-height: 0;
+          padding: 12px;
+          padding-bottom: calc(12px + env(safe-area-inset-bottom));
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .sheetTextarea {
+          flex: 1;
+          width: 100%;
+          border: 1px solid #ddd;
+          border-radius: 14px;
+          padding: 12px;
+          font-size: 16px;
+          line-height: 1.7;
+          resize: none;
+          outline: none;
+        }
+        .sheetHint { font-size: 12px; color: #666; }
+
         .chatInput {
           flex: 1;
           padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
@@ -2189,46 +2384,58 @@ export default function ChatClient() {
         }
 
         @media (max-width: 760px) {
-          .pcOnly {
-            display: none !important;
-          }
-          .spOnly {
-            display: inline-flex !important;
-          }
+  .pcOnly {
+    display: none !important;
+  }
+  .spOnly {
+    display: inline-flex !important;
+  }
 
-          .appBody {
-            padding: 0;
-          }
+  .appBody {
+    padding: 0;
+  }
 
-          .shell {
-            width: 100%;
-            height: 100%;
-            border: none;
-            border-radius: 0;
-          }
+  .shell {
+    width: 100%;
+    height: 100%;
+    border: none;
+    border-radius: 0;
+  }
 
-          .chatArea {
-            padding: 10px;
-            /* ✅ 入力バーが fixed になるので、その分の余白を確保 */
-            padding-bottom: calc(110px + env(safe-area-inset-bottom));
-          }
+  .chatArea {
+    padding: 10px;
+    /* ✅ 入力バーが fixed になるので、その分の余白を確保 */
+    padding-bottom: calc(110px + env(safe-area-inset-bottom));
+  }
 
-          .jumpBtn {
-            right: 10px;
-            bottom: calc(74px + env(safe-area-inset-bottom));
-          }
-            /* ✅ ここが本丸：SPでは入力バーを fixed にして bottom をキーボード分上げる */
-          .chatInputWrap {
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: var(--kb, 0px);
-            z-index: 160;
-            border-top: 1px solid #eee;
-            background: #fff;            /* 透け防止 */
-            box-shadow: 0 -8px 24px rgba(0,0,0,0.06); /* 背景が見にくい問題を緩和 */
-          }
-        }
+  /* ✅ SPではinputRow中のpcOnlyが消えるので整形 */
+  .inputRow {
+    width: 100%;
+  }
+
+  .jumpBtn {
+    right: 10px;
+    bottom: calc(74px + env(safe-area-inset-bottom));
+  }
+
+  /* ✅ ここが本丸：SPでは入力バーを fixed にして bottom をキーボード分上げる */
+  .chatInputWrap {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: var(--kb, 0px);
+    z-index: 160;
+    border-top: 1px solid #eee;
+    background: #fff; /* 透け防止 */
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.06);
+  }
+
+  /* Bottom Sheet表示中は下の入力バーを隠す（入れてるなら） */
+  .hiddenWhenSheet {
+    display: none !important;
+  }
+}
+       
       `}</style>
     </div>
   );
