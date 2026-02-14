@@ -2986,6 +2986,13 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
             : [];
 
 // ✅ 会話的な締め（LLMフリー / 記号なし / 深掘り誘導）
+// 目的：通常回答でも「次に聞くと強くなる論点」を1〜2個だけ自然に添える（※Lines/追撃/危険時は除外）
+const isAmbiguousOrShift =
+  implicitShift || (topicMode === "llm" && llmOk && llmIntent === "clarify");
+
+// 「明確税務」= subjectTopic or axisTopic が立ってる（税務調査も含む）
+const isClearTaxTopic = Boolean(subjectTopic) || Boolean(axisTopic);
+
 const wantWarmClose =
   gr.action === "none" &&
   !suppressBranding &&
@@ -2994,20 +3001,30 @@ const wantWarmClose =
   !followupExplicit &&
   !followupOnly &&
   !weakUtterance &&
-  (
-    implicitShift ||
-    (topicMode === "llm" && llmOk && llmIntent === "clarify")
-  );
+  (isAmbiguousOrShift || isClearTaxTopic);
 
-        const warmCloseRule = wantWarmClose
-  ? [
-      "【締め】必要に応じて、回答の最後に自然な会話調で1〜3行の締めを付けてよい。",
-"【締め】記号やラベル（🔎・👉など）は使わない。箇条書きも禁止。",
-"【締め】話題が曖昧な場合のみ、一般論か税務論点かをやわらかく交通整理する。",
-"【締め】税務前提が明らかな場合は交通整理しない。代わりに、いま触れていない“近接論点”を1〜2個だけ示し、必要なら短い運用イメージ例を1つ添えて軽く問いかける。",
-"【締め】同じ軸を繰り返さない。例は1つだけ。断定や数字レンジは禁止。",
-    ].join("\n")
+
+        // followupPhase は「続きの流れ」なので、締めは“交通整理”ではなく“深掘り導線”に寄せる
+const isFollowupLike = followupPhase;
+
+const warmCloseRule = wantWarmClose
+  ? isAmbiguousOrShift
+    ? [
+        "【締め】必要に応じて、回答の最後に自然な会話調で1〜3行の締めを付けてよい。",
+        "【締め】記号やラベル（🔎・👉など）は使わない。箇条書きも禁止。",
+        "【締め】話題が曖昧な場合のみ、一般論か税務論点かをやわらかく交通整理し、確認質問は1つだけ。",
+        "【締め】押し売り禁止。短く。",
+      ].join("\n")
+    : [
+        "【締め】必要に応じて、回答の最後に自然な会話調で1〜3行の締めを付けてよい。",
+        "【締め】記号やラベル（🔎・👉など）は使わない。箇条書きも禁止。",
+        isFollowupLike
+          ? "【締め】続きの流れでは交通整理はしない。代わりに、深掘りできる論点を1〜2個だけ提示して、軽い質問で次に繋げる。"
+          : "【締め】税務前提が明らかな場合は交通整理しない。代わりに、いま触れていない“近接論点”を1〜2個だけ示し、必要なら短い運用イメージ例を1つ添えて軽く問いかける。",
+        "【締め】同じ軸を繰り返さない。例は1つだけ。断定や数字レンジは禁止。",
+      ].join("\n")
   : null;
+
 
             const apportionmentExceptionRule =
   subjectTopic === "家事按分"
