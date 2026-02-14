@@ -996,7 +996,7 @@ export default function ChatClient() {
   const showExpandSheet = (inputSheetText ?? "").length >= 120;
 
   return (
-    <div className="appRoot" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+   <div className="appRoot">
       <div className="appBody">
         <div className="shell">
           {/* PC/Tablet: 左スレッド */}
@@ -1295,7 +1295,7 @@ export default function ChatClient() {
           <div className="fullSheet">
             <div className="fullTopBar">
               <button type="button" className="topIconBtn" onClick={() => setThreadsOverlayOpen(false)} aria-label="閉じる" title="閉じる">
-                ←
+                戻る
               </button>
               <div style={{ fontWeight: 900 }}>スレッド</div>
               <button type="button" className="topIconBtn" onClick={() => newThread()} aria-label="新規" title="新規">
@@ -1583,7 +1583,7 @@ export default function ChatClient() {
           <div className="inputSheet" onClick={(e) => e.stopPropagation()}>
             <div className="sheetTop">
               <div className="sheetLeft">
-+    <button
+    <button
       type="button"
       className="sheetBtn"
       onClick={(e) => {
@@ -1816,7 +1816,7 @@ export default function ChatClient() {
 
         /* 上下固定の幅を縮める */
         .topBar {
-          padding: calc(6px + env(safe-area-inset-top)) 10px 6px;
+          padding: calc(2px + env(safe-area-inset-top)) 8px 2px;
           border-bottom: 1px solid #eee;
           display: flex;
           justify-content: space-between;
@@ -2048,7 +2048,7 @@ export default function ChatClient() {
 
         .chatInputWrap {
           flex: 0 0 auto;
-          padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
+          padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
           border-top: 1px solid #eee;
           background: #fff;
         }
@@ -2071,7 +2071,7 @@ export default function ChatClient() {
           align-items: center;
           justify-content: space-between;
           gap: 10px;
-          padding: 12px 12px;
+          padding: 10px 10px;
           border-radius: 14px;
           border: 1px solid #ddd;
           background: #fff;
@@ -2190,7 +2190,7 @@ export default function ChatClient() {
         }
 
         .sendBtn {
-          padding: 10px 14px;
+          padding: 9px 12px;
           border-radius: 12px;
           border: 1px solid #111;
           background: #111;
@@ -2268,7 +2268,7 @@ export default function ChatClient() {
         }
 
         .fullTopBar {
-          padding: calc(6px + env(safe-area-inset-top)) 10px 6px;
+          padding: calc(2px + env(safe-area-inset-top)) 8px 2px;
           border-bottom: 1px solid #eee;
           display: flex;
           justify-content: space-between;
@@ -2487,7 +2487,7 @@ export default function ChatClient() {
   .chatArea {
     padding: 10px;
     /* ✅ 入力バーが fixed になるので、その分の余白を確保 */
-    padding-bottom: calc(110px + env(safe-area-inset-bottom));
+    padding-bottom: calc(86px + env(safe-area-inset-bottom));
   }
 
   /* ✅ SPではinputRow中のpcOnlyが消えるので整形 */
@@ -2497,7 +2497,7 @@ export default function ChatClient() {
 
   .jumpBtn {
     right: 10px;
-    bottom: calc(74px + env(safe-area-inset-bottom));
+    bottom: calc(62px + env(safe-area-inset-bottom));
   }
 
   /* ✅ ここが本丸：SPでは入力バーを fixed にして bottom をキーボード分上げる */

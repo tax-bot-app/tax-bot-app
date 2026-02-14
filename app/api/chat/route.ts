@@ -2965,8 +2965,8 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
         topicKbItemsForPrompt.length === 0 &&
         (followupOnly || weakUtterance);
 
-      const topicClarifyInquiry =
-        "🔎確認 どの話の相談かだけ教えて（例：交際費/出張手当/外注/家事按分/福利厚生/役員報酬/車両/消費税/税務調査/退職金/不動産/相続・承継）。";
+      // ★ topicClarifyInquiry は固定の選択肢羅列をやめる（LLMに自然誘導させる）
+      const topicClarifyInquiry = "";
 
       const pickedQa = pickBestQaPreferSubject({
         items: topicKbItemsForPrompt,
@@ -3016,7 +3016,28 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
         // ★ ここが肝：LLMに🍚🧂を作らせない（偽Lines根絶）
         const allowAttackDefenseDetailEffective = false;
 
-        const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefenseDetailEffective });
+         const outputRules = buildOutputRules({ allowAttackDefenseDetail: allowAttackDefenseDetailEffective });
+
+        // ===== “前向き締め” の許可（最後が⚠️で終わる印象を和らげる）=====
+        // ※地雷系（suppress/inject/block）や Lines 回答ではやらない
+        const allowPositiveClose =
+          gr.action === "none" &&
+          !suppressBranding &&
+          !usedLinesPick &&
+          !lineRequestEffective &&
+          !followupExplicit &&
+          !followupOnly &&
+          !weakUtterance &&
+          // すでに inquiryOverride（🔎確認）を強制する場面は付け足さない
+          !needTopicClarify;
+
+        const positiveCloseRule = allowPositiveClose
+          ? [
+              "【締め方】回答の最後が⚠️注意や強い断定で終わりそうなら、最後に1行だけ前向きに締めてよい。",
+              "【締め方】締めの1行は「次の一手（まず確認すること）」か「軽い確認質問（1つ）」のどちらか。選択肢の羅列は禁止。",
+              "【締め方】押し売りや営業トークは禁止。文章は1行だけ、短く。",
+            ].join("\n")
+          : null;
 
         const kbGlobalBlock = formatKnowledgeBlock(globalRules);
         const kbTopicBlock = qaUse ? formatKnowledgeBlock(topicKbItemsForPrompt) : "";
@@ -3071,8 +3092,10 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
           topicMode === "llm" && llmOk && llmIntent === "clarify"
             ? [
                 "重要：主語が特定できていない。特定トピック（交際費・外注・出張手当など）の一般論・金額例・セーフ/アウト判断を出さない。一般整理は抽象度高く2行まで。",
-                "clarify では『〜円まで』など数値の線引きを書かない。書くのは『判断軸』と『どの話かの確認』だけ。",
-                "一般整理は2行までにして、最後の🔎確認で「何の話の線引きか」を選択肢で1行だけ促す（例：交際費/外注/出張手当/家事按分/不動産/役員報酬/消費税/税務調査）。",
+                "clarify では『〜円まで』など数値の線引き・セーフ/アウト判定を出さない。書くのは『判断軸』と『状況を特定するための質問』だけ。",
+                "最後の🔎確認は「やわらかい質問を1つ」だけ書く。質問は会話の流れに自然に繋がるものにする（詰問口調禁止）。",
+                "🔎確認の直後に、ユーザーが答えやすい「短い例」を1つだけ添える（例は1行、選択肢羅列は禁止）。",
+                "補足：picked_qa がある場合は、そのQAが示す判断軸（相手/目的/頻度/証憑/名義など）に沿った質問に寄せる（QA名やタイトルは書かない）。",
               ]
             : [];
 
@@ -3109,6 +3132,7 @@ const noApportionmentBias: string[] = [
           injectedRules: [
             ...outputRules,
             ...clarifyBias,
+            ...(positiveCloseRule ? [positiveCloseRule] : []),
             ...SERVICE_BASE_RULES,
             ...(axisTopic === TOPIC_TAX_AUDIT ? [TAX_AUDIT_ROLE_SPLIT_RULE] : []),
             ...doubleTopicRule,
@@ -3130,7 +3154,7 @@ const noApportionmentBias: string[] = [
 
         const inquiryOverride =
           needTopicClarify
-            ? topicClarifyInquiry
+            ? null
             : auditAxis && subjectTopic && AUDIT_OVERLAY_TOPICS.has(subjectTopic)
             ? inquiryLineWithAuditCTA(dialect, stance, subjectTopic)
             : null;
