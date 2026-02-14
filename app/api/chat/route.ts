@@ -2992,42 +2992,37 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
 
 // ✅ 会話的な締め（LLMフリー / 記号なし / 深掘り誘導）
 // ===== warm close gate =====
-// default は「交通整理スタンス（amb）」で締めを作る。
-// followupPhase は「続きの流れ」なので深掘り導線へ。
-// 例外：危険/抑制/Lines/lineRequest などは締めを出さない。
+// ===== warm close gate =====
+// 方針：ガードレイル発動（inject/block）と Lines（followup_lines）と lineRequest（Lines要求）以外は基本出す。
 
 const isAmbiguousOrShift =
   implicitShift || (topicMode === "llm" && llmOk && llmIntent === "clarify");
 
-const isFollowupLike = followupPhase;
+// followup は「続きの流れ」なので深掘り導線へ寄せる
+const isFollowupLike = followupPhase || followupExplicit || followupOnly;
 
 // 「明確税務」= subjectTopic or axisTopic が立ってる（税務調査も含む）
 const isClearTaxTopic = Boolean(subjectTopic) || Boolean(axisTopic);
 
-// ★基本は「出す」。止めるのは危険/抑制/Lines/lineRequest など。
+// ★ここが肝：suppressBranding でも“締め”は止めない（CTA/決めゼリフとは別物）
 const wantWarmClose =
-  gr.action === "none" &&
-  !suppressBranding &&        // ← ここ外したければ外してOK（後で判断）
-  !usedLinesPick &&
-  !lineRequestEffective &&
-  !followupExplicit &&
-  !followupOnly;
+  gr.action === "none" &&        // inject/block は除外
+  !usedLinesPick &&              // Lines 回答の時は足さない
+  !lineRequestEffective;         // Lines要求の時は足さない（合言葉に対して締めが出ると寒い）
 
-// closeMode：default=amb（交通整理スタンス）
-// followupPhase は followup を優先
-// 「違うな」と判断できる（明確税務など）なら light に落として良い
+// closeMode：default=amb
 let closeMode: "amb" | "followup" | "light" = "amb";
 if (isFollowupLike) closeMode = "followup";
 
-// LLMが「交通整理いらん」側に寄せたい時：明確税務＆曖昧じゃない＆ズレてない
+// 明確税務＆曖昧じゃない時は light に落としてOK（交通整理しすぎ防止）
 const allowLightClose = isClearTaxTopic && !isAmbiguousOrShift && !implicitShift;
 if (!isFollowupLike && allowLightClose) closeMode = "light";
 
 // debug meta
 meta.allow_warm_close = Boolean(wantWarmClose);
 meta.warm_close_reason = wantWarmClose
-  ? `on:mode=${closeMode}`
-  : `off:gr=${gr.action}|sup=${suppressBranding}|lines=${usedLinesPick}|lineReq=${lineRequestEffective}|fuExp=${followupExplicit}|fuOnly=${followupOnly}|mode=${closeMode}|amb=${isAmbiguousOrShift}|followup=${isFollowupLike}|clear=${isClearTaxTopic}`;
+  ? `on:mode=${closeMode}|sup=${suppressBranding}`
+  : `off:gr=${gr.action}|lines=${usedLinesPick}|lineReq=${lineRequestEffective}|mode=${closeMode}|sup=${suppressBranding}`;
 
 // ===== warm close rule =====
 const warmCloseRule = wantWarmClose
@@ -3036,7 +3031,7 @@ const warmCloseRule = wantWarmClose
         "【締め】最後に自然な会話調で1〜3行の締めを付ける（基本付ける）。",
         "【締め】記号やラベル（🔎・👉など）は使わない。箇条書き禁止。括弧（）も使わない。",
         "【締め】質問は最大2つまで。『A？それともB？』の二択は1つの質問として数える。二択を2回やらない。",
-        "【締め】続きの流れでは交通整理はしない。代わりに、深掘りできる論点を1〜2個だけ提示して、軽い質問で次に繋げる。",
+        "【締め】続きの流れでは交通整理はしない。代わりに、深掘りできる論点を1〜2個だけ提示して、軽い問いかけで次に繋げる。",
       ].join("\n")
     : closeMode === "light"
       ? [
@@ -3053,6 +3048,7 @@ const warmCloseRule = wantWarmClose
           "【締め】要点で十分な時は無理に深掘りしない。軽く『他に気になる点あったら言うて』で終えてよい（脱線は禁止）。",
         ].join("\n")
   : null;
+
 
 
 
