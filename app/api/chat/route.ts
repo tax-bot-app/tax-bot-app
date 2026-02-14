@@ -322,6 +322,11 @@ type DebugMeta = {
   suppress_branding?: boolean;
   suppress_branding_reason?: string;
 
+    // ===== warm close =====
+  allow_warm_close?: boolean;
+  warm_close_reason?: string;
+
+
   // （任意だが便利）レスポンス整合のため残す
   dialect?: Dialect;
   stance?: Stance;
@@ -3005,25 +3010,31 @@ const wantWarmClose =
 
 
         // followupPhase は「続きの流れ」なので、締めは“交通整理”ではなく“深掘り導線”に寄せる
+meta.allow_warm_close = Boolean(wantWarmClose);
+meta.warm_close_reason = wantWarmClose
+  ? "on"
+  : `off:gr=${gr.action}|sup=${suppressBranding}|lines=${usedLinesPick}|lineReq=${lineRequestEffective}|fuExp=${followupExplicit}|fuOnly=${followupOnly}|weak=${weakUtterance}|amb=${isAmbiguousOrShift}|clear=${isClearTaxTopic}`;
+
 const isFollowupLike = followupPhase;
 
 const warmCloseRule = wantWarmClose
   ? isAmbiguousOrShift
     ? [
-        "【締め】必要に応じて、回答の最後に自然な会話調で1〜3行の締めを付けてよい。",
-        "【締め】記号やラベル（🔎・👉など）は使わない。箇条書きも禁止。",
-        "【締め】話題が曖昧な場合のみ、一般論か税務論点かをやわらかく交通整理し、確認質問は1つだけ。",
-        "【締め】押し売り禁止。短く。",
+        "【締め】最後に自然な会話調で1〜3行の締めを付ける（ここは“省略可”ではなく基本付ける）。",
+        "【締め】記号やラベル（🔎・👉など）は使わない。箇条書き禁止。括弧（）も使わない。",
+        "【締め】質問は最大2つまで。語尾は冷たくせず『よかったら』『気になったら言うて』『どっち寄りで聞きたい？』の温度感にする。",
+        "【締め】曖昧な時だけ交通整理。一般論の話か、税務の話かをやわらかく聞き分ける。",
       ].join("\n")
     : [
-        "【締め】必要に応じて、回答の最後に自然な会話調で1〜3行の締めを付けてよい。",
-        "【締め】記号やラベル（🔎・👉など）は使わない。箇条書きも禁止。",
+        "【締め】最後に自然な会話調で1〜3行の締めを付ける（ここは“省略可”ではなく基本付ける）。",
+        "【締め】記号やラベル（🔎・👉など）は使わない。箇条書き禁止。括弧（）も使わない。",
+        "【締め】質問は最大2つまで。語尾は冷たくせず『よかったら』『気になったら言うて』の温度感にする。",
         isFollowupLike
           ? "【締め】続きの流れでは交通整理はしない。代わりに、深掘りできる論点を1〜2個だけ提示して、軽い質問で次に繋げる。"
-          : "【締め】税務前提が明らかな場合は交通整理しない。代わりに、いま触れていない“近接論点”を1〜2個だけ示し、必要なら短い運用イメージ例を1つ添えて軽く問いかける。",
-        "【締め】同じ軸を繰り返さない。例は1つだけ。断定や数字レンジは禁止。",
+          : "【締め】交通整理はしない。代わりに、次に強くなる近接論点を1〜2個だけ示して、軽く問いかけて終える。例を出すなら1つだけ。断定や数字レンジは禁止。",
       ].join("\n")
   : null;
+
 
 
             const apportionmentExceptionRule =
