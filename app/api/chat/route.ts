@@ -1210,11 +1210,11 @@ function isCatchphraseLine(line: string): boolean {
 }
 
 
-function extractSection(answer: string, head: "🥄" | "✅" | "⚠️" | "🔎"): string[] {
+function extractSection(answer: string, head: "🥄" | "✅" | "⚠️" ): string[] {
   const lines = answer.replace(/\r\n/g, "\n").split("\n");
   const out: string[] = [];
   let inSec = false;
-  const markers = ["🥄", "✅", "⚠️", "🔎", "🍚", "🧂"];
+  const markers = ["🥄", "✅", "⚠️", "🍚", "🧂"];
   for (const line of lines) {
     const t = line.trimStart();
     if (t.startsWith(head)) {
@@ -1230,6 +1230,30 @@ function extractSection(answer: string, head: "🥄" | "✅" | "⚠️" | "🔎"
   while (out.length > 0 && !out[out.length - 1].trim()) out.pop();
   return out;
 }
+
+function extractClosing(answer: string): string[] {
+  const lines = answer.replace(/\r\n/g, "\n").split("\n");
+  const markers = ["🥄", "✅", "⚠️", "🍚", "🧂"];
+
+  let lastMarkerIndex = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trimStart();
+    if (markers.some((m) => t.startsWith(m))) {
+      lastMarkerIndex = i;
+    }
+  }
+
+  if (lastMarkerIndex === -1) return [];
+
+  const closing = lines.slice(lastMarkerIndex + 1).map((l) => l.trimEnd());
+
+  // 空行だけなら無し扱い
+  if (closing.every((l) => !l.trim())) return [];
+
+  return closing;
+}
+
 
 function ensureLineBold(secLine: string[]): string[] {
   if (secLine.length === 0) return secLine;
@@ -1271,14 +1295,26 @@ function enforceTemplate(answer: string): string {
   const secLine = ensureLineBold(extractSection(a, "🥄"));
   const key = extractSection(a, "✅");
   const warn = extractSection(a, "⚠️");
+  const closing = extractClosing(a);
+
   if (secLine.length === 0 || key.length === 0) return a;
 
   const parts: string[] = [];
   parts.push(...secLine, "");
   parts.push(...key);
-  if (warn.length > 0) parts.push("", ...warn);
+
+  if (warn.length > 0) {
+    parts.push("", ...warn);
+  }
+
+  // 👇ここが今回のキモ
+  if (closing.length > 0) {
+    parts.push("", ...closing);
+  }
+
   return parts.join("\n").trim();
 }
+
 
 function catchphraseFor(dialect: Dialect, stance: Stance): string {
   if (dialect === "kansai" && stance === "sanbo") {
