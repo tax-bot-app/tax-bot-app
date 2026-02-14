@@ -870,9 +870,11 @@ export default function ChatClient() {
        // ✅ CSS変数に反映（CSS側で bottom に使う）
       try {
         document.documentElement.style.setProperty("--kb", `${kb}px`);
-        // ✅ Sheetの“見た目”をOS寄せにするための viewport 変数
         document.documentElement.style.setProperty("--vvh", `${Math.round(vv.height)}px`);
         document.documentElement.style.setProperty("--vvo", `${Math.round(offsetTop)}px`);
+        // ✅ Bottom Sheet の見た目高さ（フルスクリーン禁止）
+        const sheetH = Math.max(260, Math.min(560, Math.round(vv.height * 0.58)));
+        document.documentElement.style.setProperty("--sheetH", `${sheetH}px`);
       } catch {}
     };
     vv.addEventListener("resize", onResize);
@@ -909,7 +911,7 @@ export default function ChatClient() {
 
   // lock body scroll for overlays (menu/thread/profile/threadMenu/composer)
   useEffect(() => {
-    const anyOpen = menuOpen || threadsOverlayOpen || aiProfileOpen || threadMenuOpen || composerOpen;
+    const anyOpen = menuOpen || threadsOverlayOpen || aiProfileOpen || threadMenuOpen || composerOpen || inputSheetOpen;
     if (!anyOpen) return;
 
     const prev = document.body.style.overflow;
@@ -935,8 +937,9 @@ export default function ChatClient() {
     const dx = t.clientX - st.x;
     const dy = t.clientY - st.y;
 
-    // 左へスワイプ
-    if (dx < -70 && Math.abs(dx) > Math.abs(dy) * 1.3) {
+    // 左→右スワイプでスレッド一覧（左端スタート限定）
+    const fromLeftEdge = st.x < 80; // 好みで 60〜100 くらいに調整
+    if (fromLeftEdge && dx > 70 && Math.abs(dx) > Math.abs(dy) * 1.3) {
       setThreadsOverlayOpen(true);
     }
   };
@@ -979,6 +982,7 @@ export default function ChatClient() {
 
   const activeTitle = (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
   const showExpand = (input ?? "").length >= 120;
+  const showExpandSheet = (inputSheetText ?? "").length >= 120;
 
   return (
     <div className="appRoot" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
@@ -1235,7 +1239,6 @@ export default function ChatClient() {
                   disabled={!canSend}
                 >
                   <span className="dockPlaceholder">{loading ? "回答中…" : "相談内容を入力"}</span>
-                  <span className="dockSend">送信</span>
                 </button>
 
                 {showExpand && (
@@ -1468,7 +1471,12 @@ export default function ChatClient() {
       {composerOpen && (
         <div className="composerOverlay" role="dialog" aria-modal="true">
           <div className="composerTopBar">
-            <button type="button" className="topIconBtn" onClick={() => setComposerOpen(false)} aria-label="戻る" title="戻る">
+            <button type="button" className="topIconBtn" 
+            onClick={() => {
+               setComposerOpen(false);
+               setInput(composerText);
+             }}
+            aria-label="戻る" title="戻る">
               ←
             </button>
             <div style={{ fontWeight: 900 }}>相談内容</div>
@@ -1559,19 +1567,13 @@ export default function ChatClient() {
             setInputSheetOpen(false);
           }}
         >
-          <div
-            className="inputSheet"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              top: "var(--vvo, 0px)",
-              height: "var(--vvh, 100dvh)",
-            }}
-          >
+          <div className="inputSheet" onClick={(e) => e.stopPropagation()}>
             <div className="sheetTop">
               <button
                 type="button"
                 className="sheetBtn"
-                onClick={() => {
+                onClick={(e) => {
+   e.stopPropagation();
                   setInput(inputSheetText);
                   setInputSheetOpen(false);
                 }}
@@ -1581,21 +1583,40 @@ export default function ChatClient() {
 
               <div className="sheetTitle">相談内容</div>
 
-              <button
-                type="button"
-                className={`sheetBtnPrimary ${!inputSheetText.trim() ? "disabled" : ""}`}
-                disabled={!inputSheetText.trim() || !canSend}
-                onClick={() => {
-                  if (!canSend) return;
-                  const v = inputSheetText.trim();
-                  if (!v) return;
-                  setInputSheetOpen(false);
-                  setInputSheetText("");
-                  sendMessage(v);
-                }}
-              >
-                送信
-              </button>
+              <div className="sheetRight">
+                {showExpandSheet && (
+                  <button
+                    type="button"
+                    className="sheetBtn"
+                    onClick={() => {
+                      // 下書きを保持してフルスクリーンへ
+                      setComposerText(inputSheetText);
+                      setInput(inputSheetText);
+                      setInputSheetOpen(false);
+                      setComposerOpen(true);
+                    }}
+                  >
+                    全画面
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className={`sheetBtnPrimary ${!inputSheetText.trim() ? "disabled" : ""}`}
+                  disabled={!inputSheetText.trim() || !canSend}
+                  onClick={(e) => {
+   e.stopPropagation();
+                    if (!canSend) return;
+                    const v = inputSheetText.trim();
+                    if (!v) return;
+                    setInputSheetOpen(false);
+                    setInputSheetText("");
+                    sendMessage(v);
+                  }}
+                >
+                  送信
+                </button>
+              </div>
             </div>
 
             <div className="sheetBody">
@@ -1837,7 +1858,7 @@ export default function ChatClient() {
           white-space: pre-wrap;
           overflow-wrap: anywhere;
           line-height: 1.8;
-+          font-size: 17px;
+          font-size: 17px;
         }
 
         .userBubble {
@@ -2003,7 +2024,8 @@ export default function ChatClient() {
 
          /* ✅ SPダミー入力（dock） */
         .inputDock {
-          width: 100%;
+          flex: 1 1 auto;
+          min-width: 0;
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -2022,17 +2044,7 @@ export default function ChatClient() {
           color: #777;
           font-size: 16px;
         }
-        .dockSend {
-          padding: 8px 12px;
-          border-radius: 12px;
-          border: 1px solid #111;
-          background: #111;
-          color: #fff;
-          font-weight: 900;
-          font-size: 13px;
-          line-height: 1;
-        }
-
+        
         /* Sheet表示中は下の入力バーを隠す */
         .hiddenWhenSheet { display: none; }
 
@@ -2042,11 +2054,17 @@ export default function ChatClient() {
           inset: 0;
           background: rgba(0,0,0,0.18);
           z-index: 260;
+          display: flex;
+          align-items: flex-end;
+          justify-content: center;
         }
         .inputSheet {
           position: fixed;
           left: 0;
           right: 0;
+          bottom: var(--kb, 0px);
+          height: var(--sheetH, 360px);
+          max-height: calc(var(--vvh, 100dvh) - 12px);
           background: #fff;
           border-top-left-radius: 16px;
           border-top-right-radius: 16px;
@@ -2081,6 +2099,13 @@ export default function ChatClient() {
           font-size: 13px;
           font-weight: 900;
         }
+          .sheetRight{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex:0 0 auto;
+}
+
         .sheetBtnPrimary.disabled { opacity: 0.5; cursor: not-allowed; }
         .sheetBody {
           flex: 1 1 auto;
