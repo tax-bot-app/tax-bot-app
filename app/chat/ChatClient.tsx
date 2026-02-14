@@ -133,7 +133,7 @@ function normalizeMessages(rows: any[]): MessageRow[] {
     created_at: String(r.created_at),
   })) as MessageRow[];
 }
-function isNearBottom(el: HTMLDivElement, px = 220) {
+function isNearBottom(el: HTMLDivElement, px = 80) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < px;
 }
 function isHeadingLine(line: string): boolean {
@@ -213,6 +213,9 @@ export default function ChatClient() {
 
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [input, setInput] = useState("");
+
+  // iOSキーボード対策
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   // overlays
   const [threadsOverlayOpen, setThreadsOverlayOpen] = useState(false);
@@ -806,6 +809,32 @@ export default function ChatClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversationId]);
 
+   // ✅ showJump を messages 増減でも更新（スクロール判定がズレる端末対策）
+  useEffect(() => {
+    const el = msgsRef.current;
+    if (!el) return;
+    const near = isNearBottom(el);
+    setShowJump(!near);
+  }, [messages.length]);
+
+  // ✅ iOSキーボード時に入力欄が浮く問題を潰す（visualViewport）
+  useEffect(() => {
+    const vv = (window as any).visualViewport;
+    if (!vv) return;
+    const onResize = () => {
+      // キーボードが出ると visualViewport.height が縮む
+      const ratio = vv.height / window.innerHeight;
+      setKeyboardOpen(ratio < 0.8);
+    };
+    vv.addEventListener("resize", onResize);
+    vv.addEventListener("scroll", onResize);
+    onResize();
+    return () => {
+     vv.removeEventListener("resize", onResize);
+      vv.removeEventListener("scroll", onResize);
+    };
+  }, []);
+
   // welcome
   useEffect(() => {
     if (!threadsLoaded) return;
@@ -935,11 +964,7 @@ export default function ChatClient() {
                         <span className="threadTitle">{t.title}</span>
                         {pinned && <span className="pinMark" title="ピン留め">📌</span>}
                       </div>
-                      <div className="threadMeta">
-                        {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
-                      </div>
-                      <div className="threadPreview">{t.preview || "(プレビューなし)"}</div>
-                    </button>
+                                          </button>
 
                     <button
                       type="button"
@@ -1128,7 +1153,7 @@ export default function ChatClient() {
             </div>
 
             {/* 入力（1行固定） */}
-            <div className="chatInputWrap">
+            <div className={`chatInputWrap ${keyboardOpen ? "kbOpen" : ""}`}>
               <div className="inputRow">
                 <input
                   value={input}
@@ -1204,11 +1229,7 @@ export default function ChatClient() {
                         <span className="threadTitle">{t.title}</span>
                         {pinned && <span className="pinMark">📌</span>}
                       </div>
-                      <div className="threadMeta">
-                        {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
-                      </div>
-                      <div className="threadPreview">{t.preview || "(プレビューなし)"}</div>
-                    </button>
+                                          </button>
 
                     <button
                       type="button"
@@ -1560,7 +1581,7 @@ export default function ChatClient() {
           align-items: center;
           justify-content: space-between;
           gap: 8px;
-          margin-bottom: 6px;
+          margin-bottom: 0;
         }
 
         .threadTitle {
@@ -1568,6 +1589,7 @@ export default function ChatClient() {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+          max-width: 100%;
         }
 
         .pinMark {
@@ -1576,14 +1598,11 @@ export default function ChatClient() {
         }
 
         .threadMeta {
-          font-size: 12px;
-          color: #666;
-          margin-bottom: 4px;
+           display: none;
         }
 
         .threadPreview {
-          font-size: 12px;
-          color: #333;
+          display: none;
         }
 
         /* ===== Chat ===== */
@@ -1679,8 +1698,8 @@ export default function ChatClient() {
         .bubbleText {
           white-space: pre-wrap;
           overflow-wrap: anywhere;
-          line-height: 1.75;
-          font-size: 16px;
+          line-height: 1.8;
++          font-size: 17px;
         }
 
         .userBubble {
@@ -1756,7 +1775,7 @@ export default function ChatClient() {
         }
 
         .asstText {
-          font-size: 16px;
+          font-size: 17px; /* 質問と同じ（大きめ） */
         }
 
         /* 段落ブロック間の薄い線（話題区切り） */
@@ -1837,10 +1856,14 @@ export default function ChatClient() {
           gap: 8px;
           align-items: center;
         }
+          /* ✅ iOSキーボード表示時：余白を詰めて入力欄をキーボードに寄せる */
+        .chatInputWrap.kbOpen {
+          padding-bottom: 8px;
+        }
 
         .chatInput {
           flex: 1;
-          padding: 10px 12px;
+          padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
           border-radius: 12px;
           border: 1px solid #ddd;
           font-size: 16px;
