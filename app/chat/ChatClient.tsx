@@ -317,12 +317,34 @@ export default function ChatClient() {
   const scrollBottom = () => {
     const el = msgsRef.current;
     if (!el) return;
-    requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight;
-    });
-    setTimeout(() => {
-      el.scrollTop = el.scrollHeight;
-    }, 60);
+    const target = el.scrollHeight;
+
+    // 1) まずはネイティブsmoothを試す（効く環境はこれが一番気持ちいい）
+    try {
+      el.scrollTo({ top: target, behavior: "smooth" as ScrollBehavior });
+    } catch {
+      // ignore
+    }
+
+    // 2) iOS等でsmoothが効かない/弱い時のフォールバック：疑似高速スクロール
+    const startTop = el.scrollTop;
+    const dist = target - startTop;
+    if (dist <= 0) return;
+
+    const duration = 220; // ms（“高速スクロール感”）
+    const t0 = performance.now();
+
+    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / duration);
+      const eased = easeOutCubic(p);
+      el.scrollTop = startTop + dist * eased;
+      if (p < 1) requestAnimationFrame(step);
+    };
+
+    // smoothが効いてる環境でも “最後の押し込み” として動くので違和感は出にくい
+    requestAnimationFrame(step);
   };
 
   /** ===== auth helpers ===== */
@@ -838,6 +860,10 @@ export default function ChatClient() {
       const kb = Math.max(0, window.innerHeight - vv.height - offsetTop);
       setKeyboardPx(kb);
       setKeyboardOpen(kb > 0);
+       // ✅ CSS変数に反映（CSS側で bottom に使う）
+      try {
+        document.documentElement.style.setProperty("--kb", `${kb}px`);
+      } catch {}
     };
     vv.addEventListener("resize", onResize);
     vv.addEventListener("scroll", onResize);
@@ -1166,10 +1192,7 @@ export default function ChatClient() {
             </div>
 
             {/* 入力（1行固定） */}
-            <div
-              className={`chatInputWrap ${keyboardOpen ? "kbOpen" : ""}`}
-              style={keyboardOpen ? { transform: `translateY(-${keyboardPx}px)` } : undefined}
-            >
+            <div className={`chatInputWrap ${keyboardOpen ? "kbOpen" : ""}`}>
               <div className="inputRow">
                 <input
                   value={input}
@@ -1871,7 +1894,6 @@ export default function ChatClient() {
           padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
           border-top: 1px solid #eee;
           background: #fff;
-          will-change: transform;
         }
 
         .inputRow {
@@ -2184,13 +2206,24 @@ export default function ChatClient() {
 
           .chatArea {
             padding: 10px;
-            /* ✅ fixed入力に近い挙動にするため、下に逃げを持たせる */
-            padding-bottom: calc(90px + env(safe-area-inset-bottom));
+            /* ✅ 入力バーが fixed になるので、その分の余白を確保 */
+            padding-bottom: calc(110px + env(safe-area-inset-bottom));
           }
 
           .jumpBtn {
             right: 10px;
             bottom: calc(74px + env(safe-area-inset-bottom));
+          }
+            /* ✅ ここが本丸：SPでは入力バーを fixed にして bottom をキーボード分上げる */
+          .chatInputWrap {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: var(--kb, 0px);
+            z-index: 160;
+            border-top: 1px solid #eee;
+            background: #fff;            /* 透け防止 */
+            box-shadow: 0 -8px 24px rgba(0,0,0,0.06); /* 背景が見にくい問題を緩和 */
           }
         }
       `}</style>
