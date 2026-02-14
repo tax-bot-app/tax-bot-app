@@ -928,7 +928,7 @@ export default function ChatClient() {
     const t = e.touches[0];
     swipeRef.current = { x: t.clientX, y: t.clientY, active: true };
   };
-  
+
   const onTouchEnd = (e: React.TouchEvent) => {
   const st = swipeRef.current;
   if (!st.active) return;
@@ -953,8 +953,6 @@ export default function ChatClient() {
     setThreadsOverlayOpen(true);
     return;
   }
-
-）
 };
 
   /** ===== helpers ===== */
