@@ -107,9 +107,6 @@ function renderBoldInline(text: string): ReactNode {
   return <>{out}</>;
 }
 
-/**
- * 旧フォーマットの余計な締め文を削る保険（残しておく）
- */
 function stripCatchphraseIfThreePatterns(content: string): string {
   const hasAttack = content.includes("🍚");
   const hasDefense = content.includes("🧂守り") || content.includes("🧂🥄") || content.includes("🧂 守り");
@@ -147,35 +144,17 @@ function isHeadingLine(line: string): boolean {
   const raw = line.trim();
   if (!raw) return false;
 
-  // markdown headings
   const t = raw.replace(/^#{1,6}\s*/, "").trim();
-
-  // bracketed heading like 【結論】
   const t2 = t.replace(/^【/, "").replace(/】$/, "").trim();
-
-  // support "結論：" / "結論:" / "結論 -"
   const key = t2.replace(/[：:：\-–—].*$/, "").trim();
 
-  if (key === "結論" || key === "要点" || key === "注意") return true;
-
-  // 旧絵文字見出しも「見出し扱い」に寄せる（背景ベタ塗りはしない）
-  if (
-    t2.startsWith("🥄") ||
-    t2.startsWith("🧂") ||
-    t2.startsWith("🍚") ||
-    t2.startsWith("🧂🥄") ||
-    t2.startsWith("🍚🥄")
-  ) {
-    return true;
-  }
-
-  return false;
+  return key === "結論" || key === "要点" || key === "注意";
 }
 
 function lineStyle(line: string): React.CSSProperties {
   const t = line.trim();
+  if (!t) return { height: 6 } as any;
 
-  // 見出し：薄い下線（ChatGPT寄せ）
   if (isHeadingLine(line)) {
     return {
       whiteSpace: "pre-wrap",
@@ -185,7 +164,7 @@ function lineStyle(line: string): React.CSSProperties {
       color: "#111",
       paddingBottom: 8,
       marginTop: 6,
-      borderBottom: "1px solid #e5e7eb", // 薄い下線
+      borderBottom: "1px solid #e5e7eb",
     };
   }
 
@@ -197,11 +176,11 @@ function lineStyle(line: string): React.CSSProperties {
   };
 }
 
-const WELCOME_SEEN_KEY = "chat:welcomeSeen:v1";
+function sleep(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms));
+}
 
-/**
- * ※文言はユーザーが後で整理する前提：仮のプレースホルダ
- */
+const WELCOME_SEEN_KEY = "chat:welcomeSeen:v2";
 const WELCOME_MESSAGE = [
   "はじめまして、AI野口です。",
   "税務は「攻め」「守り」「ちょうど良いライン」で整理します。",
@@ -211,10 +190,6 @@ const WELCOME_MESSAGE = [
   "",
   "まずは気になることを、そのまま書いてください。",
 ].join("\n");
-
-function sleep(ms: number) {
-  return new Promise<void>((r) => setTimeout(r, ms));
-}
 
 export default function ChatClient() {
   const supabase = useMemo(() => getSupabaseClient(), []);
@@ -228,13 +203,8 @@ export default function ChatClient() {
   const [usedTalks, setUsedTalks] = useState<number | null>(null);
   const [limitTalks, setLimitTalks] = useState<number | null>(null);
 
-  // 初期：標準語×参謀（保存があれば尊重）
-  const [dialect, setDialect] = useState<Dialect>(() =>
-    loadLocal("chat:dialect") === "kansai" ? "kansai" : "standard"
-  );
-  const [stance, setStance] = useState<Stance>(() =>
-    loadLocal("chat:stance") === "zubatto" ? "zubatto" : "sanbo"
-  );
+  const [dialect, setDialect] = useState<Dialect>(() => (loadLocal("chat:dialect") === "kansai" ? "kansai" : "standard"));
+  const [stance, setStance] = useState<Stance>(() => (loadLocal("chat:stance") === "zubatto" ? "zubatto" : "sanbo"));
 
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [threadsLoaded, setThreadsLoaded] = useState(false);
@@ -248,38 +218,31 @@ export default function ChatClient() {
   const [input, setInput] = useState("");
 
   // UI
-  const [spThreadsOpen, setSpThreadsOpen] = useState(false);
+  const [threadsOverlayOpen, setThreadsOverlayOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  // 全画面入力（任意：120文字以上でボタン表示）
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerText, setComposerText] = useState("");
 
-  // AI野口アクション（タップでフルスクリーン遷移）
-  const [aiActionOpen, setAiActionOpen] = useState(false);
-  const [aiActionTarget, setAiActionTarget] = useState<{ messageId: string; text: string } | null>(null);
+  // AI野口（フル画面）
+  const [aiProfileOpen, setAiProfileOpen] = useState(false);
+  const [aiTargetText, setAiTargetText] = useState<string>("");
 
-  // PC/Tablet: サイドバー畳む
-  const [sidebarMode, setSidebarMode] = useState<"open" | "collapsed">(() =>
-    loadLocal("chat:sidebar") === "collapsed" ? "collapsed" : "open"
+  // PC/Tablet sidebar
+  const [sidebarMode, setSidebarMode] = useState<"open" | "collapsed">(
+    () => (loadLocal("chat:sidebar") === "collapsed" ? "collapsed" : "open")
   );
 
-  // アバター表示保険（画像が出なくても丸が出る）
   const [aiAvatarOk, setAiAvatarOk] = useState(true);
 
   const msgsRef = useRef<HTMLDivElement | null>(null);
   const redirectingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
 
-  const threadTouchRef = useRef<{ x: number; y: number; moved: boolean; id: string | null }>({
-    x: 0,
-    y: 0,
-    moved: false,
-    id: null,
-  });
+  const [showJump, setShowJump] = useState(false);
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
-
-  // public/ai-noguchi.jpg
   const AI_AVATAR_URL = "/ai-noguchi.jpg";
 
   const BTN: CSSProperties = {
@@ -288,7 +251,6 @@ export default function ChatClient() {
     border: "1px solid #ddd",
     background: "#fff",
     cursor: "pointer",
-    pointerEvents: "auto",
     whiteSpace: "nowrap",
   };
 
@@ -308,7 +270,6 @@ export default function ChatClient() {
     background: active ? "#111" : "#fff",
     color: active ? "#fff" : "#111",
     cursor: "pointer",
-    pointerEvents: "auto",
     whiteSpace: "nowrap",
   });
 
@@ -324,11 +285,8 @@ export default function ChatClient() {
   const scrollBottom = () => {
     const el = msgsRef.current;
     if (!el) return;
-    // heavy scroll fix（今の実装のまま）
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
+      el.scrollTop = el.scrollHeight;
     });
     setTimeout(() => {
       el.scrollTop = el.scrollHeight;
@@ -487,16 +445,14 @@ export default function ChatClient() {
     setMessages([]);
     setErrMsg(null);
     setInput("");
-    setComposerText("");
-    setComposerOpen(false);
-    setSpThreadsOpen(false);
+    setThreadsOverlayOpen(false);
     setMenuOpen(false);
   };
 
   const selectThread = (id: string) => {
     setActiveConversationId(id);
     saveLocal("chat:activeConversationId", id);
-    setSpThreadsOpen(false);
+    setThreadsOverlayOpen(false);
   };
 
   const renameThread = async () => {
@@ -556,27 +512,11 @@ export default function ChatClient() {
     router.replace("/login");
   };
 
-  const openComposer = () => {
-    if (!canSend) return;
-    setComposerText(input || "");
-    setComposerOpen(true);
-  };
-
-  const closeComposer = () => {
-    setComposerOpen(false);
-  };
-
-  const openAiActionsFor = (messageId: string, text: string) => {
-    setAiActionTarget({ messageId, text });
-    setAiActionOpen(true);
-  };
-
   const doCopy = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      window.alert("コピーしました。");
     } catch {
-      window.alert("コピーに失敗しました。");
+      // ignore
     }
   };
 
@@ -590,7 +530,6 @@ export default function ChatClient() {
     } catch {
       // ignore and fallback
     }
-    // fallback: copy
     await doCopy(text);
   };
 
@@ -598,7 +537,6 @@ export default function ChatClient() {
     const full = String(fullText ?? "");
     if (!full) return;
 
-    // コードブロックがあると刻むと読みにくいので一括
     if (full.includes("```")) {
       setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: full } : m)));
       if (shouldAutoScrollRef.current) scrollBottom();
@@ -608,12 +546,10 @@ export default function ChatClient() {
     const chars = Array.from(full);
     const total = chars.length;
 
-    // ChatGPT体感寄せ：基準 30 chars/sec、長文は少し加速、冒頭は少し速い
     let cps = 30;
     if (total >= 800) cps *= 1.15;
     if (total >= 1500) cps *= 1.25;
 
-    const basePerChar = 1000 / cps;
     const boostChars = 60;
     const boostFactor = 1.35;
 
@@ -621,14 +557,10 @@ export default function ChatClient() {
     let built = "";
 
     while (idx < total) {
-      // chunk: 日本語は2文字、句読点/改行は1文字（間が作れる）
       const next = chars[idx] ?? "";
       let chunkLen = 2;
-
       if (next === "\n") chunkLen = 1;
       if ("。！？!?".includes(next)) chunkLen = 1;
-
-      // ちょいランダムっぽい揺れ（固定等速の機械感を消す）
       if (chunkLen === 2 && Math.random() < 0.08) chunkLen = 3;
 
       const chunk = chars.slice(idx, idx + chunkLen).join("");
@@ -639,18 +571,15 @@ export default function ChatClient() {
 
       if (shouldAutoScrollRef.current) scrollBottom();
 
-      // delay計算
       const isBoost = built.length <= boostChars;
       const speed = isBoost ? cps * boostFactor : cps;
       const perChar = 1000 / speed;
       let delay = Math.ceil(perChar * chunk.length);
 
-      // 句読点/改行で小休止（“考えてる感”）
       const last = chunk.slice(-1);
       if ("。！？!?".includes(last)) delay += 140;
       if (last === "\n") delay += 120;
 
-      // セクション見出しの直後（結論/要点/注意など）で少し間を空ける
       if (last === "\n") {
         const lines = built.split("\n");
         const prevLine = (lines[lines.length - 2] ?? "").trim();
@@ -669,7 +598,6 @@ export default function ChatClient() {
     setLoading(true);
     setThinking(true);
 
-    // どっちから送っても、入力値はクリア
     setInput("");
     setComposerText("");
     setComposerOpen(false);
@@ -743,7 +671,6 @@ export default function ChatClient() {
       const effectiveConvId = convId || activeConversationId;
 
       if (isGuardrailBlock && !effectiveConvId) {
-        // DB再読込すると表示が消える可能性があるのでスキップ
         return;
       }
 
@@ -791,7 +718,7 @@ export default function ChatClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversationId]);
 
-  // ✅ 初回起動ウェルカム（ユーザー単位で1回だけ：localStorage）
+  // 初回起動ウェルカム（ユーザー単位で1回だけ：localStorage）
   useEffect(() => {
     if (!threadsLoaded) return;
     if (activeConversationId) return;
@@ -814,29 +741,47 @@ export default function ChatClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadsLoaded, activeConversationId, threads.length]);
 
+  // swipe（左スワイプでスレッド overlay）
+  const swipeRef = useRef<{ x: number; y: number; t: number; active: boolean }>({ x: 0, y: 0, t: 0, active: false });
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (threadsOverlayOpen || menuOpen || composerOpen || aiProfileOpen) return;
+    const t = e.touches[0];
+    swipeRef.current = { x: t.clientX, y: t.clientY, t: Date.now(), active: true };
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const st = swipeRef.current;
+    if (!st.active) return;
+    swipeRef.current.active = false;
+
+    const t = e.changedTouches[0];
+    const dx = t.clientX - st.x;
+    const dy = t.clientY - st.y;
+
+    // 左へスワイプ（dxがマイナス）
+    if (dx < -70 && Math.abs(dx) > Math.abs(dy) * 1.3) {
+      setThreadsOverlayOpen(true);
+    }
+  };
+
+  const openAiProfileFromAnswer = (text: string) => {
+    setAiTargetText(text);
+    setAiProfileOpen(true);
+  };
+
+  const activeTitle = (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
   const canRename = Boolean(activeConversationId);
 
+  const showExpand = (input ?? "").length >= 120;
+
   return (
-    <div className="appRoot">
-      {/* ===== Body ===== */}
+    <div className="appRoot" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       <div className="appBody">
         <div className="shell">
-          {/* PC/Tablet: 左スレッド（畳める） */}
+          {/* PC/Tablet: 左スレッド */}
           <div className={`threadCol pcOnly ${sidebarMode === "collapsed" ? "collapsed" : ""}`}>
             <div className="threadColTop">
               <div style={{ fontWeight: 900 }}>スレッド</div>
-              <button
-                type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  newThread();
-                }}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  newThread();
-                }}
-                style={BTN}
-              >
+              <button type="button" style={BTN} onClick={() => newThread()}>
                 新規
               </button>
             </div>
@@ -848,13 +793,7 @@ export default function ChatClient() {
                   <button
                     key={t.id}
                     type="button"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      setActiveConversationId(t.id);
-                      saveLocal("chat:activeConversationId", t.id);
-                    }}
-                    onTouchStart={(e) => {
-                      e.preventDefault();
+                    onClick={() => {
                       setActiveConversationId(t.id);
                       saveLocal("chat:activeConversationId", t.id);
                     }}
@@ -873,40 +812,24 @@ export default function ChatClient() {
 
           {/* 右：チャット本体 */}
           <div className="chatCol">
-            {/* ✅ 1行ヘッダー（ChatGPT寄せ） */}
+            {/* 1行ヘッダー（SPは≡） */}
             <div className="topBar">
               <div className="topLeft">
-                {/* SP: ←でスレッド */}
                 <button
                   type="button"
                   className="spOnly topIconBtn"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    setSpThreadsOpen(true);
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    setSpThreadsOpen(true);
-                  }}
-                  aria-label="スレッドを開く"
+                  onClick={() => setThreadsOverlayOpen(true)}
+                  aria-label="スレッド"
                   title="スレッド"
                 >
-                  ←
+                  ≡
                 </button>
 
-                {/* PC: ☰でサイドバー切替 */}
                 <button
                   type="button"
                   className="pcOnly topIconBtn"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    setSidebarMode((p) => (p === "open" ? "collapsed" : "open"));
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    setSidebarMode((p) => (p === "open" ? "collapsed" : "open"));
-                  }}
-                  aria-label="スレッドサイドバー切替"
+                  onClick={() => setSidebarMode((p) => (p === "open" ? "collapsed" : "open"))}
+                  aria-label="スレッド"
                   title="スレッド"
                 >
                   ☰
@@ -918,37 +841,10 @@ export default function ChatClient() {
               </div>
 
               <div className="topRight">
-                <button
-                  type="button"
-                  className="topIconBtn"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    newThread();
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    newThread();
-                  }}
-                  aria-label="新規スレッド"
-                  title="新規スレッド"
-                >
+                <button type="button" className="topIconBtn" onClick={() => newThread()} aria-label="新規" title="新規">
                   ＋
                 </button>
-
-                <button
-                  type="button"
-                  className="topIconBtn"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    setMenuOpen(true);
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    setMenuOpen(true);
-                  }}
-                  aria-label="メニュー"
-                  title="メニュー"
-                >
+                <button type="button" className="topIconBtn" onClick={() => setMenuOpen(true)} aria-label="メニュー" title="メニュー">
                   ⋯
                 </button>
               </div>
@@ -958,33 +854,38 @@ export default function ChatClient() {
 
             <div
               ref={msgsRef}
+              className="chatArea"
               onScroll={() => {
                 const el = msgsRef.current;
                 if (!el) return;
-                shouldAutoScrollRef.current = isNearBottom(el);
+                const near = isNearBottom(el);
+                shouldAutoScrollRef.current = near;
+                setShowJump(!near);
               }}
-              className="chatArea"
             >
+              {/* スレッドタイトル（PCだけ薄く） */}
+              <div className="pcOnly" style={{ fontSize: 12, color: "#777", marginBottom: 6 }}>
+                {activeTitle}
+              </div>
+
               {messages.map((m, idx) => {
                 const role = normalizeRole((m as any).role);
                 const isUser = role === "user";
                 const raw = String(m.content ?? "");
                 const content = isUser ? raw : stripCatchphraseIfThreePatterns(raw);
+                const isWelcome = m.id === "welcome";
 
                 if (isUser) {
                   return (
                     <div key={m.id ?? idx} className="msgRow userRow">
                       <div className="userBubble">
-                        <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 }}>
-                          {content}
-                        </div>
+                        <div className="bubbleText">{content}</div>
                         <div className="msgTime">{toHm(m.created_at)}</div>
                       </div>
                     </div>
                   );
                 }
 
-                // assistant
                 return (
                   <div key={m.id ?? idx} className="msgRow asstRow">
                     <div className="asstAvatar">
@@ -992,36 +893,12 @@ export default function ChatClient() {
                         <img
                           src={AI_AVATAR_URL}
                           alt="AI野口"
-                          onClick={() => openAiActionsFor(m.id, content)}
+                          onClick={() => openAiProfileFromAnswer(content)}
                           onError={() => setAiAvatarOk(false)}
-                          style={{
-                            width: 26,
-                            height: 26,
-                            display: "block",
-                            borderRadius: 999,
-                            objectFit: "cover",
-                            border: "1px solid #e5e5e5",
-                            cursor: "pointer",
-                          }}
+                          className="avatarImg"
                         />
                       ) : (
-                        <div
-                          onClick={() => openAiActionsFor(m.id, content)}
-                          style={{
-                            width: 26,
-                            height: 26,
-                            borderRadius: 999,
-                            border: "1px solid #e5e5e5",
-                            background: "#fff",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 12,
-                            cursor: "pointer",
-                          }}
-                          aria-label="AI野口"
-                          title="AI野口"
-                        >
+                        <div className="avatarFallback" onClick={() => openAiProfileFromAnswer(content)} title="AI野口">
                           🤖
                         </div>
                       )}
@@ -1029,19 +906,8 @@ export default function ChatClient() {
 
                     <div className="asstBody">
                       <div className="asstNameLine">
-                        <button
-                          type="button"
-                          onPointerDown={(e) => {
-                            e.preventDefault();
-                            openAiActionsFor(m.id, content);
-                          }}
-                          onTouchStart={(e) => {
-                            e.preventDefault();
-                            openAiActionsFor(m.id, content);
-                          }}
-                          className="asstNameBtn"
-                        >
-                          AI野口（税理士）
+                        <button type="button" className="asstNameBtn" onClick={() => openAiProfileFromAnswer(content)}>
+                          AI野口
                         </button>
                         <span className="asstTime">{toHm(m.created_at)}</span>
                       </div>
@@ -1060,22 +926,89 @@ export default function ChatClient() {
                           })}
                       </div>
 
-                      {/* 生成中のカーソルっぽさ（空の時だけ） */}
-                      {thinking && String(m.content ?? "").length === 0 && (
-                        <div className="typingDots" aria-hidden="true">
-                          <span className="dots">...</span>
+                      {/* 免責：回答ごと（ウェルカムは除外） */}
+                      {!isWelcome && (
+                        <div className="asstDisclaimer">※ AIの回答は参考情報です。最終判断はご自身でお願いします。</div>
+                      )}
+
+                      {/* アクション：コピー / 共有 / 旗（不適切） */}
+                      {!isWelcome && (
+                        <div className="asstActions">
+                          <button
+                            type="button"
+                            className="actBtn"
+                            title="コピー"
+                            aria-label="コピー"
+                            onClick={() => doCopy(content)}
+                          >
+                            ⧉
+                          </button>
+                          <button
+                            type="button"
+                            className="actBtn"
+                            title="共有"
+                            aria-label="共有"
+                            onClick={() => doShare(content)}
+                          >
+                            ↗︎
+                          </button>
+                          <button
+                            type="button"
+                            className="actBtn"
+                            title="不適切な回答を報告"
+                            aria-label="不適切な回答を報告"
+                            onClick={() => openAiProfileFromAnswer(content)}
+                          >
+                            ⚑
+                          </button>
                         </div>
                       )}
                     </div>
                   </div>
                 );
               })}
+
+              {/* 回答中表示（入力側じゃなく、出力側） */}
+              {thinking && (
+                <div className="msgRow asstRow">
+                  <div className="asstAvatar">
+                    {aiAvatarOk ? (
+                      <img src={AI_AVATAR_URL} alt="AI野口" className="avatarImg" />
+                    ) : (
+                      <div className="avatarFallback">🤖</div>
+                    )}
+                  </div>
+                  <div className="asstBody">
+                    <div className="thinkingLine">
+                      <span>考え中</span>
+                      <span className="dots" aria-hidden="true">
+                        ...
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 最下部へ */}
+              {showJump && (
+                <button
+                  type="button"
+                  className="jumpBtn"
+                  onClick={() => {
+                    shouldAutoScrollRef.current = true;
+                    scrollBottom();
+                  }}
+                  aria-label="最下部へ"
+                  title="最下部へ"
+                >
+                  ↓
+                </button>
+              )}
             </div>
 
-            {/* 入力欄（PCはその場、SPは押してComposerへ） */}
+            {/* 入力（1行固定） */}
             <div className="chatInputWrap">
-              {/* PC */}
-              <div className="pcOnly" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <div className="inputRow">
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -1085,93 +1018,54 @@ export default function ChatClient() {
                       if (canSend) sendMessage();
                     }
                   }}
-                  placeholder={loading ? "回答中…" : "相談内容を入力（Enterで送信）"}
-                  style={{ flex: 1, padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd" }}
+                  placeholder={loading ? "回答中…" : "相談内容を入力"}
+                  className="chatInput"
                   disabled={!canSend}
                 />
 
-                {/* ✅ 送信は矢印のみ */}
+                {/* 120文字以上で「全画面」ボタン */}
+                {showExpand && (
+                  <button
+                    type="button"
+                    className="expandBtn"
+                    onClick={() => {
+                      setComposerText(input);
+                      setComposerOpen(true);
+                    }}
+                    aria-label="全画面で編集"
+                    title="全画面で編集"
+                    disabled={!canSend}
+                  >
+                    全画面
+                  </button>
+                )}
+
                 <button
                   type="button"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    if (canSend) sendMessage();
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
+                  className="sendBtn"
+                  onClick={() => {
                     if (canSend) sendMessage();
                   }}
                   disabled={!canSend}
-                  className="sendArrowBtn"
-                  aria-label="送信"
-                  title="送信"
                 >
-                  ↗︎
+                  送信
                 </button>
               </div>
-
-              {/* SP */}
-              <button
-                type="button"
-                className="spOnly inputDock"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  openComposer();
-                }}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  openComposer();
-                }}
-                disabled={!canSend}
-                aria-label="入力を開く"
-                title="入力"
-              >
-                <span className="dockPlaceholder">{loading ? "回答中…" : "相談内容を入力"}</span>
-                <span className="dockArrow">↗︎</span>
-              </button>
-
-              <div className="disclaimerBottom">※ AIの回答は参考情報です。最終判断はご自身でお願いします。</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ===== SP: スレッド（フルスクリーン） ===== */}
-      {spThreadsOpen && (
+      {/* ===== スレッド overlay（SP） ===== */}
+      {threadsOverlayOpen && (
         <div className="overlay overlayWhite" role="dialog" aria-modal="true">
           <div className="fullSheet">
             <div className="fullTopBar">
-              <button
-                type="button"
-                className="topIconBtn"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  setSpThreadsOpen(false);
-                }}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  setSpThreadsOpen(false);
-                }}
-                aria-label="戻る"
-                title="戻る"
-              >
+              <button type="button" className="topIconBtn" onClick={() => setThreadsOverlayOpen(false)} aria-label="閉じる" title="閉じる">
                 ←
               </button>
               <div style={{ fontWeight: 900 }}>スレッド</div>
-              <button
-                type="button"
-                className="topIconBtn"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  newThread();
-                }}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  newThread();
-                }}
-                aria-label="新規"
-                title="新規"
-              >
+              <button type="button" className="topIconBtn" onClick={() => newThread()} aria-label="新規" title="新規">
                 ＋
               </button>
             </div>
@@ -1180,45 +1074,7 @@ export default function ChatClient() {
               {threads.map((t) => {
                 const active = t.id === activeConversationId;
                 return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onPointerDown={(e) => {
-                      const pt = (e as any).pointerType;
-                      if (pt && pt !== "touch") return;
-
-                      threadTouchRef.current = {
-                        x: e.clientX,
-                        y: e.clientY,
-                        moved: false,
-                        id: t.id,
-                      };
-                    }}
-                    onPointerMove={(e) => {
-                      const pt = (e as any).pointerType;
-                      if (pt && pt !== "touch") return;
-
-                      const dx = Math.abs(e.clientX - threadTouchRef.current.x);
-                      const dy = Math.abs(e.clientY - threadTouchRef.current.y);
-                      if (dx > 10 || dy > 10) threadTouchRef.current.moved = true;
-                    }}
-                    onPointerUp={(e) => {
-                      const pt = (e as any).pointerType;
-                      if (pt && pt !== "touch") return;
-
-                      const st = threadTouchRef.current;
-                      if (!st.moved && st.id) {
-                        e.preventDefault();
-                        selectThread(st.id);
-                      }
-                      threadTouchRef.current.id = null;
-                    }}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      selectThread(t.id);
-                    }}
-                    className={`threadItemFull ${active ? "active" : ""}`}
-                  >
+                  <button key={t.id} type="button" onClick={() => selectThread(t.id)} className={`threadItemFull ${active ? "active" : ""}`}>
                     <div className="threadTitle">{t.title}</div>
                     <div className="threadMeta">
                       {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
@@ -1235,188 +1091,93 @@ export default function ChatClient() {
         </div>
       )}
 
-      {/* ===== メニュー（…） ===== */}
+      {/* ===== メニュー（⋯） ===== */}
       {menuOpen && (
-        <div className="overlay" role="dialog" aria-modal="true" onPointerDown={() => setMenuOpen(false)}>
-          <div className="menuSheet" onPointerDown={(e) => e.stopPropagation()}>
+        <div className="overlay" role="dialog" aria-modal="true" onClick={() => setMenuOpen(false)}>
+          <div className="menuSheet" onClick={(e) => e.stopPropagation()}>
             <div className="sheetTop">
               <div style={{ fontWeight: 900 }}>メニュー</div>
-              <button
-                type="button"
-                style={BTN}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  setMenuOpen(false);
-                }}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  setMenuOpen(false);
-                }}
-              >
+              <button type="button" style={BTN} onClick={() => setMenuOpen(false)}>
                 閉じる
               </button>
             </div>
 
-            {/* プラン */}
             <div className="sheetSection">
               <div className="sheetLabel">利用状況</div>
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <div style={{ fontSize: 12, color: "#333", fontWeight: 800 }}>{badge}</div>
-                <button
-                  type="button"
-                  style={{ ...BTN, minWidth: 78 }}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    refreshStatus();
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    refreshStatus();
-                  }}
-                >
+                <button type="button" style={{ ...BTN, minWidth: 78 }} onClick={() => refreshStatus()}>
                   更新
                 </button>
               </div>
             </div>
 
-            {/* スレッド */}
             <div className="sheetSection">
               <div className="sheetLabel">スレッド</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <button
-                  type="button"
-                  style={BTN}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    newThread();
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    newThread();
-                  }}
-                >
+                <button type="button" style={BTN} onClick={() => newThread()}>
                   新規スレッド
                 </button>
-
                 <button
                   type="button"
                   style={{ ...BTN, opacity: canRename ? 1 : 0.5, cursor: canRename ? "pointer" : "not-allowed" }}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
+                  onClick={() => {
                     if (canRename) renameThread();
                   }}
                   aria-disabled={!canRename}
                 >
                   タイトル変更
                 </button>
+                <button type="button" className="pcOnly" style={BTN} onClick={() => setSidebarMode((p) => (p === "open" ? "collapsed" : "open"))}>
+                  スレッド欄：{sidebarMode === "open" ? "表示中" : "非表示"}（切替）
+                </button>
               </div>
             </div>
 
-            {/* 口調 */}
             <div className="sheetSection">
               <div className="sheetLabel">口調</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  style={toggleBtn(dialect === "standard")}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    setDialect("standard");
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    setDialect("standard");
-                  }}
-                >
+                <button type="button" style={toggleBtn(dialect === "standard")} onClick={() => setDialect("standard")}>
                   標準語
                 </button>
-                <button
-                  type="button"
-                  style={toggleBtn(dialect === "kansai")}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    setDialect("kansai");
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    setDialect("kansai");
-                  }}
-                >
+                <button type="button" style={toggleBtn(dialect === "kansai")} onClick={() => setDialect("kansai")}>
                   関西弁
                 </button>
               </div>
             </div>
 
-            {/* モード */}
             <div className="sheetSection">
               <div className="sheetLabel">モード</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  style={toggleBtn(stance === "sanbo")}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    setStance("sanbo");
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    setStance("sanbo");
-                  }}
-                >
+                <button type="button" style={toggleBtn(stance === "sanbo")} onClick={() => setStance("sanbo")}>
                   参謀
                 </button>
-                <button
-                  type="button"
-                  style={toggleBtn(stance === "zubatto")}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    setStance("zubatto");
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    setStance("zubatto");
-                  }}
-                >
+                <button type="button" style={toggleBtn(stance === "zubatto")} onClick={() => setStance("zubatto")}>
                   ズバっと
                 </button>
               </div>
             </div>
 
-            {/* 外部 */}
             <div className="sheetSection">
               <div className="sheetLabel">その他</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <Link href="/settings/billing" style={{ ...LINK_BTN, width: "100%" }} onClick={() => setMenuOpen(false)}>
                   プラン変更
                 </Link>
-
                 <button
                   type="button"
                   style={{ ...BTN, width: "100%" }}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    setMenuOpen(false);
-                    openUrl(CONTACT_URL);
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
+                  onClick={() => {
                     setMenuOpen(false);
                     openUrl(CONTACT_URL);
                   }}
                 >
                   お問い合わせ
                 </button>
-
                 <button
                   type="button"
                   style={{ ...BTN, width: "100%" }}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    setMenuOpen(false);
-                    doLogout();
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
+                  onClick={() => {
                     setMenuOpen(false);
                     doLogout();
                   }}
@@ -1429,49 +1190,25 @@ export default function ChatClient() {
         </div>
       )}
 
-      {/* ===== SP: Composer（フルスクリーン入力） ===== */}
+      {/* ===== 全画面入力（任意：120文字以上から） ===== */}
       {composerOpen && (
         <div className="composerOverlay" role="dialog" aria-modal="true">
           <div className="composerTopBar">
-            <button
-              type="button"
-              className="topIconBtn"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                closeComposer();
-              }}
-              onTouchStart={(e) => {
-                e.preventDefault();
-                closeComposer();
-              }}
-              aria-label="戻る"
-              title="戻る"
-            >
+            <button type="button" className="topIconBtn" onClick={() => setComposerOpen(false)} aria-label="戻る" title="戻る">
               ←
             </button>
-
             <div style={{ fontWeight: 900 }}>相談内容</div>
-
             <button
               type="button"
-              className={`topIconBtn ${!canSend || !composerText.trim() ? "disabled" : ""}`}
-              onPointerDown={(e) => {
-                e.preventDefault();
+              className={`composerSendBtn ${!canSend || !composerText.trim() ? "disabled" : ""}`}
+              onClick={() => {
                 if (!canSend) return;
                 if (!composerText.trim()) return;
                 sendMessage(composerText);
               }}
-              onTouchStart={(e) => {
-                e.preventDefault();
-                if (!canSend) return;
-                if (!composerText.trim()) return;
-                sendMessage(composerText);
-              }}
-              aria-label="送信"
-              title="送信"
               disabled={!canSend || !composerText.trim()}
             >
-              ↗︎
+              送信
             </button>
           </div>
 
@@ -1483,30 +1220,17 @@ export default function ChatClient() {
               className="composerTextarea"
               autoFocus
             />
-            <div className="composerHint">※ 口調はメニュー（⋯）から固定できます。</div>
-            <div className="composerDisclaimer">※ AIの回答は参考情報です。最終判断はご自身でお願いします。</div>
           </div>
         </div>
       )}
 
-      {/* ===== AI野口アクション（フルスクリーン遷移） ===== */}
-      {aiActionOpen && (
+      {/* ===== AI野口プロフィール（フル） ===== */}
+      {aiProfileOpen && (
         <div className="overlay overlayProfile" role="dialog" aria-modal="true">
-          <div className="profileSheet" onPointerDown={(e) => e.stopPropagation()}>
+          <div className="profileSheet" onClick={(e) => e.stopPropagation()}>
             <div className="fullTopBar">
               <div style={{ fontWeight: 900 }}>AI野口</div>
-              <button
-                type="button"
-                style={BTN}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  setAiActionOpen(false);
-                }}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  setAiActionOpen(false);
-                }}
-              >
+              <button type="button" style={BTN} onClick={() => setAiProfileOpen(false)}>
                 閉じる
               </button>
             </div>
@@ -1525,14 +1249,14 @@ export default function ChatClient() {
               />
 
               <div style={{ textAlign: "center" }}>
-                <div style={{ fontWeight: 900, fontSize: 18 }}>AI野口（税理士）</div>
+                <div style={{ fontWeight: 900, fontSize: 18 }}>AI野口</div>
                 <div style={{ color: "#666", fontSize: 13, marginTop: 4 }}>税理士法人GLADZ 代表税理士 野口のAI</div>
               </div>
 
-              {aiActionTarget?.text && (
+              {aiTargetText && (
                 <div className="answerPreview">
                   <div className="previewLabel">対象の回答</div>
-                  <div className="previewText">{aiActionTarget.text}</div>
+                  <div className="previewText">{aiTargetText}</div>
                 </div>
               )}
 
@@ -1540,50 +1264,17 @@ export default function ChatClient() {
                 <button
                   type="button"
                   style={{ ...BTN, width: "100%", padding: "12px 12px" }}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    if (!aiActionTarget?.text) return;
-                    doCopy(aiActionTarget.text);
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    if (!aiActionTarget?.text) return;
-                    doCopy(aiActionTarget.text);
-                  }}
+                  onClick={() => openUrl(CONTACT_URL)}
                 >
-                  コピー
+                  不適切な回答を報告
                 </button>
 
                 <button
                   type="button"
                   style={{ ...BTN, width: "100%", padding: "12px 12px" }}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    if (!aiActionTarget?.text) return;
-                    doShare(aiActionTarget.text);
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    if (!aiActionTarget?.text) return;
-                    doShare(aiActionTarget.text);
-                  }}
+                  onClick={() => openUrl(CONTACT_URL)}
                 >
-                  共有
-                </button>
-
-                <button
-                  type="button"
-                  style={{ ...BTN, width: "100%", padding: "12px 12px" }}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    openUrl(CONTACT_URL);
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    openUrl(CONTACT_URL);
-                  }}
-                >
-                  不適切な回答を報告 / 問い合わせ
+                  問い合わせ・要望など
                 </button>
               </div>
             </div>
@@ -1605,7 +1296,7 @@ export default function ChatClient() {
           min-height: 0;
           display: flex;
           justify-content: center;
-          padding: 12px;
+          padding: 10px;
           box-sizing: border-box;
         }
 
@@ -1653,6 +1344,7 @@ export default function ChatClient() {
           overflow-y: auto;
           padding: 10px;
           background: #fafafa;
+          -webkit-overflow-scrolling: touch;
         }
 
         .threadItem {
@@ -1692,9 +1384,8 @@ export default function ChatClient() {
           background: #fff;
         }
 
-        /* ✅ 1行ヘッダー */
         .topBar {
-          padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+          padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
           border-bottom: 1px solid #eee;
           display: flex;
           justify-content: space-between;
@@ -1731,7 +1422,7 @@ export default function ChatClient() {
         }
 
         .topIconBtn {
-          padding: 10px 12px;
+          padding: 8px 10px;
           border-radius: 12px;
           border: 1px solid #ddd;
           background: #fff;
@@ -1739,13 +1430,9 @@ export default function ChatClient() {
           font-size: 18px;
           line-height: 1;
         }
-        .topIconBtn.disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
 
         .errorLine {
-          padding: 8px 12px;
+          padding: 8px 10px;
           color: #b00020;
           font-size: 13px;
           border-bottom: 1px solid #f3f4f6;
@@ -1755,8 +1442,12 @@ export default function ChatClient() {
           flex: 1 1 auto;
           min-height: 0;
           overflow-y: auto;
-          padding: 14px;
+          padding: 12px;
           background: #fff;
+          position: relative;
+          -webkit-overflow-scrolling: touch;
+          touch-action: pan-y;
+          overscroll-behavior: contain;
         }
 
         /* Messages */
@@ -1772,6 +1463,14 @@ export default function ChatClient() {
           justify-content: flex-start;
           gap: 10px;
           align-items: flex-start;
+        }
+
+        /* font size統一：16px */
+        .bubbleText {
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+          line-height: 1.6;
+          font-size: 16px;
         }
 
         .userBubble {
@@ -1792,6 +1491,29 @@ export default function ChatClient() {
         .asstAvatar {
           flex: 0 0 auto;
           margin-top: 2px;
+        }
+
+        .avatarImg {
+          width: 26px;
+          height: 26px;
+          display: block;
+          border-radius: 999px;
+          object-fit: cover;
+          border: 1px solid #e5e5e5;
+          cursor: pointer;
+        }
+
+        .avatarFallback {
+          width: 26px;
+          height: 26px;
+          border-radius: 999px;
+          border: 1px solid #e5e5e5;
+          background: #fff;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          cursor: pointer;
         }
 
         .asstBody {
@@ -1824,13 +1546,59 @@ export default function ChatClient() {
         }
 
         .asstText {
-          font-size: 15px;
+          font-size: 16px; /* 質問と同じ */
         }
 
-        .typingDots {
+        .asstDisclaimer {
+          margin-top: 10px;
+          font-size: 11px;
+          color: #777;
+        }
+
+        .asstActions {
           margin-top: 6px;
+          display: flex;
+          justify-content: flex-end;
+          gap: 6px;
+        }
+
+        .actBtn {
+          width: 28px;
+          height: 28px;
+          border-radius: 10px;
+          border: 1px solid #e5e5e5;
+          background: #fff;
+          cursor: pointer;
+          font-size: 14px;
+          line-height: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: #444;
+        }
+
+        .thinkingLine {
+          font-size: 13px;
           color: #666;
-          font-size: 12px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 0;
+        }
+
+        /* Jump */
+        .jumpBtn {
+          position: absolute;
+          right: 12px;
+          bottom: 12px;
+          width: 44px;
+          height: 44px;
+          border-radius: 14px;
+          border: 1px solid #ddd;
+          background: #fff;
+          cursor: pointer;
+          box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+          font-size: 18px;
         }
 
         /* Input */
@@ -1841,67 +1609,51 @@ export default function ChatClient() {
           background: #fff;
         }
 
-        .sendArrowBtn {
-          width: 44px;
-          height: 44px;
+        .inputRow {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+        }
+
+        .chatInput {
+          flex: 1;
+          padding: 10px 12px;
           border-radius: 12px;
           border: 1px solid #ddd;
+          font-size: 16px;
+        }
+
+        .expandBtn {
+          padding: 10px 10px;
+          border-radius: 12px;
+          border: 1px solid #ddd;
+          background: #fff;
+          cursor: pointer;
+          white-space: nowrap;
+          font-size: 13px;
+        }
+        .expandBtn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .sendBtn {
+          padding: 10px 14px;
+          border-radius: 12px;
+          border: 1px solid #111;
           background: #111;
           color: #fff;
           cursor: pointer;
-          font-size: 18px;
-          line-height: 1;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
+          white-space: nowrap;
+          font-size: 13px;
+          font-weight: 800;
         }
-        .sendArrowBtn:disabled {
+        .sendBtn:disabled {
           opacity: 0.5;
           cursor: not-allowed;
         }
 
-        .inputDock {
-          width: 100%;
-          border: 1px solid #ddd;
-          background: #fff;
-          border-radius: 14px;
-          padding: 12px 12px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          cursor: pointer;
-        }
-        .inputDock:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-        .dockPlaceholder {
-          color: #777;
-          font-size: 14px;
-        }
-        .dockArrow {
-          width: 32px;
-          height: 32px;
-          border-radius: 10px;
-          background: #111;
-          color: #fff;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 16px;
-          line-height: 1;
-        }
-
-        .disclaimerBottom {
-          padding-top: 10px;
-          font-size: 11px;
-          color: #777;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        /* ===== Overlay common ===== */
+        /* ===== Overlay ===== */
         .overlay {
           position: fixed;
           inset: 0;
@@ -1913,7 +1665,6 @@ export default function ChatClient() {
           padding: 12px;
           box-sizing: border-box;
         }
-
         .overlayWhite {
           background: #fff;
           padding: 0;
@@ -1948,13 +1699,12 @@ export default function ChatClient() {
           padding: 12px;
           border-top: 1px solid #eee;
         }
-
         .sheetLabel {
           font-weight: 900;
           margin-bottom: 8px;
         }
 
-        /* ===== Full-screen sheet (Threads / Profile) ===== */
+        /* Full sheet */
         .fullSheet {
           width: 100%;
           height: 100%;
@@ -1964,7 +1714,7 @@ export default function ChatClient() {
         }
 
         .fullTopBar {
-          padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+          padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
           border-bottom: 1px solid #eee;
           display: flex;
           justify-content: space-between;
@@ -1981,6 +1731,8 @@ export default function ChatClient() {
           overflow-y: auto;
           padding: 12px;
           background: #fafafa;
+          -webkit-overflow-scrolling: touch;
+          touch-action: pan-y;
         }
 
         .threadItemFull {
@@ -1998,7 +1750,7 @@ export default function ChatClient() {
           background: #eef2ff;
         }
 
-        /* ===== Composer ===== */
+        /* Composer (optional) */
         .composerOverlay {
           position: fixed;
           inset: 0;
@@ -2009,7 +1761,7 @@ export default function ChatClient() {
         }
 
         .composerTopBar {
-          padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+          padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
           border-bottom: 1px solid #eee;
           display: flex;
           justify-content: space-between;
@@ -2024,7 +1776,6 @@ export default function ChatClient() {
           padding: 12px;
           display: flex;
           flex-direction: column;
-          gap: 10px;
           padding-bottom: calc(12px + env(safe-area-inset-bottom));
         }
 
@@ -2040,16 +1791,21 @@ export default function ChatClient() {
           outline: none;
         }
 
-        .composerHint {
-          font-size: 12px;
-          color: #666;
+        .composerSendBtn {
+          padding: 8px 12px;
+          border-radius: 12px;
+          border: 1px solid #111;
+          background: #111;
+          color: #fff;
+          font-weight: 900;
+          cursor: pointer;
         }
-        .composerDisclaimer {
-          font-size: 11px;
-          color: #777;
+        .composerSendBtn.disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
         }
 
-        /* ===== Profile overlay (full white) ===== */
+        /* Profile */
         .overlayProfile {
           background: #fff !important;
           padding: 0 !important;
@@ -2077,6 +1833,7 @@ export default function ChatClient() {
           align-items: center;
           overflow-y: auto;
           padding-bottom: calc(14px + env(safe-area-inset-bottom));
+          -webkit-overflow-scrolling: touch;
         }
 
         .answerPreview {
@@ -2100,6 +1857,7 @@ export default function ChatClient() {
           line-height: 1.55;
           max-height: 42vh;
           overflow: auto;
+          -webkit-overflow-scrolling: touch;
         }
 
         /* Dots */
@@ -2147,7 +1905,12 @@ export default function ChatClient() {
           }
 
           .chatArea {
-            padding: 12px;
+            padding: 10px;
+          }
+
+          .jumpBtn {
+            right: 10px;
+            bottom: 10px;
           }
         }
       `}</style>
