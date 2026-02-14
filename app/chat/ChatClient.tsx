@@ -331,7 +331,7 @@ export default function ChatClient() {
     const dist = target - startTop;
     if (dist <= 0) return;
 
-    const duration = 220; // ms（“高速スクロール感”）
+    const duration = 300; // ms（“なめらか感”）
     const t0 = performance.now();
 
     const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
@@ -855,9 +855,12 @@ export default function ChatClient() {
     const vv = (window as any).visualViewport;
     if (!vv) return;
     const onResize = () => {
-      // iOS: キーボードが出ると visualViewport.height が縮む + offsetTop が動く
+      // ✅ iOS Safari安定版：
+      // window.innerHeight はアドレスバー伸縮でブレるので layout viewport を使う
+      const layoutH = document.documentElement.clientHeight || window.innerHeight;
       const offsetTop = typeof vv.offsetTop === "number" ? vv.offsetTop : 0;
-      const kb = Math.max(0, window.innerHeight - vv.height - offsetTop);
+      const kbRaw = layoutH - vv.height - offsetTop;
+      const kb = Math.max(0, Math.round(kbRaw));
       setKeyboardPx(kb);
       setKeyboardOpen(kb > 0);
        // ✅ CSS変数に反映（CSS側で bottom に使う）
