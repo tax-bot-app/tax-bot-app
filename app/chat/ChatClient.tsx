@@ -928,21 +928,34 @@ export default function ChatClient() {
     const t = e.touches[0];
     swipeRef.current = { x: t.clientX, y: t.clientY, active: true };
   };
+  
   const onTouchEnd = (e: React.TouchEvent) => {
-    const st = swipeRef.current;
-    if (!st.active) return;
-    swipeRef.current.active = false;
+  const st = swipeRef.current;
+  if (!st.active) return;
+  swipeRef.current.active = false;
 
-    const t = e.changedTouches[0];
-    const dx = t.clientX - st.x;
-    const dy = t.clientY - st.y;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - st.x;
+  const dy = t.clientY - st.y;
 
-    // 左→右スワイプでスレッド一覧（左端スタート限定）
-    const fromLeftEdge = st.x < 80; // 好みで 60〜100 くらいに調整
-    if (fromLeftEdge && dx > 70 && Math.abs(dx) > Math.abs(dy) * 1.3) {
-      setThreadsOverlayOpen(true);
-    }
-  };
+  // 縦スクロール優先
+  if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+
+  // ✅ overlay開いてる時は “右→左” で閉じるだけ
+  if (threadsOverlayOpen) {
+    if (dx < -70) setThreadsOverlayOpen(false);
+    return;
+  }
+
+  // ✅ 左端スタート限定で “左→右” で開く
+  const fromLeftEdge = st.x < 60; // 60くらいがiOSの戻るジェスチャと喧嘩しにくい
+  if (fromLeftEdge && dx > 70) {
+    setThreadsOverlayOpen(true);
+    return;
+  }
+
+）
+};
 
   /** ===== helpers ===== */
   const openAiProfileFromAnswer = (text: string) => {
@@ -1180,9 +1193,11 @@ export default function ChatClient() {
                   <div className="asstBody">
                     <div className="thinkingLine">
                       <span>考え中</span>
-                      <span className="dots" aria-hidden="true">
-                        ...
-                      </span>
+                      <span className="dotsBounce" aria-hidden="true">
+   <i />
+   <i />
+   <i />
+ </span>
                     </div>
                   </div>
                 </div>
@@ -1569,17 +1584,45 @@ export default function ChatClient() {
         >
           <div className="inputSheet" onClick={(e) => e.stopPropagation()}>
             <div className="sheetTop">
-              <button
-                type="button"
-                className="sheetBtn"
-                onClick={(e) => {
-   e.stopPropagation();
-                  setInput(inputSheetText);
-                  setInputSheetOpen(false);
-                }}
-              >
-                戻る
-              </button>
+              <div className="sheetLeft">
++    <button
+      type="button"
+      className="sheetBtn"
+      onClick={(e) => {
+        e.stopPropagation();
+        setInput(inputSheetText);
+        setInputSheetOpen(false);
+      }}
+    >
+      戻る
+    </button>
+
+    {/* ✅ 口調変更（ここ） */}
+    <button
+      type="button"
+      className="sheetBtn"
+      onClick={(e) => {
+        e.stopPropagation();
+        // 既存の menuOpen は z-index が低くて Sheet の裏に潜るので、ここは“その場切替”にする
+        setDialect((p) => (p === "standard" ? "kansai" : "standard"));
+      }}
+      title="口調（標準語/関西弁）"
+    >
+      {dialect === "kansai" ? "関西弁" : "標準語"}
+    </button>
+
+    <button
+      type="button"
+      className="sheetBtn"
+      onClick={(e) => {
+        e.stopPropagation();
+        setStance((p) => (p === "sanbo" ? "zubatto" : "sanbo"));
+      }}
+      title="モード（参謀/ズバっと）"
+    >
+      {stance === "sanbo" ? "参謀" : "ズバ"}
+    </button>
+  </div>
 
               <div className="sheetTitle">相談内容</div>
 
@@ -2080,6 +2123,7 @@ export default function ChatClient() {
           justify-content: space-between;
           gap: 10px;
         }
+          
         .sheetTitle { font-weight: 900; }
         .sheetBtn {
           padding: 8px 10px;
@@ -2383,13 +2427,28 @@ export default function ChatClient() {
           pointer-events: none;
         }
 
-        /* dots */
-        .dots {
-          display: inline-block;
-          width: 18px;
-          text-align: left;
-          animation: dotty 1.2s infinite steps(4, end);
-        }
+        .dotsBounce{
+  display:inline-flex;
+  gap:4px;
+  align-items:center;
+  height:12px;
+}
+.dotsBounce i{
+  width:4px;
+  height:4px;
+  border-radius:999px;
+  background:#666;
+  display:inline-block;
+  animation: bounceDot 1.1s infinite ease-in-out;
+}
+.dotsBounce i:nth-child(2){ animation-delay: .15s; }
+.dotsBounce i:nth-child(3){ animation-delay: .3s; }
+
+@keyframes bounceDot{
+  0%, 80%, 100%{ transform: translateY(0); opacity:.35; }
+  40%{ transform: translateY(-4px); opacity:1; }
+}
+
         @keyframes dotty {
           0% {
             width: 0;
