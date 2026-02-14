@@ -489,14 +489,15 @@ function buildOutputRules(params: { allowAttackDefenseDetail: boolean }): string
 
   return [
     "Markdownの見出し（##、###など）は使わない。",
-    "見出しラベルは固定：『🥄ちょうど良いライン』『✅要点』『⚠️注意』『🔎確認』。",
+    "見出しラベルは固定：『🥄ちょうど良いライン』『✅要点』『⚠️注意』。", // ← 🔎確認を削除
     "初回は『🥄ちょうど良いライン』→『✅要点』の順で書く。",
     detailRule,
     "『🍚攻め』『🧂守り』を出した場合は決めゼリフは禁止。",
     "決めゼリフはサーバ側で付与する。",
-    "🔎確認は返事いらんメモとして1行のみ。",
+    "回答末尾に『🔎確認』の固定文を付けない。必要ならサーバ側で短い締め文を付与する。", // ←ここに置換
   ];
 }
+
 
 function buildAmbiguityBoostRules(message: string): string[] {
   const m = (message ?? "").trim();
@@ -511,9 +512,6 @@ function buildAmbiguityBoostRules(message: string): string[] {
   return [
     "重要：ユーザーの『安全度/安全性/大丈夫？/リスク』は、まず税務・経営の安全性として解釈する（否認リスク/税務調査リスク/資金繰り・意思決定リスク）。一般的な安全（健康/事故/防犯）に逸れない。",
     "『安全度』は必ず『税務上の安全度（否認リスク/税務調査リスク）』として 高/中/低 の3段階で返す。",
-    hasTaxWords
-      ? "ユーザー文面が税務寄りなら、🔎は原則出さない（トーク消費を避ける）。"
-      : "一般論の可能性が残る時だけ、末尾の🔎は『税務・経営前提で答えた。前提が違うなら言って』の1行メモにする（YES/NOで聞かない）。",
   ];
 }
 
@@ -1257,18 +1255,6 @@ function ensureLineBold(secLine: string[]): string[] {
   return out;
 }
 
-function collapseInquiryToSingleLine(askLines: string[]): string[] {
-  if (!askLines || askLines.length === 0) return askLines;
-  const head = askLines[0].trim();
-  const rest = askLines
-    .slice(1)
-    .map((l) => l.trim())
-    .filter((x) => x.length > 0)
-    .join(" ");
-  if (!rest)
-    return ["🔎確認 税務・経営前提で答えた。前提が違うなら言うてな。"];
-  return [`${head} ${rest}`.trim()];
-}
 
 function enforceTemplate(answer: string): string {
   const a = answer.replace(/\r\n/g, "\n").trim();
@@ -1280,29 +1266,12 @@ function enforceTemplate(answer: string): string {
   const secLine = ensureLineBold(extractSection(a, "🥄"));
   const key = extractSection(a, "✅");
   const warn = extractSection(a, "⚠️");
-  const ask = extractSection(a, "🔎");
   if (secLine.length === 0 || key.length === 0) return a;
-
-  let askFixed = ask;
-  if (askFixed.length > 0) {
-    const filtered: string[] = [];
-    let seen = false;
-    for (const line of askFixed) {
-      const t = line.trimStart();
-      if (t.startsWith("🔎")) {
-        if (seen) continue;
-        seen = true;
-      }
-      filtered.push(line);
-    }
-    askFixed = filtered;
-  }
 
   const parts: string[] = [];
   parts.push(...secLine, "");
   parts.push(...key);
   if (warn.length > 0) parts.push("", ...warn);
-  if (askFixed.length > 0) parts.push("", ...collapseInquiryToSingleLine(askFixed));
   return parts.join("\n").trim();
 }
 
@@ -1342,29 +1311,6 @@ function forceCasual(text: string, dialect: Dialect): string {
   return s;
 }
 
-function inquiryLine(dialect: Dialect, stance: Stance): string {
-  if (dialect === "standard" && stance === "sanbo")
-    return "🔎確認 税務・経営前提で回答しました。前提が違う場合はお知らせください。";
-  if (dialect === "standard" && stance === "zubatto")
-    return "🔎確認 税務・経営前提で答えた。前提が違うなら言って。";
-  if (dialect === "kansai" && stance === "sanbo")
-    return "🔎確認 税務・経営前提でお答えしましたで。前提が違うなら言うてくださいな。";
-  return "🔎確認 税務・経営前提で答えたで。前提が違うなら言うてな。";
-}
-
-function inquiryLineWithAuditCTA(dialect: Dialect, stance: Stance, subjectTopic: string): string {
-  const ex = `${subjectTopic}は税務調査で何を突かれやすい？`;
-  if (stance === "sanbo") {
-    if (dialect === "kansai") {
-      return `🔎確認 税務・経営前提でお答えしましたで。必要でしたら「${ex}」みたいに投げてもろたら、調査目線のポイントも整理しますわ。`;
-    }
-    return `🔎確認 税務・経営前提で回答しました。必要でしたら「${ex}」の形でもう一段、税務調査目線のポイントを整理します。`;
-  }
-  if (dialect === "kansai") {
-    return `🔎確認 税務・経営前提で答えたで。もし「${ex}」まで知りたかったら言うて。調査で刺さるポイントだけ整理する。`;
-  }
-  return `🔎確認 税務・経営前提で答えた。もし「${ex}」まで知りたければ言って。調査で刺さるポイントだけ整理する。`;
-}
 
 function stripInternalLeaks(text: string): string {
   let s = String(text ?? "").replace(/\r\n/g, "\n");
@@ -1385,6 +1331,21 @@ function stripInternalLeaks(text: string): string {
   if (!s)
     s = "🥄ちょうど良いライン：**一般論で整理する**。必要なら条件を揃えて深掘りする。";
   return s;
+}
+
+// （〆）以降の最大3行を取り出し、本文から除去する
+function splitWarmClose(answer: string): { body: string; close: string } {
+  const lines = String(answer ?? "").replace(/\r\n/g, "\n").split("\n");
+  const idx = lines.findIndex((l) => l.trimStart().startsWith("（〆）"));
+  if (idx < 0) return { body: String(answer ?? "").trim(), close: "" };
+
+  const body = lines.slice(0, idx).join("\n").trim();
+  const closeLines = lines
+    .slice(idx, idx + 3)
+    .map((l) => l.replace(/^（〆）\s*/, "").trim())
+    .filter(Boolean);
+
+  return { body, close: closeLines.join("\n").trim() };
 }
 
 function postProcessAnswer(
@@ -1476,84 +1437,14 @@ function postProcessAnswer(
   // CTA抑制（既存：私的混在）
   const suppressCta = isPrivateMix || suppressBranding;
 
-  if (usedKnowledge && !allowAttackDefenseDetail && !alreadyCatch && !suppressCta) {
-    if (isQaFirst) {
-      const cta =
-        dialect === "kansai"
-          ? "👉 続き欲しければ「続き」。線引き（どこまで/上限）ならそれ言うて。"
-          : "👉 続きが欲しければ「続き」。線引き（どこまで/上限）ならそれを言って。";
-      const hasCta = a.split("\n").some((line) => line.trimStart().startsWith("👉"));
-      if (!hasCta) a = `${a}\n\n${cta}`.trim();
-    }
-  }
-
-  // 🔎 の（はい/いいえ）除去（既存）
-  a = a
-    .split("\n")
-    .map((line) => {
-      if (!line.trimStart().startsWith("🔎")) return line;
-      return line.replace(/[（(]\s*はい\s*\/\s*いいえ\s*[)）]/g, "").trimEnd();
-    })
-    .join("\n")
-    .trim();
-
-  // ★変更：抑制時は desiredInquiry を空にして “差し替え/追加” を一切しない
-  const desiredInquiry = suppressBranding
-    ? ""
-    : isPrivateMix
-      ? inquiryLine(dialect, stance) // 静か版（=通常の🔎確認のみ）
-      : inquiryOverride
-        ? inquiryOverride
-        : inquiryLine(dialect, stance);
-
-  {
-    const lines = a.split("\n");
-    const out: string[] = [];
-    let placed = false;
-
-    for (const line of lines) {
-      const t = line.trimStart();
-      if (!t.startsWith("🔎")) {
-        out.push(line);
-        continue;
-      }
-
-      // ★追加：抑制時は🔎を全部捨てる
-      if (suppressBranding) continue;
-
-      if (placed) continue;
-      out.push(desiredInquiry);
-      placed = true;
-    }
-
-    // ★変更：抑制時は追記しない
-    if (!suppressBranding && !placed && inquiryOverride) {
-      if (out.length > 0 && out[out.length - 1].trim()) out.push("");
-      out.push(desiredInquiry);
-    }
-
-    a = out.join("\n").trim();
-  }
-
   if (stance === "zubatto") a = forceCasual(a, dialect);
 
-  {
-    // ★変更：抑制時は末尾寄せ処理をスキップ（保険で残骸も消す）
-    if (!suppressBranding) {
-      const lines = a.split("\n");
-      const inquiryLines = lines.filter((l) => l.trimStart().startsWith("🔎"));
-      if (inquiryLines.length > 0) {
-        const rest = lines.filter((l) => !l.trimStart().startsWith("🔎"));
-        a = [...rest, inquiryLines[0]].join("\n").trim();
-      }
-    } else {
-      a = a
-        .split("\n")
-        .filter((l) => !l.trimStart().startsWith("🔎"))
-        .join("\n")
-        .trim();
-    }
-  }
+   // 🔎は廃止：来ても落とす
+  a = a
+    .split("\n")
+    .filter((l) => !l.trimStart().startsWith("🔎"))
+    .join("\n")
+    .trim();
 
   a = a.replace(/^返事いらんメモ[:：].*$/gm, "").trim();
   return stripInternalLeaks(a);
@@ -2932,20 +2823,15 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
 
           const footer = followupFooter(axisTopic, dialect, stance);
 
-          const inquiryOverride =
-            auditAxis && subjectTopic && AUDIT_OVERLAY_TOPICS.has(subjectTopic)
-              ? inquiryLineWithAuditCTA(dialect, stance, subjectTopic)
-              : inquiryLine(dialect, stance);
-
+          
+         // ✅ inquiry（🔎）は廃止したので parts はここで組み立て直す
           const parts: string[] = [];
           parts.push(header, "", pre.text, "", built);
           if (footer) parts.push("", footer);
-          parts.push("", inquiryOverride);
 
           answer = postProcessAnswer(parts.join("\n").trim(), dialect, stance, {
             usedKnowledge: true,
             allowAttackDefenseDetail: true,
-            inquiryOverride,
             suppressBranding,
           });
         } else {
@@ -3093,11 +2979,35 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
             ? [
                 "重要：主語が特定できていない。特定トピック（交際費・外注・出張手当など）の一般論・金額例・セーフ/アウト判断を出さない。一般整理は抽象度高く2行まで。",
                 "clarify では『〜円まで』など数値の線引き・セーフ/アウト判定を出さない。書くのは『判断軸』と『状況を特定するための質問』だけ。",
-                "最後の🔎確認は「やわらかい質問を1つ」だけ書く。質問は会話の流れに自然に繋がるものにする（詰問口調禁止）。",
-                "🔎確認の直後に、ユーザーが答えやすい「短い例」を1つだけ添える（例は1行、選択肢羅列は禁止）。",
+                "最後は『やわらかい質問を1つか３つ』で締める（詰問口調禁止）。",
+                "質問の直後に、ユーザーが答えやすい短い例を1つか２つだけ添える。",
                 "補足：picked_qa がある場合は、そのQAが示す判断軸（相手/目的/頻度/証憑/名義など）に沿った質問に寄せる（QA名やタイトルは書かない）。",
               ]
             : [];
+
+// ✅ 会話的な締め（LLMフリー / 記号なし / 深掘り誘導）
+const wantWarmClose =
+  gr.action === "none" &&
+  !suppressBranding &&
+  !usedLinesPick &&
+  !lineRequestEffective &&
+  !followupExplicit &&
+  !followupOnly &&
+  !weakUtterance &&
+  (
+    implicitShift ||
+    (topicMode === "llm" && llmOk && llmIntent === "clarify")
+  );
+
+        const warmCloseRule = wantWarmClose
+  ? [
+      "【締め】必要に応じて、回答の最後に自然な会話調で1〜3行の締めを付けてよい。",
+"【締め】記号やラベル（🔎・👉など）は使わない。箇条書きも禁止。",
+"【締め】話題が曖昧な場合のみ、一般論か税務論点かをやわらかく交通整理する。",
+"【締め】税務前提が明らかな場合は交通整理しない。代わりに、いま触れていない“近接論点”を1〜2個だけ示し、必要なら短い運用イメージ例を1つ添えて軽く問いかける。",
+"【締め】同じ軸を繰り返さない。例は1つだけ。断定や数字レンジは禁止。",
+    ].join("\n")
+  : null;
 
             const apportionmentExceptionRule =
   subjectTopic === "家事按分"
@@ -3132,6 +3042,7 @@ const noApportionmentBias: string[] = [
           injectedRules: [
             ...outputRules,
             ...clarifyBias,
+            ...(warmCloseRule ? [warmCloseRule] : []),
             ...(positiveCloseRule ? [positiveCloseRule] : []),
             ...SERVICE_BASE_RULES,
             ...(axisTopic === TOPIC_TAX_AUDIT ? [TAX_AUDIT_ROLE_SPLIT_RULE] : []),
@@ -3152,13 +3063,6 @@ const noApportionmentBias: string[] = [
           guardrails: gr.action === "inject" ? gr.guardrailLines : [],
         };
 
-        const inquiryOverride =
-          needTopicClarify
-            ? null
-            : auditAxis && subjectTopic && AUDIT_OVERLAY_TOPICS.has(subjectTopic)
-            ? inquiryLineWithAuditCTA(dialect, stance, subjectTopic)
-            : null;
-
         answer = await generateAnswerStrict({
           message,
           promptPartsBase,
@@ -3168,7 +3072,6 @@ const noApportionmentBias: string[] = [
           allowAttackDefenseDetail: allowAttackDefenseDetailEffective,
           subjectTopic,
           topicsNow,
-          inquiryOverride,
           llmIntent: topicMode === "llm" && llmOk ? llmIntent : null,
           suppressBranding,
         });
