@@ -27,16 +27,6 @@ type StatusOk = { ok: true; plan: string; used_talks: number | null; limit_talks
 type StatusNg = { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
 type StatusRes = StatusOk | StatusNg;
 
-type ChatOk = {
-  ok: true;
-  plan: string;
-  used_talks: number | null;
-  limit_talks: number | null;
-  conversation_id: string | null;
-  message: string;
-};
-type ChatNg = { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
-
 type ChatRes =
   | {
       ok: true;
@@ -59,7 +49,6 @@ type ChatRes =
       guardrail_block?: boolean;
       guardrail_action?: "block" | "inject" | "none";
     };
-
 
 type Dialect = "kansai" | "standard";
 type Stance = "zubatto" | "sanbo";
@@ -118,6 +107,9 @@ function renderBoldInline(text: string): ReactNode {
   return <>{out}</>;
 }
 
+/**
+ * 旧フォーマットの余計な締め文を削る保険（残しておく）
+ */
 function stripCatchphraseIfThreePatterns(content: string): string {
   const hasAttack = content.includes("🍚");
   const hasDefense = content.includes("🧂守り") || content.includes("🧂🥄") || content.includes("🧂 守り");
@@ -133,33 +125,10 @@ function stripCatchphraseIfThreePatterns(content: string): string {
   return lines.join("\n").trimEnd();
 }
 
-function lineStyle(line: string): React.CSSProperties {
-  const t = line.trimStart();
-  const isTitle =
-    t.startsWith("🥄") ||
-    t.startsWith("🧂") ||
-    t.startsWith("🍚") ||
-    t.startsWith("🧂🥄") ||
-    t.startsWith("🍚🥄");
-  if (!isTitle) return { whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 };
-
-  return {
-    whiteSpace: "pre-wrap",
-    overflowWrap: "anywhere",
-    lineHeight: 1.6,
-    fontWeight: 800,
-    background: "#eef5ff",
-    border: "1px solid #cfe0ff",
-    borderRadius: 10,
-    padding: "8px 10px",
-  };
-}
-
 function normalizeRole(x: unknown): Role {
   const r = String(x ?? "").trim().toLowerCase();
   return r === "user" ? "user" : "assistant";
 }
-
 function normalizeMessages(rows: any[]): MessageRow[] {
   return (rows ?? []).map((r) => ({
     id: String(r.id),
@@ -172,6 +141,79 @@ function normalizeMessages(rows: any[]): MessageRow[] {
 
 function isNearBottom(el: HTMLDivElement, px = 180) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < px;
+}
+
+function isHeadingLine(line: string): boolean {
+  const raw = line.trim();
+  if (!raw) return false;
+
+  // markdown headings
+  const t = raw.replace(/^#{1,6}\s*/, "").trim();
+
+  // bracketed heading like 【結論】
+  const t2 = t.replace(/^【/, "").replace(/】$/, "").trim();
+
+  // support "結論：" / "結論:" / "結論 -"
+  const key = t2.replace(/[：:：\-–—].*$/, "").trim();
+
+  if (key === "結論" || key === "要点" || key === "注意") return true;
+
+  // 旧絵文字見出しも「見出し扱い」に寄せる（背景ベタ塗りはしない）
+  if (
+    t2.startsWith("🥄") ||
+    t2.startsWith("🧂") ||
+    t2.startsWith("🍚") ||
+    t2.startsWith("🧂🥄") ||
+    t2.startsWith("🍚🥄")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function lineStyle(line: string): React.CSSProperties {
+  const t = line.trim();
+
+  // 見出し：薄い下線（ChatGPT寄せ）
+  if (isHeadingLine(line)) {
+    return {
+      whiteSpace: "pre-wrap",
+      overflowWrap: "anywhere",
+      lineHeight: 1.55,
+      fontWeight: 800,
+      color: "#111",
+      paddingBottom: 8,
+      marginTop: 6,
+      borderBottom: "1px solid #e5e7eb", // 薄い下線
+    };
+  }
+
+  return {
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+    lineHeight: 1.6,
+    color: "#111",
+  };
+}
+
+const WELCOME_SEEN_KEY = "chat:welcomeSeen:v1";
+
+/**
+ * ※文言はユーザーが後で整理する前提：仮のプレースホルダ
+ */
+const WELCOME_MESSAGE = [
+  "はじめまして、AI野口です。",
+  "税務は「攻め」「守り」「ちょうど良いライン」で整理します。",
+  "",
+  "口調は設定から固定できます（関西弁 / ズバっと など）。",
+  "お好みに応じて選んでください。",
+  "",
+  "まずは気になることを、そのまま書いてください。",
+].join("\n");
+
+function sleep(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms));
 }
 
 export default function ChatClient() {
@@ -187,10 +229,16 @@ export default function ChatClient() {
   const [limitTalks, setLimitTalks] = useState<number | null>(null);
 
   // 初期：標準語×参謀（保存があれば尊重）
-  const [dialect, setDialect] = useState<Dialect>(() => (loadLocal("chat:dialect") === "kansai" ? "kansai" : "standard"));
-  const [stance, setStance] = useState<Stance>(() => (loadLocal("chat:stance") === "zubatto" ? "zubatto" : "sanbo"));
+  const [dialect, setDialect] = useState<Dialect>(() =>
+    loadLocal("chat:dialect") === "kansai" ? "kansai" : "standard"
+  );
+  const [stance, setStance] = useState<Stance>(() =>
+    loadLocal("chat:stance") === "zubatto" ? "zubatto" : "sanbo"
+  );
 
   const [threads, setThreads] = useState<ThreadItem[]>([]);
+  const [threadsLoaded, setThreadsLoaded] = useState(false);
+
   const [activeConversationId, setActiveConversationId] = useState<string | null>(() => {
     const v = loadLocal("chat:activeConversationId");
     return v && isUuid(v) ? v : null;
@@ -200,14 +248,19 @@ export default function ChatClient() {
   const [input, setInput] = useState("");
 
   // UI
-  const [spMenuOpen, setSpMenuOpen] = useState(false);
   const [spThreadsOpen, setSpThreadsOpen] = useState(false);
-  const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
-  const [aiProfileOpen, setAiProfileOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerText, setComposerText] = useState("");
+
+  // AI野口アクション（タップでフルスクリーン遷移）
+  const [aiActionOpen, setAiActionOpen] = useState(false);
+  const [aiActionTarget, setAiActionTarget] = useState<{ messageId: string; text: string } | null>(null);
 
   // PC/Tablet: サイドバー畳む
-  const [sidebarMode, setSidebarMode] = useState<"open" | "collapsed">(
-    () => (loadLocal("chat:sidebar") === "collapsed" ? "collapsed" : "open")
+  const [sidebarMode, setSidebarMode] = useState<"open" | "collapsed">(() =>
+    loadLocal("chat:sidebar") === "collapsed" ? "collapsed" : "open"
   );
 
   // アバター表示保険（画像が出なくても丸が出る）
@@ -218,11 +271,11 @@ export default function ChatClient() {
   const shouldAutoScrollRef = useRef(true);
 
   const threadTouchRef = useRef<{ x: number; y: number; moved: boolean; id: string | null }>({
-  x: 0,
-  y: 0,
-  moved: false,
-  id: null,
-});
+    x: 0,
+    y: 0,
+    moved: false,
+    id: null,
+  });
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
 
@@ -231,7 +284,7 @@ export default function ChatClient() {
 
   const BTN: CSSProperties = {
     padding: "8px 12px",
-    borderRadius: 10,
+    borderRadius: 12,
     border: "1px solid #ddd",
     background: "#fff",
     cursor: "pointer",
@@ -271,6 +324,7 @@ export default function ChatClient() {
   const scrollBottom = () => {
     const el = msgsRef.current;
     if (!el) return;
+    // heavy scroll fix（今の実装のまま）
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         el.scrollTop = el.scrollHeight;
@@ -391,6 +445,8 @@ export default function ChatClient() {
     } catch (e: any) {
       if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "load threads failed");
+    } finally {
+      setThreadsLoaded(true);
     }
   };
 
@@ -431,15 +487,17 @@ export default function ChatClient() {
     setMessages([]);
     setErrMsg(null);
     setInput("");
+    setComposerText("");
+    setComposerOpen(false);
     setSpThreadsOpen(false);
-    setChatSettingsOpen(false);
+    setMenuOpen(false);
   };
 
   const selectThread = (id: string) => {
-  setActiveConversationId(id);
-  saveLocal("chat:activeConversationId", id);
-  setSpThreadsOpen(false); // SPは選んだら閉じる
-};
+    setActiveConversationId(id);
+    saveLocal("chat:activeConversationId", id);
+    setSpThreadsOpen(false);
+  };
 
   const renameThread = async () => {
     if (!activeConversationId) return;
@@ -466,7 +524,7 @@ export default function ChatClient() {
       if (error) throw error;
 
       setThreads((prev) => prev.map((t) => (t.id === activeConversationId ? { ...t, title } : t)));
-      setChatSettingsOpen(false);
+      setMenuOpen(false);
     } catch (e: any) {
       if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "rename failed");
@@ -480,14 +538,141 @@ export default function ChatClient() {
     return used < limitTalks;
   })();
 
-  const sendMessage = async () => {
-    const text = input.trim();
+  const badge = (() => {
+    if (!limitTalks) return `プラン: ${plan}`;
+    const used = usedTalks ?? 0;
+    const left = Math.max(0, limitTalks - used);
+    return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）`;
+  })();
+
+  const openUrl = (url: string) => {
+    if (url.startsWith("http")) window.open(url, "_blank", "noreferrer");
+    else window.location.href = url;
+  };
+
+  const doLogout = async () => {
+    await supabase.auth.signOut().catch(() => null);
+    clearChatUiState();
+    router.replace("/login");
+  };
+
+  const openComposer = () => {
+    if (!canSend) return;
+    setComposerText(input || "");
+    setComposerOpen(true);
+  };
+
+  const closeComposer = () => {
+    setComposerOpen(false);
+  };
+
+  const openAiActionsFor = (messageId: string, text: string) => {
+    setAiActionTarget({ messageId, text });
+    setAiActionOpen(true);
+  };
+
+  const doCopy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      window.alert("コピーしました。");
+    } catch {
+      window.alert("コピーに失敗しました。");
+    }
+  };
+
+  const doShare = async (text: string) => {
+    const nav: any = navigator as any;
+    try {
+      if (nav?.share) {
+        await nav.share({ text });
+        return;
+      }
+    } catch {
+      // ignore and fallback
+    }
+    // fallback: copy
+    await doCopy(text);
+  };
+
+  const typeOutAssistant = async (assistantId: string, fullText: string) => {
+    const full = String(fullText ?? "");
+    if (!full) return;
+
+    // コードブロックがあると刻むと読みにくいので一括
+    if (full.includes("```")) {
+      setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: full } : m)));
+      if (shouldAutoScrollRef.current) scrollBottom();
+      return;
+    }
+
+    const chars = Array.from(full);
+    const total = chars.length;
+
+    // ChatGPT体感寄せ：基準 30 chars/sec、長文は少し加速、冒頭は少し速い
+    let cps = 30;
+    if (total >= 800) cps *= 1.15;
+    if (total >= 1500) cps *= 1.25;
+
+    const basePerChar = 1000 / cps;
+    const boostChars = 60;
+    const boostFactor = 1.35;
+
+    let idx = 0;
+    let built = "";
+
+    while (idx < total) {
+      // chunk: 日本語は2文字、句読点/改行は1文字（間が作れる）
+      const next = chars[idx] ?? "";
+      let chunkLen = 2;
+
+      if (next === "\n") chunkLen = 1;
+      if ("。！？!?".includes(next)) chunkLen = 1;
+
+      // ちょいランダムっぽい揺れ（固定等速の機械感を消す）
+      if (chunkLen === 2 && Math.random() < 0.08) chunkLen = 3;
+
+      const chunk = chars.slice(idx, idx + chunkLen).join("");
+      idx += chunkLen;
+      built += chunk;
+
+      setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: built } : m)));
+
+      if (shouldAutoScrollRef.current) scrollBottom();
+
+      // delay計算
+      const isBoost = built.length <= boostChars;
+      const speed = isBoost ? cps * boostFactor : cps;
+      const perChar = 1000 / speed;
+      let delay = Math.ceil(perChar * chunk.length);
+
+      // 句読点/改行で小休止（“考えてる感”）
+      const last = chunk.slice(-1);
+      if ("。！？!?".includes(last)) delay += 140;
+      if (last === "\n") delay += 120;
+
+      // セクション見出しの直後（結論/要点/注意など）で少し間を空ける
+      if (last === "\n") {
+        const lines = built.split("\n");
+        const prevLine = (lines[lines.length - 2] ?? "").trim();
+        if (isHeadingLine(prevLine)) delay += 220;
+      }
+
+      await sleep(delay);
+    }
+  };
+
+  const sendMessage = async (overrideText?: string) => {
+    const text = String(overrideText ?? input).trim();
     if (!text) return;
 
     setErrMsg(null);
     setLoading(true);
     setThinking(true);
+
+    // どっちから送っても、入力値はクリア
     setInput("");
+    setComposerText("");
+    setComposerOpen(false);
 
     shouldAutoScrollRef.current = true;
 
@@ -539,48 +724,31 @@ export default function ChatClient() {
       scrollBottom();
 
       const full = String((json as any).message ?? "");
-      const parts = full
-        .split(/(?<=[。！？\n])/g)
-        .map((s) => s)
-        .filter((s) => s.length > 0);
-
-      await new Promise<void>((resolve) => {
-        let i = 0;
-        const tick = () => {
-          if (i >= parts.length) return resolve();
-          const chunk = parts[i++];
-          setMessages((prev) =>
-            prev.map((m) => (m.id === assistantId ? { ...m, content: (m.content ?? "") + chunk } : m))
-          );
-          shouldAutoScrollRef.current = true;
-          scrollBottom();
-          setTimeout(tick, 160);
-        };
-        tick();
-      });
+      await typeOutAssistant(assistantId, full);
 
       setPlan(json.plan);
-if (json.used_talks !== null && json.used_talks !== undefined) setUsedTalks(json.used_talks);
-if (json.limit_talks !== null && json.limit_talks !== undefined) setLimitTalks(json.limit_talks);
+      if (json.used_talks !== null && json.used_talks !== undefined) setUsedTalks(json.used_talks);
+      if (json.limit_talks !== null && json.limit_talks !== undefined) setLimitTalks(json.limit_talks);
 
       const convId = json.conversation_id && isUuid(json.conversation_id) ? json.conversation_id : null;
 
       if (convId && !activeConversationId) {
         setActiveConversationId(convId);
         saveLocal("chat:activeConversationId", convId);
-        setMessages((prev) => prev.map((m) => (m.conversation_id === "temp" ? { ...m, conversation_id: convId } : m)));
+        setMessages((prev) =>
+          prev.map((m) => (m.conversation_id === "temp" ? { ...m, conversation_id: convId } : m))
+        );
       }
 
       const effectiveConvId = convId || activeConversationId;
 
-if (isGuardrailBlock && !effectiveConvId) {
-  // DB再読込すると表示が消える可能性があるのでスキップ
-  return;
-}
+      if (isGuardrailBlock && !effectiveConvId) {
+        // DB再読込すると表示が消える可能性があるのでスキップ
+        return;
+      }
 
-await loadThreads();
-if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
-
+      await loadThreads();
+      if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
     } catch (e: any) {
       if (await handleAuthishError(e)) return;
       setErrMsg(String(e?.message || "send failed"));
@@ -588,27 +756,6 @@ if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
       setLoading(false);
       setThinking(false);
     }
-  };
-
-  const doLogout = async () => {
-    await supabase.auth.signOut().catch(() => null);
-    clearChatUiState();
-    router.replace("/login");
-  };
-
-  const activeTitle = (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
-  const canRename = Boolean(activeConversationId);
-
-  const badge = (() => {
-    if (!limitTalks) return "";
-    const used = usedTalks ?? 0;
-    const left = Math.max(0, limitTalks - used);
-    return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）`;
-  })();
-
-  const openUrl = (url: string) => {
-    if (url.startsWith("http")) window.open(url, "_blank", "noreferrer");
-    else window.location.href = url;
   };
 
   // 初回だけ保存（無い人だけ）
@@ -644,107 +791,80 @@ if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversationId]);
 
+  // ✅ 初回起動ウェルカム（ユーザー単位で1回だけ：localStorage）
+  useEffect(() => {
+    if (!threadsLoaded) return;
+    if (activeConversationId) return;
+    if (threads.length > 0) return;
+
+    const seen = loadLocal(WELCOME_SEEN_KEY);
+    if (seen === "1") return;
+
+    if (messages.length === 0) {
+      const welcome: MessageRow = {
+        id: "welcome",
+        conversation_id: "welcome",
+        role: "assistant",
+        content: WELCOME_MESSAGE,
+        created_at: new Date().toISOString(),
+      };
+      setMessages([welcome]);
+    }
+    saveLocal(WELCOME_SEEN_KEY, "1");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadsLoaded, activeConversationId, threads.length]);
+
+  const canRename = Boolean(activeConversationId);
+
   return (
     <div className="appRoot">
-      {/* ===== Header ===== */}
-      <div className="appHeader">
-        <div className="headerRow">
-          <div className="headerLeft">
-            <button
-              type="button"
-              className="spOnly iconBtn"
-              onPointerDown={(e) => { e.preventDefault(); setSpThreadsOpen(true); }}
-              onTouchStart={(e) => { e.preventDefault(); setSpThreadsOpen(true); }}
-              aria-label="スレッドを開く"
-            >
-              ☰
-            </button>
-          </div>
-
-          <div className="headerCenter">
-            <div className={yuji.className} style={{ fontSize: 30, letterSpacing: "0.12em", fontWeight: 400, lineHeight: 1, whiteSpace: "nowrap" }}>
-              さじかげん 🍚🥄
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#666", whiteSpace: "nowrap" }}>
-              税務相談～あなたの欲しいちょうどいい～
-            </div>
-          </div>
-
-          <div className="headerRight">
-            <div className="pcOnly headerBtns">
-              <Link href="/settings/billing" style={LINK_BTN}>プラン変更</Link>
-              <a href={CONTACT_URL} style={LINK_BTN} target={CONTACT_URL.startsWith("http") ? "_blank" : undefined} rel="noreferrer">
-                お問い合わせ
-              </a>
-              <button type="button" onPointerDown={(e) => { e.preventDefault(); doLogout(); }} onTouchStart={(e) => { e.preventDefault(); doLogout(); }} style={BTN}>
-                ログアウト
-              </button>
-            </div>
-
-            <button
-              type="button"
-              className="spOnly iconBtn"
-              onPointerDown={(e) => { e.preventDefault(); setSpMenuOpen(true); }}
-              onTouchStart={(e) => { e.preventDefault(); setSpMenuOpen(true); }}
-              aria-label="メニューを開く"
-            >
-              ⋯
-            </button>
-          </div>
-        </div>
-
-        <div className="badgeRow">
-          <div className="badgeBox">
-            <div className="badgeText" style={{ fontWeight: 800 }}>{badge || "プラン: (loading)"}</div>
-            <button
-              type="button"
-              onPointerDown={(e) => { e.preventDefault(); refreshStatus(); }}
-              onTouchStart={(e) => { e.preventDefault(); refreshStatus(); }}
-              style={{ ...BTN, minWidth: 78 }}
-            >
-              更新
-            </button>
-          </div>
-        </div>
-
-        {errMsg && <div style={{ marginTop: 8, color: "#b00020", fontSize: 13 }}>{errMsg}</div>}
-      </div>
-
       {/* ===== Body ===== */}
       <div className="appBody">
         <div className="shell">
           {/* PC/Tablet: 左スレッド（畳める） */}
           <div className={`threadCol pcOnly ${sidebarMode === "collapsed" ? "collapsed" : ""}`}>
-            <div style={{ padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #eee" }}>
+            <div className="threadColTop">
               <div style={{ fontWeight: 900 }}>スレッド</div>
-              <button type="button" onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }} style={BTN}>
+              <button
+                type="button"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  newThread();
+                }}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  newThread();
+                }}
+                style={BTN}
+              >
                 新規
               </button>
             </div>
 
-            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 10, background: "#fafafa" }}>
+            <div className="threadList">
               {threads.map((t) => {
                 const active = t.id === activeConversationId;
                 return (
                   <button
                     key={t.id}
                     type="button"
-                    onPointerDown={(e) => { e.preventDefault(); setActiveConversationId(t.id); saveLocal("chat:activeConversationId", t.id); }}
-                    onTouchStart={(e) => { e.preventDefault(); setActiveConversationId(t.id); saveLocal("chat:activeConversationId", t.id); }}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      padding: 10,
-                      marginBottom: 8,
-                      borderRadius: 10,
-                      border: active ? "2px solid #9dbbff" : "1px solid #e5e5e5",
-                      background: active ? "#eef5ff" : "#fff",
-                      cursor: "pointer",
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      setActiveConversationId(t.id);
+                      saveLocal("chat:activeConversationId", t.id);
                     }}
+                    onTouchStart={(e) => {
+                      e.preventDefault();
+                      setActiveConversationId(t.id);
+                      saveLocal("chat:activeConversationId", t.id);
+                    }}
+                    className={`threadItem ${active ? "active" : ""}`}
                   >
-                    <div style={{ fontWeight: 900, marginBottom: 6 }}>{t.title}</div>
-                    <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>{toJstLabel(t.createdAt)} {toHm(t.createdAt)}</div>
-                    <div style={{ fontSize: 12, color: t.preview ? "#333" : "#999" }}>{t.preview || "(プレビューなし)"}</div>
+                    <div className="threadTitle">{t.title}</div>
+                    <div className="threadMeta">
+                      {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
+                    </div>
+                    <div className="threadPreview">{t.preview || "(プレビューなし)"}</div>
                   </button>
                 );
               })}
@@ -753,46 +873,88 @@ if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
 
           {/* 右：チャット本体 */}
           <div className="chatCol">
-            <div className="chatTopBar">
-              <div className="chatTopLeft">
+            {/* ✅ 1行ヘッダー（ChatGPT寄せ） */}
+            <div className="topBar">
+              <div className="topLeft">
+                {/* SP: ←でスレッド */}
                 <button
                   type="button"
-                  className="pcOnly iconBtnSmall"
-                  onPointerDown={(e) => { e.preventDefault(); setSidebarMode((p) => (p === "open" ? "collapsed" : "open")); }}
-                  onTouchStart={(e) => { e.preventDefault(); setSidebarMode((p) => (p === "open" ? "collapsed" : "open")); }}
+                  className="spOnly topIconBtn"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    setSpThreadsOpen(true);
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    setSpThreadsOpen(true);
+                  }}
+                  aria-label="スレッドを開く"
+                  title="スレッド"
+                >
+                  ←
+                </button>
+
+                {/* PC: ☰でサイドバー切替 */}
+                <button
+                  type="button"
+                  className="pcOnly topIconBtn"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    setSidebarMode((p) => (p === "open" ? "collapsed" : "open"));
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    setSidebarMode((p) => (p === "open" ? "collapsed" : "open"));
+                  }}
                   aria-label="スレッドサイドバー切替"
                   title="スレッド"
                 >
                   ☰
                 </button>
 
-                <div className="chatTitleLine">{activeTitle}</div>
+                <div className={`appTitle ${yuji.className}`} title="さじかげん">
+                  さじかげん
+                </div>
               </div>
 
-              <div className="chatTopRight">
+              <div className="topRight">
                 <button
                   type="button"
-                  className="hintLinkRight"
-                  onPointerDown={(e) => { e.preventDefault(); setChatSettingsOpen(true); }}
-                  onTouchStart={(e) => { e.preventDefault(); setChatSettingsOpen(true); }}
-                  title="口調選択/新規スレッド"
+                  className="topIconBtn"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    newThread();
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    newThread();
+                  }}
+                  aria-label="新規スレッド"
+                  title="新規スレッド"
                 >
-                  <span className="hintLong">口調選択/新規スレッド→</span>
-                  <span className="hintShort">口調/新規スレ→</span>
+                  ＋
                 </button>
 
                 <button
                   type="button"
-                  className="iconBtnSmall"
-                  onPointerDown={(e) => { e.preventDefault(); setChatSettingsOpen(true); }}
-                  onTouchStart={(e) => { e.preventDefault(); setChatSettingsOpen(true); }}
-                  aria-label="チャット設定"
-                  title="設定"
+                  className="topIconBtn"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    setMenuOpen(true);
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    setMenuOpen(true);
+                  }}
+                  aria-label="メニュー"
+                  title="メニュー"
                 >
-                  ⚙︎
+                  ⋯
                 </button>
               </div>
             </div>
+
+            {errMsg && <div className="errorLine">{errMsg}</div>}
 
             <div
               ref={msgsRef}
@@ -809,115 +971,111 @@ if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
                 const raw = String(m.content ?? "");
                 const content = isUser ? raw : stripCatchphraseIfThreePatterns(raw);
 
+                if (isUser) {
+                  return (
+                    <div key={m.id ?? idx} className="msgRow userRow">
+                      <div className="userBubble">
+                        <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 }}>
+                          {content}
+                        </div>
+                        <div className="msgTime">{toHm(m.created_at)}</div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // assistant
                 return (
-                  <div key={m.id ?? idx} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", margin: "10px 0" }}>
-                    <div
-                      style={{
-                        maxWidth: "86%",
-                        padding: "10px 12px",
-                        borderRadius: 12,
-                        border: "1px solid #e5e5e5",
-                        background: isUser ? "#eef5ff" : "#fff",
-                      }}
-                    >
-                      {isUser ? (
-                        <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.6 }}>{content}</div>
+                  <div key={m.id ?? idx} className="msgRow asstRow">
+                    <div className="asstAvatar">
+                      {aiAvatarOk ? (
+                        <img
+                          src={AI_AVATAR_URL}
+                          alt="AI野口"
+                          onClick={() => openAiActionsFor(m.id, content)}
+                          onError={() => setAiAvatarOk(false)}
+                          style={{
+                            width: 26,
+                            height: 26,
+                            display: "block",
+                            borderRadius: 999,
+                            objectFit: "cover",
+                            border: "1px solid #e5e5e5",
+                            cursor: "pointer",
+                          }}
+                        />
                       ) : (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                          {/* ✅ 回答枠の一番上に毎回：アイコン＋AI野口（税理士） */}
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            {aiAvatarOk ? (
-                              <img
-                                src={AI_AVATAR_URL}
-                                alt="AI野口"
-                                onClick={() => setAiProfileOpen(true)}
-                                onError={() => setAiAvatarOk(false)}
-                                style={{
-                                  width: 22,
-                                  height: 22,
-                                  minWidth: 22,
-                                  minHeight: 22,
-                                  display: "block",
-                                  borderRadius: 999,
-                                  objectFit: "cover",
-                                  border: "1px solid #e5e5e5",
-                                  cursor: "pointer",
-                                }}
-                              />
-                            ) : (
-                              <div
-                                onClick={() => setAiProfileOpen(true)}
-                                style={{
-                                  width: 22,
-                                  height: 22,
-                                  minWidth: 22,
-                                  minHeight: 22,
-                                  borderRadius: 999,
-                                  border: "1px solid #e5e5e5",
-                                  background: "#fff",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  fontSize: 12,
-                                  cursor: "pointer",
-                                }}
-                                aria-label="AI野口"
-                                title="AI野口"
-                              >
-                                🤖
-                              </div>
-                            )}
+                        <div
+                          onClick={() => openAiActionsFor(m.id, content)}
+                          style={{
+                            width: 26,
+                            height: 26,
+                            borderRadius: 999,
+                            border: "1px solid #e5e5e5",
+                            background: "#fff",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 12,
+                            cursor: "pointer",
+                          }}
+                          aria-label="AI野口"
+                          title="AI野口"
+                        >
+                          🤖
+                        </div>
+                      )}
+                    </div>
 
-                            <button
-                              type="button"
-                              onPointerDown={(e) => { e.preventDefault(); setAiProfileOpen(true); }}
-                              onTouchStart={(e) => { e.preventDefault(); setAiProfileOpen(true); }}
-                              style={{
-                                border: "none",
-                                background: "transparent",
-                                padding: 0,
-                                cursor: "pointer",
-                                fontWeight: 900,
-                                fontSize: 13,
-                                color: "#111",
-                              }}
-                            >
-                              AI野口（税理士）
-                            </button>
-                          </div>
+                    <div className="asstBody">
+                      <div className="asstNameLine">
+                        <button
+                          type="button"
+                          onPointerDown={(e) => {
+                            e.preventDefault();
+                            openAiActionsFor(m.id, content);
+                          }}
+                          onTouchStart={(e) => {
+                            e.preventDefault();
+                            openAiActionsFor(m.id, content);
+                          }}
+                          className="asstNameBtn"
+                        >
+                          AI野口（税理士）
+                        </button>
+                        <span className="asstTime">{toHm(m.created_at)}</span>
+                      </div>
 
-                          {content.replace(/\r\n/g, "\n").split("\n").map((line, i) => {
-                            if (!line.trim()) return <div key={i} style={{ height: 4 }} />;
+                      <div className="asstText">
+                        {content
+                          .replace(/\r\n/g, "\n")
+                          .split("\n")
+                          .map((line, i) => {
+                            if (!line.trim()) return <div key={i} style={{ height: 6 }} />;
                             return (
                               <div key={i} style={lineStyle(line)}>
                                 {renderBoldInline(line)}
                               </div>
                             );
                           })}
+                      </div>
+
+                      {/* 生成中のカーソルっぽさ（空の時だけ） */}
+                      {thinking && String(m.content ?? "").length === 0 && (
+                        <div className="typingDots" aria-hidden="true">
+                          <span className="dots">...</span>
                         </div>
                       )}
-
-                      <div style={{ fontSize: 11, color: "#777", marginTop: 8, textAlign: "right" }}>{toHm(m.created_at)}</div>
                     </div>
                   </div>
                 );
               })}
-
-              {thinking && (
-                <div style={{ display: "flex", justifyContent: "flex-start", margin: "10px 0" }}>
-                  <div style={{ maxWidth: "86%", padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e5e5", background: "#fff" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#666" }}>
-                      <span>考え中</span>
-                      <span className="dots" aria-hidden="true">...</span>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* 入力欄（注意文言は下） */}
+            {/* 入力欄（PCはその場、SPは押してComposerへ） */}
             <div className="chatInputWrap">
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              {/* PC */}
+              <div className="pcOnly" style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -927,261 +1085,507 @@ if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
                       if (canSend) sendMessage();
                     }
                   }}
-                  placeholder="相談内容を入力（Enterで送信）"
-                  style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd" }}
+                  placeholder={loading ? "回答中…" : "相談内容を入力（Enterで送信）"}
+                  style={{ flex: 1, padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd" }}
                   disabled={!canSend}
                 />
+
+                {/* ✅ 送信は矢印のみ */}
                 <button
                   type="button"
-                  onPointerDown={(e) => { e.preventDefault(); if (canSend) sendMessage(); }}
-                  onTouchStart={(e) => { e.preventDefault(); if (canSend) sendMessage(); }}
-                  disabled={!canSend}
-                  style={{
-                    padding: "10px 16px",
-                    borderRadius: 10,
-                    border: "1px solid #ddd",
-                    background: "#fff",
-                    cursor: !canSend ? "not-allowed" : "pointer",
-                    opacity: !canSend ? 0.6 : 1,
-                    whiteSpace: "nowrap",
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    if (canSend) sendMessage();
                   }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    if (canSend) sendMessage();
+                  }}
+                  disabled={!canSend}
+                  className="sendArrowBtn"
+                  aria-label="送信"
+                  title="送信"
                 >
-                  送信
+                  ↗︎
                 </button>
               </div>
 
-              <div className="disclaimerBottom">
-                ※ AIの回答は参考情報です。最終判断はご自身でお願いします。
-              </div>
+              {/* SP */}
+              <button
+                type="button"
+                className="spOnly inputDock"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  openComposer();
+                }}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  openComposer();
+                }}
+                disabled={!canSend}
+                aria-label="入力を開く"
+                title="入力"
+              >
+                <span className="dockPlaceholder">{loading ? "回答中…" : "相談内容を入力"}</span>
+                <span className="dockArrow">↗︎</span>
+              </button>
+
+              <div className="disclaimerBottom">※ AIの回答は参考情報です。最終判断はご自身でお願いします。</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ===== SP: スレッド（全画面） ===== */}
+      {/* ===== SP: スレッド（フルスクリーン） ===== */}
       {spThreadsOpen && (
-        <div className="overlay" role="dialog" aria-modal="true">
-          <div className="overlaySheet">
-            <div className="overlayTop">
+        <div className="overlay overlayWhite" role="dialog" aria-modal="true">
+          <div className="fullSheet">
+            <div className="fullTopBar">
+              <button
+                type="button"
+                className="topIconBtn"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  setSpThreadsOpen(false);
+                }}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  setSpThreadsOpen(false);
+                }}
+                aria-label="戻る"
+                title="戻る"
+              >
+                ←
+              </button>
               <div style={{ fontWeight: 900 }}>スレッド</div>
-              <div style={{ display: "flex", gap: 8, justifyContent: "center", width: "100%" }}>
-                <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }}>
-                  新規
-                </button>
-                <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); setSpThreadsOpen(false); }} onTouchStart={(e) => { e.preventDefault(); setSpThreadsOpen(false); }}>
-                  閉じる
-                </button>
-              </div>
+              <button
+                type="button"
+                className="topIconBtn"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  newThread();
+                }}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  newThread();
+                }}
+                aria-label="新規"
+                title="新規"
+              >
+                ＋
+              </button>
             </div>
 
-            <div
-  style={{
-    padding: 10,
-    overflowY: "auto",
-    flex: 1,
-    background: "#fafafa",
-    touchAction: "pan-y",
-    WebkitOverflowScrolling: "touch",
-  }}
->
-
+            <div className="fullList">
               {threads.map((t) => {
                 const active = t.id === activeConversationId;
                 return (
                   <button
-  key={t.id}
-  type="button"
-  onPointerDown={(e) => {
-    // touch のときだけ「タップ/スクロール判定」を使う
-    const pt = (e as any).pointerType;
-    if (pt && pt !== "touch") return;
+                    key={t.id}
+                    type="button"
+                    onPointerDown={(e) => {
+                      const pt = (e as any).pointerType;
+                      if (pt && pt !== "touch") return;
 
-    threadTouchRef.current = {
-      x: e.clientX,
-      y: e.clientY,
-      moved: false,
-      id: t.id,
-    };
-  }}
-  onPointerMove={(e) => {
-    const pt = (e as any).pointerType;
-    if (pt && pt !== "touch") return;
+                      threadTouchRef.current = {
+                        x: e.clientX,
+                        y: e.clientY,
+                        moved: false,
+                        id: t.id,
+                      };
+                    }}
+                    onPointerMove={(e) => {
+                      const pt = (e as any).pointerType;
+                      if (pt && pt !== "touch") return;
 
-    const dx = Math.abs(e.clientX - threadTouchRef.current.x);
-    const dy = Math.abs(e.clientY - threadTouchRef.current.y);
-    if (dx > 10 || dy > 10) threadTouchRef.current.moved = true;
-  }}
-  onPointerUp={(e) => {
-    const pt = (e as any).pointerType;
-    if (pt && pt !== "touch") return;
+                      const dx = Math.abs(e.clientX - threadTouchRef.current.x);
+                      const dy = Math.abs(e.clientY - threadTouchRef.current.y);
+                      if (dx > 10 || dy > 10) threadTouchRef.current.moved = true;
+                    }}
+                    onPointerUp={(e) => {
+                      const pt = (e as any).pointerType;
+                      if (pt && pt !== "touch") return;
 
-    const st = threadTouchRef.current;
-    if (!st.moved && st.id) {
-      e.preventDefault();
-      selectThread(st.id);
-    }
-    threadTouchRef.current.id = null;
-  }}
-  onClick={(e) => {
-    // PCブラウザ等は click で普通に選べる
-    e.preventDefault();
-    selectThread(t.id);
-  }}
-  style={{
-    width: "100%",
-    textAlign: "left",
-    padding: 10,
-    marginBottom: 8,
-    borderRadius: 10,
-    border: active ? "2px solid #9dbbff" : "1px solid #e5e5e5",
-    background: active ? "#eef5ff" : "#fff",
-    cursor: "pointer",
-    touchAction: "pan-y",
-  }}
->
-  <div style={{ fontWeight: 900, marginBottom: 6 }}>{t.title}</div>
-  <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
-    {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
-  </div>
-  <div style={{ fontSize: 12, color: t.preview ? "#333" : "#999" }}>
-    {t.preview || "(プレビューなし)"}
-  </div>
-</button>
+                      const st = threadTouchRef.current;
+                      if (!st.moved && st.id) {
+                        e.preventDefault();
+                        selectThread(st.id);
+                      }
+                      threadTouchRef.current.id = null;
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      selectThread(t.id);
+                    }}
+                    className={`threadItemFull ${active ? "active" : ""}`}
+                  >
+                    <div className="threadTitle">{t.title}</div>
+                    <div className="threadMeta">
+                      {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
+                    </div>
+                    <div className="threadPreview">{t.preview || "(プレビューなし)"}</div>
+                  </button>
                 );
               })}
+              {threads.length === 0 && (
+                <div style={{ padding: 16, color: "#666", fontSize: 13 }}>スレッドがありません。右上の「＋」で作れます。</div>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* ===== SP: 右上メニュー ===== */}
-      {spMenuOpen && (
-        <div className="overlay" role="dialog" aria-modal="true" onPointerDown={() => setSpMenuOpen(false)}>
+      {/* ===== メニュー（…） ===== */}
+      {menuOpen && (
+        <div className="overlay" role="dialog" aria-modal="true" onPointerDown={() => setMenuOpen(false)}>
           <div className="menuSheet" onPointerDown={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, borderBottom: "1px solid #eee" }}>
+            <div className="sheetTop">
               <div style={{ fontWeight: 900 }}>メニュー</div>
-              <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); setSpMenuOpen(false); }} onTouchStart={(e) => { e.preventDefault(); setSpMenuOpen(false); }}>
+              <button
+                type="button"
+                style={BTN}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  setMenuOpen(false);
+                }}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  setMenuOpen(false);
+                }}
+              >
                 閉じる
               </button>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12 }}>
-              <Link href="/settings/billing" style={{ ...LINK_BTN, width: "100%" }} onClick={() => setSpMenuOpen(false)}>
-                プラン変更
-              </Link>
-              <button type="button" style={{ ...BTN, width: "100%" }} onPointerDown={(e) => { e.preventDefault(); setSpMenuOpen(false); openUrl(CONTACT_URL); }} onTouchStart={(e) => { e.preventDefault(); setSpMenuOpen(false); openUrl(CONTACT_URL); }}>
-                お問い合わせ
-              </button>
-              <button type="button" style={{ ...BTN, width: "100%" }} onPointerDown={(e) => { e.preventDefault(); setSpMenuOpen(false); doLogout(); }} onTouchStart={(e) => { e.preventDefault(); setSpMenuOpen(false); doLogout(); }}>
-                ログアウト
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ===== Chat設定（⚙︎/口調選択） ===== */}
-      {chatSettingsOpen && (
-        <div className="overlay" role="dialog" aria-modal="true" onPointerDown={() => setChatSettingsOpen(false)}>
-          <div className="menuSheet" onPointerDown={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, borderBottom: "1px solid #eee" }}>
-              <div style={{ fontWeight: 900 }}>チャット設定</div>
-              <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); setChatSettingsOpen(false); }} onTouchStart={(e) => { e.preventDefault(); setChatSettingsOpen(false); }}>
-                閉じる
-              </button>
+            {/* プラン */}
+            <div className="sheetSection">
+              <div className="sheetLabel">利用状況</div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ fontSize: 12, color: "#333", fontWeight: 800 }}>{badge}</div>
+                <button
+                  type="button"
+                  style={{ ...BTN, minWidth: 78 }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    refreshStatus();
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    refreshStatus();
+                  }}
+                >
+                  更新
+                </button>
+              </div>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: 12 }}>
+            {/* スレッド */}
+            <div className="sheetSection">
+              <div className="sheetLabel">スレッド</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            
-                <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); newThread(); }} onTouchStart={(e) => { e.preventDefault(); newThread(); }}>
+                <button
+                  type="button"
+                  style={BTN}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    newThread();
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    newThread();
+                  }}
+                >
                   新規スレッド
                 </button>
 
                 <button
                   type="button"
                   style={{ ...BTN, opacity: canRename ? 1 : 0.5, cursor: canRename ? "pointer" : "not-allowed" }}
-                  onPointerDown={(e) => { e.preventDefault(); if (canRename) renameThread(); }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    if (canRename) renameThread();
+                  }}
                   aria-disabled={!canRename}
                 >
                   タイトル変更
                 </button>
+              </div>
+            </div>
+
+            {/* 口調 */}
+            <div className="sheetSection">
+              <div className="sheetLabel">口調</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  style={toggleBtn(dialect === "standard")}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    setDialect("standard");
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    setDialect("standard");
+                  }}
+                >
+                  標準語
+                </button>
+                <button
+                  type="button"
+                  style={toggleBtn(dialect === "kansai")}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    setDialect("kansai");
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    setDialect("kansai");
+                  }}
+                >
+                  関西弁
+                </button>
+              </div>
+            </div>
+
+            {/* モード */}
+            <div className="sheetSection">
+              <div className="sheetLabel">モード</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  style={toggleBtn(stance === "sanbo")}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    setStance("sanbo");
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    setStance("sanbo");
+                  }}
+                >
+                  参謀
+                </button>
+                <button
+                  type="button"
+                  style={toggleBtn(stance === "zubatto")}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    setStance("zubatto");
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    setStance("zubatto");
+                  }}
+                >
+                  ズバっと
+                </button>
+              </div>
+            </div>
+
+            {/* 外部 */}
+            <div className="sheetSection">
+              <div className="sheetLabel">その他</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <Link href="/settings/billing" style={{ ...LINK_BTN, width: "100%" }} onClick={() => setMenuOpen(false)}>
+                  プラン変更
+                </Link>
 
                 <button
                   type="button"
-                  className="pcOnly"
-                  style={BTN}
-                  onPointerDown={(e) => { e.preventDefault(); setSidebarMode((p) => (p === "open" ? "collapsed" : "open")); }}
-                  onTouchStart={(e) => { e.preventDefault(); setSidebarMode((p) => (p === "open" ? "collapsed" : "open")); }}
+                  style={{ ...BTN, width: "100%" }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    setMenuOpen(false);
+                    openUrl(CONTACT_URL);
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    setMenuOpen(false);
+                    openUrl(CONTACT_URL);
+                  }}
                 >
-                  スレッド欄：{sidebarMode === "open" ? "表示中" : "非表示"}（切替）
+                  お問い合わせ
                 </button>
-              </div>
 
-              <div style={{ borderTop: "1px solid #eee", paddingTop: 12 }}>
-                <div style={{ fontWeight: 900, marginBottom: 8 }}>口調</div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <button type="button" style={toggleBtn(dialect === "standard")} onPointerDown={(e) => { e.preventDefault(); setDialect("standard"); }} onTouchStart={(e) => { e.preventDefault(); setDialect("standard"); }}>
-                    標準語
-                  </button>
-                  <button type="button" style={toggleBtn(dialect === "kansai")} onPointerDown={(e) => { e.preventDefault(); setDialect("kansai"); }} onTouchStart={(e) => { e.preventDefault(); setDialect("kansai"); }}>
-                    関西弁
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ borderTop: "1px solid #eee", paddingTop: 12 }}>
-                <div style={{ fontWeight: 900, marginBottom: 8 }}>モード</div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <button type="button" style={toggleBtn(stance === "sanbo")} onPointerDown={(e) => { e.preventDefault(); setStance("sanbo"); }} onTouchStart={(e) => { e.preventDefault(); setStance("sanbo"); }}>
-                    参謀
-                  </button>
-                  <button type="button" style={toggleBtn(stance === "zubatto")} onPointerDown={(e) => { e.preventDefault(); setStance("zubatto"); }} onTouchStart={(e) => { e.preventDefault(); setStance("zubatto"); }}>
-                    ズバっと
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  style={{ ...BTN, width: "100%" }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    setMenuOpen(false);
+                    doLogout();
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    setMenuOpen(false);
+                    doLogout();
+                  }}
+                >
+                  ログアウト
+                </button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ===== AI野口プロフィール ===== */}
-      {aiProfileOpen && (
+      {/* ===== SP: Composer（フルスクリーン入力） ===== */}
+      {composerOpen && (
+        <div className="composerOverlay" role="dialog" aria-modal="true">
+          <div className="composerTopBar">
+            <button
+              type="button"
+              className="topIconBtn"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                closeComposer();
+              }}
+              onTouchStart={(e) => {
+                e.preventDefault();
+                closeComposer();
+              }}
+              aria-label="戻る"
+              title="戻る"
+            >
+              ←
+            </button>
+
+            <div style={{ fontWeight: 900 }}>相談内容</div>
+
+            <button
+              type="button"
+              className={`topIconBtn ${!canSend || !composerText.trim() ? "disabled" : ""}`}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                if (!canSend) return;
+                if (!composerText.trim()) return;
+                sendMessage(composerText);
+              }}
+              onTouchStart={(e) => {
+                e.preventDefault();
+                if (!canSend) return;
+                if (!composerText.trim()) return;
+                sendMessage(composerText);
+              }}
+              aria-label="送信"
+              title="送信"
+              disabled={!canSend || !composerText.trim()}
+            >
+              ↗︎
+            </button>
+          </div>
+
+          <div className="composerBody">
+            <textarea
+              value={composerText}
+              onChange={(e) => setComposerText(e.target.value)}
+              placeholder="相談内容を入力してください"
+              className="composerTextarea"
+              autoFocus
+            />
+            <div className="composerHint">※ 口調はメニュー（⋯）から固定できます。</div>
+            <div className="composerDisclaimer">※ AIの回答は参考情報です。最終判断はご自身でお願いします。</div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== AI野口アクション（フルスクリーン遷移） ===== */}
+      {aiActionOpen && (
         <div className="overlay overlayProfile" role="dialog" aria-modal="true">
           <div className="profileSheet" onPointerDown={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, borderBottom: "1px solid #eee" }}>
+            <div className="fullTopBar">
               <div style={{ fontWeight: 900 }}>AI野口</div>
-              <button type="button" style={BTN} onPointerDown={(e) => { e.preventDefault(); setAiProfileOpen(false); }} onTouchStart={(e) => { e.preventDefault(); setAiProfileOpen(false); }}>
+              <button
+                type="button"
+                style={BTN}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  setAiActionOpen(false);
+                }}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  setAiActionOpen(false);
+                }}
+              >
                 閉じる
               </button>
             </div>
 
-            <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12, alignItems: "center", overflowY: "auto" }}>
+            <div className="profileBody">
               <img
                 src={AI_AVATAR_URL}
                 alt="AI野口"
                 style={{
-  width: "min(180px, 52vw)",
-  height: "min(180px, 52vw)",
-  borderRadius: "999px",
-  objectFit: "cover",
-  border: "1px solid #e5e5e5",
-}}
+                  width: "min(160px, 46vw)",
+                  height: "min(160px, 46vw)",
+                  borderRadius: "999px",
+                  objectFit: "cover",
+                  border: "1px solid #e5e5e5",
+                }}
               />
+
               <div style={{ textAlign: "center" }}>
                 <div style={{ fontWeight: 900, fontSize: 18 }}>AI野口（税理士）</div>
                 <div style={{ color: "#666", fontSize: 13, marginTop: 4 }}>税理士法人GLADZ 代表税理士 野口のAI</div>
               </div>
 
-              <button
-                type="button"
-                style={{ ...BTN, width: "100%", padding: "12px 12px" }}
-                onPointerDown={(e) => { e.preventDefault(); openUrl(CONTACT_URL); }}
-                onTouchStart={(e) => { e.preventDefault(); openUrl(CONTACT_URL); }}
-              >
-                お問い合わせ（AI野口に伝える）
-              </button>
+              {aiActionTarget?.text && (
+                <div className="answerPreview">
+                  <div className="previewLabel">対象の回答</div>
+                  <div className="previewText">{aiActionTarget.text}</div>
+                </div>
+              )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
+                <button
+                  type="button"
+                  style={{ ...BTN, width: "100%", padding: "12px 12px" }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    if (!aiActionTarget?.text) return;
+                    doCopy(aiActionTarget.text);
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    if (!aiActionTarget?.text) return;
+                    doCopy(aiActionTarget.text);
+                  }}
+                >
+                  コピー
+                </button>
+
+                <button
+                  type="button"
+                  style={{ ...BTN, width: "100%", padding: "12px 12px" }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    if (!aiActionTarget?.text) return;
+                    doShare(aiActionTarget.text);
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    if (!aiActionTarget?.text) return;
+                    doShare(aiActionTarget.text);
+                  }}
+                >
+                  共有
+                </button>
+
+                <button
+                  type="button"
+                  style={{ ...BTN, width: "100%", padding: "12px 12px" }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    openUrl(CONTACT_URL);
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    openUrl(CONTACT_URL);
+                  }}
+                >
+                  不適切な回答を報告 / 問い合わせ
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1190,113 +1594,96 @@ if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
       <style jsx global>{`
         .appRoot {
           height: 100dvh;
-          height: 100vh;
           display: flex;
           flex-direction: column;
           background: #fff;
           overflow: hidden;
         }
-
-        .appHeader {
-          padding: 10px 16px;
-          position: relative;
-          z-index: 30;
-          pointer-events: auto;
-          flex: 0 0 auto;
-        }
-
-        .headerRow {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-        .headerLeft, .headerRight {
-          flex: 1;
-          display: flex;
-          align-items: center;
-        }
-        .headerLeft { justify-content: flex-start; }
-        .headerRight { justify-content: flex-end; }
-
-        .headerCenter {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 6px;
-          text-align: center;
-          min-width: 0;
-        }
-
-        .headerBtns {
-          display: flex;
-          gap: 10px;
-          align-items: center;
-        }
-
-        .iconBtn {
-          padding: 8px 12px;
-          border-radius: 10px;
-          border: 1px solid #ddd;
-          background: #fff;
-          cursor: pointer;
-          white-space: nowrap;
-        }
-        .iconBtnSmall {
-  padding: 10px 12px;      /* ←少し大きく */
-  border-radius: 12px;
-  border: 1px solid #ddd;
-  background: #fff;
-  cursor: pointer;
-  white-space: nowrap;
-  font-size: 18px;         /* ←歯車を大きく */
-  line-height: 1;          /* ←縦のブレ防止 */
-}
-
-        .badgeRow {
-          margin-top: 10px;
-          display: flex;
-          justify-content: center;
-        }
-        .badgeBox {
-          width: min(1400px, 100%);
-          border: 1px solid #ddd;
-          border-radius: 12px;
-          padding: 10px 12px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 10px;
-        }
-        .badgeText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         .appBody {
           flex: 1 1 auto;
           min-height: 0;
           display: flex;
           justify-content: center;
-          padding: 0 16px 16px;
+          padding: 12px;
+          box-sizing: border-box;
         }
 
         .shell {
           width: min(1400px, 100%);
           border: 1px solid #ddd;
-          border-radius: 12px;
+          border-radius: 14px;
           display: flex;
           overflow: hidden;
           min-height: 0;
           background: #fff;
         }
 
+        .pcOnly {
+          display: flex;
+        }
+        .spOnly {
+          display: none;
+        }
+
+        /* ===== Thread Col ===== */
         .threadCol {
           width: 330px;
           border-right: 1px solid #eee;
           display: flex;
           flex-direction: column;
           min-height: 0;
+          background: #fff;
         }
-        .threadCol.collapsed { display: none; }
+        .threadCol.collapsed {
+          display: none;
+        }
 
+        .threadColTop {
+          padding: 12px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1px solid #eee;
+        }
+
+        .threadList {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          padding: 10px;
+          background: #fafafa;
+        }
+
+        .threadItem {
+          width: 100%;
+          text-align: left;
+          padding: 10px;
+          margin-bottom: 8px;
+          border-radius: 12px;
+          border: 1px solid #e5e5e5;
+          background: #fff;
+          cursor: pointer;
+        }
+        .threadItem.active {
+          border: 2px solid #c7d2fe;
+          background: #eef2ff;
+        }
+        .threadTitle {
+          font-weight: 900;
+          margin-bottom: 6px;
+        }
+        .threadMeta {
+          font-size: 12px;
+          color: #666;
+          margin-bottom: 4px;
+        }
+        .threadPreview {
+          font-size: 12px;
+          color: #333;
+        }
+
+        /* ===== Chat Col ===== */
         .chatCol {
           flex: 1;
           display: flex;
@@ -1305,20 +1692,20 @@ if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
           background: #fff;
         }
 
-        .chatTopBar {
-          padding: 10px 12px;
+        /* ✅ 1行ヘッダー */
+        .topBar {
+          padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
           border-bottom: 1px solid #eee;
           display: flex;
           justify-content: space-between;
           align-items: center;
           gap: 10px;
           background: #fff;
-          position: relative;
           z-index: 20;
           flex: 0 0 auto;
         }
 
-        .chatTopLeft {
+        .topLeft {
           display: flex;
           align-items: center;
           gap: 10px;
@@ -1326,140 +1713,396 @@ if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
           flex: 1;
         }
 
-        .chatTitleLine {
+        .appTitle {
+          font-size: 18px;
           font-weight: 900;
+          letter-spacing: 0.08em;
+          line-height: 1;
+          white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
-          white-space: nowrap;
-          min-width: 0;
         }
 
-        .chatTopRight { display: flex; gap: 10px; align-items: center; flex: 0 0 auto; }
+        .topRight {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex: 0 0 auto;
+        }
 
-        .hintLinkRight {
-          border: none;
-          background: transparent;
-          padding: 0;
-          color: #666;
-          font-size: 12px;
+        .topIconBtn {
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid #ddd;
+          background: #fff;
           cursor: pointer;
-          white-space: nowrap;
+          font-size: 18px;
+          line-height: 1;
         }
-        .hintShort { display: none; }
-        .hintLong { display: inline; }
+        .topIconBtn.disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .errorLine {
+          padding: 8px 12px;
+          color: #b00020;
+          font-size: 13px;
+          border-bottom: 1px solid #f3f4f6;
+        }
 
         .chatArea {
           flex: 1 1 auto;
           min-height: 0;
           overflow-y: auto;
-          padding: 12px 14px;
+          padding: 14px;
           background: #fff;
         }
 
+        /* Messages */
+        .msgRow {
+          margin: 12px 0;
+          display: flex;
+          width: 100%;
+        }
+        .userRow {
+          justify-content: flex-end;
+        }
+        .asstRow {
+          justify-content: flex-start;
+          gap: 10px;
+          align-items: flex-start;
+        }
+
+        .userBubble {
+          max-width: 86%;
+          padding: 10px 12px;
+          border-radius: 14px;
+          background: #f3f4f6;
+          color: #111;
+        }
+
+        .msgTime {
+          font-size: 11px;
+          color: #777;
+          margin-top: 8px;
+          text-align: right;
+        }
+
+        .asstAvatar {
+          flex: 0 0 auto;
+          margin-top: 2px;
+        }
+
+        .asstBody {
+          max-width: min(740px, 86%);
+          width: 100%;
+        }
+
+        .asstNameLine {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 6px;
+        }
+
+        .asstNameBtn {
+          border: none;
+          background: transparent;
+          padding: 0;
+          cursor: pointer;
+          font-weight: 900;
+          font-size: 13px;
+          color: #111;
+        }
+
+        .asstTime {
+          font-size: 11px;
+          color: #999;
+          white-space: nowrap;
+        }
+
+        .asstText {
+          font-size: 15px;
+        }
+
+        .typingDots {
+          margin-top: 6px;
+          color: #666;
+          font-size: 12px;
+        }
+
+        /* Input */
         .chatInputWrap {
           flex: 0 0 auto;
-          padding: 10px 12px 12px;
+          padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
           border-top: 1px solid #eee;
           background: #fff;
-          position: sticky;
-          bottom: 0;
+        }
+
+        .sendArrowBtn {
+          width: 44px;
+          height: 44px;
+          border-radius: 12px;
+          border: 1px solid #ddd;
+          background: #111;
+          color: #fff;
+          cursor: pointer;
+          font-size: 18px;
+          line-height: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .sendArrowBtn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .inputDock {
+          width: 100%;
+          border: 1px solid #ddd;
+          background: #fff;
+          border-radius: 14px;
+          padding: 12px 12px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          cursor: pointer;
+        }
+        .inputDock:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+        .dockPlaceholder {
+          color: #777;
+          font-size: 14px;
+        }
+        .dockArrow {
+          width: 32px;
+          height: 32px;
+          border-radius: 10px;
+          background: #111;
+          color: #fff;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 16px;
+          line-height: 1;
         }
 
         .disclaimerBottom {
-  padding-top: 10px;
-  font-size: 11px;       /* 12→11に */
-  color: #777;
-  white-space: nowrap;   /* 1行固定 */
-  overflow: hidden;
-  text-overflow: ellipsis; /* どうしても長い端末は…で切る */
-}
-
-        .pcOnly { display: flex; }
-        .spOnly { display: none; }
-
-        @media (max-width: 760px) {
-          .pcOnly { display: none !important; }
-          .spOnly { display: inline-flex !important; }
-
-          .appHeader { padding: 10px 12px; }
-          .appBody { padding: 0 12px 12px; }
-
-          .headerCenter > div:last-child { font-size: 12px !important; }
-          .hintLong { display: none; }
-          .hintShort { display: inline; }
-          
-          .chatTitleLine { max-width: 42vw; }
-
+          padding-top: 10px;
+          font-size: 11px;
+          color: #777;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
-        /* ===== Overlay（共通） ===== */
-.overlay {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+        /* ===== Overlay common ===== */
+        .overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.35);
+          z-index: 200;
+          display: flex;
+          align-items: flex-end;
+          justify-content: center;
+          padding: 12px;
+          box-sizing: border-box;
+        }
 
-  /* ✅ ヘッダーと衝突しない */
-  top: 120px;
+        .overlayWhite {
+          background: #fff;
+          padding: 0;
+          align-items: stretch;
+        }
 
-  background: rgba(0,0,0,0.35);
-  z-index: 200;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
+        .menuSheet {
+          width: min(560px, 100%);
+          background: #fff;
+          border-top-left-radius: 16px;
+          border-top-right-radius: 16px;
+          border: 1px solid #ddd;
+          border-bottom: none;
+          padding-bottom: calc(12px + env(safe-area-inset-bottom));
+          max-height: 90vh;
+          overflow: auto;
+        }
 
-  padding: 12px;
-  box-sizing: border-box;
-}
+        .sheetTop {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px;
+          border-bottom: 1px solid #eee;
+          position: sticky;
+          top: 0;
+          background: #fff;
+          z-index: 1;
+        }
 
-/* スレッド一覧の白カード */
-.overlaySheet {
-  width: min(760px, 100%);
-  max-height: 100%;
-  background: #fff;
-  border-radius: 16px;
-  border: 1px solid #ddd;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  margin: 0;
-}
+        .sheetSection {
+          padding: 12px;
+          border-top: 1px solid #eee;
+        }
 
-/* メニュー/設定の下からシート */
-.menuSheet {
-  width: min(560px, 100%);
-  background: #fff;
-  border-top-left-radius: 16px;
-  border-top-right-radius: 16px;
-  border: 1px solid #ddd;
-  border-bottom: none;
-}
+        .sheetLabel {
+          font-weight: 900;
+          margin-bottom: 8px;
+        }
 
-/* ===== プロフィールだけは完全フルスクリーン（後ろを見せない） ===== */
-.overlayProfile {
-  top: 0 !important;
-  background: #fff !important;
-  padding: 0 !important;
-  align-items: stretch !important;
-}
+        /* ===== Full-screen sheet (Threads / Profile) ===== */
+        .fullSheet {
+          width: 100%;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+          background: #fff;
+        }
 
-.overlayProfile .profileSheet {
-  width: 100% !important;
-  height: 100% !important;
-  margin: 0 !important;
-  border-radius: 0 !important;
-  border: none !important;
-  box-shadow: none !important;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
+        .fullTopBar {
+          padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+          border-bottom: 1px solid #eee;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          background: #fff;
+          z-index: 10;
+          flex: 0 0 auto;
+        }
 
-/* もう使わない（残ってても害は少ないけど、消してOK） */
-.overlayDark {
-  /* background: rgba(0,0,0,0.55); */
-}
+        .fullList {
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow-y: auto;
+          padding: 12px;
+          background: #fafafa;
+        }
 
+        .threadItemFull {
+          width: 100%;
+          text-align: left;
+          padding: 10px;
+          margin-bottom: 8px;
+          border-radius: 12px;
+          border: 1px solid #e5e5e5;
+          background: #fff;
+          cursor: pointer;
+        }
+        .threadItemFull.active {
+          border: 2px solid #c7d2fe;
+          background: #eef2ff;
+        }
+
+        /* ===== Composer ===== */
+        .composerOverlay {
+          position: fixed;
+          inset: 0;
+          background: #fff;
+          z-index: 260;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .composerTopBar {
+          padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+          border-bottom: 1px solid #eee;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          background: #fff;
+        }
+
+        .composerBody {
+          flex: 1 1 auto;
+          min-height: 0;
+          padding: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          padding-bottom: calc(12px + env(safe-area-inset-bottom));
+        }
+
+        .composerTextarea {
+          width: 100%;
+          flex: 1;
+          border: 1px solid #ddd;
+          border-radius: 14px;
+          padding: 12px;
+          font-size: 16px;
+          line-height: 1.55;
+          resize: none;
+          outline: none;
+        }
+
+        .composerHint {
+          font-size: 12px;
+          color: #666;
+        }
+        .composerDisclaimer {
+          font-size: 11px;
+          color: #777;
+        }
+
+        /* ===== Profile overlay (full white) ===== */
+        .overlayProfile {
+          background: #fff !important;
+          padding: 0 !important;
+          align-items: stretch !important;
+        }
+
+        .profileSheet {
+          width: 100%;
+          height: 100%;
+          margin: 0;
+          border-radius: 0;
+          border: none;
+          box-shadow: none;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          background: #fff;
+        }
+
+        .profileBody {
+          padding: 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          align-items: center;
+          overflow-y: auto;
+          padding-bottom: calc(14px + env(safe-area-inset-bottom));
+        }
+
+        .answerPreview {
+          width: min(720px, 100%);
+          border: 1px solid #eee;
+          border-radius: 14px;
+          padding: 12px;
+          background: #fafafa;
+        }
+        .previewLabel {
+          font-size: 12px;
+          font-weight: 900;
+          color: #111;
+          margin-bottom: 8px;
+        }
+        .previewText {
+          font-size: 13px;
+          color: #111;
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+          line-height: 1.55;
+          max-height: 42vh;
+          overflow: auto;
+        }
+
+        /* Dots */
         .dots {
           display: inline-block;
           width: 18px;
@@ -1467,11 +2110,45 @@ if (effectiveConvId) await loadMessages(effectiveConvId, { silent: true });
           animation: dotty 1.2s infinite steps(4, end);
         }
         @keyframes dotty {
-          0% { width: 0; }
-          25% { width: 6px; }
-          50% { width: 12px; }
-          75% { width: 18px; }
-          100% { width: 0; }
+          0% {
+            width: 0;
+          }
+          25% {
+            width: 6px;
+          }
+          50% {
+            width: 12px;
+          }
+          75% {
+            width: 18px;
+          }
+          100% {
+            width: 0;
+          }
+        }
+
+        @media (max-width: 760px) {
+          .pcOnly {
+            display: none !important;
+          }
+          .spOnly {
+            display: inline-flex !important;
+          }
+
+          .appBody {
+            padding: 0;
+          }
+
+          .shell {
+            width: 100%;
+            height: 100%;
+            border: none;
+            border-radius: 0;
+          }
+
+          .chatArea {
+            padding: 12px;
+          }
         }
       `}</style>
     </div>
