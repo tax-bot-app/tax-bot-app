@@ -53,6 +53,7 @@ type ChatRes =
 type Dialect = "kansai" | "standard";
 type Stance = "zubatto" | "sanbo";
 
+/** ===== utils ===== */
 function clamp(s: string, n: number) {
   const t = (s ?? "").replace(/\s+/g, " ").trim();
   return t.length <= n ? t : t.slice(0, n) + "…";
@@ -93,7 +94,6 @@ function saveLocal(key: string, val: string) {
     localStorage.setItem(key, val);
   } catch {}
 }
-
 function renderBoldInline(text: string): ReactNode {
   if (!text.includes("**")) return text;
   const parts = text.split("**");
@@ -106,7 +106,6 @@ function renderBoldInline(text: string): ReactNode {
   }
   return <>{out}</>;
 }
-
 function stripCatchphraseIfThreePatterns(content: string): string {
   const hasAttack = content.includes("🍚");
   const hasDefense = content.includes("🧂守り") || content.includes("🧂🥄") || content.includes("🧂 守り");
@@ -121,7 +120,6 @@ function stripCatchphraseIfThreePatterns(content: string): string {
   }
   return lines.join("\n").trimEnd();
 }
-
 function normalizeRole(x: unknown): Role {
   const r = String(x ?? "").trim().toLowerCase();
   return r === "user" ? "user" : "assistant";
@@ -135,31 +133,29 @@ function normalizeMessages(rows: any[]): MessageRow[] {
     created_at: String(r.created_at),
   })) as MessageRow[];
 }
-
-function isNearBottom(el: HTMLDivElement, px = 180) {
+function isNearBottom(el: HTMLDivElement, px = 220) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < px;
 }
-
 function isHeadingLine(line: string): boolean {
   const raw = line.trim();
   if (!raw) return false;
-
   const t = raw.replace(/^#{1,6}\s*/, "").trim();
   const t2 = t.replace(/^【/, "").replace(/】$/, "").trim();
   const key = t2.replace(/[：:：\-–—].*$/, "").trim();
-
-  return key === "結論" || key === "要点" || key === "注意";
+  // 見出し扱いを増やす（あなたの回答例に合わせる）
+  if (key === "結論" || key === "要点" || key === "注意") return true;
+  if (t2.startsWith("✅") || t2.startsWith("🔎") || t2.startsWith("🍚") || t2.startsWith("🧂") || t2.startsWith("🥄")) return true;
+  return false;
 }
-
 function lineStyle(line: string): React.CSSProperties {
   const t = line.trim();
-  if (!t) return { height: 6 } as any;
+  if (!t) return { height: 10 } as any;
 
   if (isHeadingLine(line)) {
     return {
       whiteSpace: "pre-wrap",
       overflowWrap: "anywhere",
-      lineHeight: 1.55,
+      lineHeight: 1.7,
       fontWeight: 800,
       color: "#111",
       paddingBottom: 8,
@@ -171,26 +167,27 @@ function lineStyle(line: string): React.CSSProperties {
   return {
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",
-    lineHeight: 1.6,
+    lineHeight: 1.75,
     color: "#111",
   };
 }
-
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
 
-const WELCOME_SEEN_KEY = "chat:welcomeSeen:v2";
+/** ===== constants ===== */
+const WELCOME_SEEN_KEY = "chat:welcomeSeen:v3";
+const PINS_KEY = "chat:pins:v1";
 const WELCOME_MESSAGE = [
   "はじめまして、AI野口です。",
   "税務は「攻め」「守り」「ちょうど良いライン」で整理します。",
   "",
-  "口調は設定から固定できます（関西弁 / ズバっと など）。",
-  "お好みに応じて選んでください。",
+  "口調はメニュー（⋯）から固定できます（関西弁 / ズバっと など）。",
   "",
   "まずは気になることを、そのまま書いてください。",
 ].join("\n");
 
+/** ===== main ===== */
 export default function ChatClient() {
   const supabase = useMemo(() => getSupabaseClient(), []);
   const router = useRouter();
@@ -217,29 +214,49 @@ export default function ChatClient() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [input, setInput] = useState("");
 
-  // UI
+  // overlays
   const [threadsOverlayOpen, setThreadsOverlayOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // 全画面入力（任意：120文字以上でボタン表示）
+  // optional fullscreen editor (120+ chars)
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerText, setComposerText] = useState("");
 
-  // AI野口（フル画面）
+  // AI profile full screen (report/inquiry)
   const [aiProfileOpen, setAiProfileOpen] = useState(false);
   const [aiTargetText, setAiTargetText] = useState<string>("");
 
-  // PC/Tablet sidebar
+  // thread row menu (…)
+  const [threadMenuOpen, setThreadMenuOpen] = useState(false);
+  const [threadMenuTarget, setThreadMenuTarget] = useState<ThreadItem | null>(null);
+
+  // sidebar
   const [sidebarMode, setSidebarMode] = useState<"open" | "collapsed">(
     () => (loadLocal("chat:sidebar") === "collapsed" ? "collapsed" : "open")
   );
 
+  // avatar fallback
   const [aiAvatarOk, setAiAvatarOk] = useState(true);
+
+  // pins (local)
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
+    const raw = loadLocal(PINS_KEY);
+    if (!raw) return new Set();
+    try {
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr.map(String) : []);
+    } catch {
+      return new Set();
+    }
+  });
+
+  // toast
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<any>(null);
 
   const msgsRef = useRef<HTMLDivElement | null>(null);
   const redirectingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
-
   const [showJump, setShowJump] = useState(false);
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
@@ -273,6 +290,17 @@ export default function ChatClient() {
     whiteSpace: "nowrap",
   });
 
+  const showToast = (msg: string) => {
+    setToast(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 1200);
+  };
+
+  const savePins = (next: Set<string>) => {
+    setPinnedIds(new Set(next));
+    saveLocal(PINS_KEY, JSON.stringify(Array.from(next)));
+  };
+
   const clearChatUiState = () => {
     setThreads([]);
     setMessages([]);
@@ -293,10 +321,10 @@ export default function ChatClient() {
     }, 60);
   };
 
+  /** ===== auth helpers ===== */
   const getToken = async (): Promise<string | null> => {
     const { data, error } = await supabase.auth.getSession();
     if (!error && data.session?.access_token) return data.session.access_token;
-
     const refreshed = await supabase.auth.refreshSession().catch(() => null);
     return refreshed?.data?.session?.access_token ?? null;
   };
@@ -339,6 +367,7 @@ export default function ChatClient() {
     return false;
   };
 
+  /** ===== status / threads / messages ===== */
   const refreshStatus = async () => {
     setErrMsg(null);
     try {
@@ -388,6 +417,15 @@ export default function ChatClient() {
         createdAt: String(r.created_at),
         preview: r.last_content ? clamp(String(r.last_content), 36) : "",
       }));
+
+      // pinned first
+      const pinSet = pinnedIds;
+      items.sort((a, b) => {
+        const ap = pinSet.has(a.id) ? 1 : 0;
+        const bp = pinSet.has(b.id) ? 1 : 0;
+        if (ap !== bp) return bp - ap;
+        return 0;
+      });
 
       setThreads(items);
 
@@ -455,9 +493,8 @@ export default function ChatClient() {
     setThreadsOverlayOpen(false);
   };
 
-  const renameThread = async () => {
-    if (!activeConversationId) return;
-    const current = threads.find((t) => t.id === activeConversationId)?.title || "";
+  const renameThreadById = async (id: string) => {
+    const current = threads.find((t) => t.id === id)?.title || "";
     const next = window.prompt("スレッドのタイトルを入力", current);
     if (next == null) return;
     const title = next.trim();
@@ -474,17 +511,66 @@ export default function ChatClient() {
       const { error } = await supabase
         .from("conversations")
         .update({ summary: title, summary_updated_at: new Date().toISOString() })
-        .eq("id", activeConversationId)
+        .eq("id", id)
         .eq("user_id", userId);
 
       if (error) throw error;
 
-      setThreads((prev) => prev.map((t) => (t.id === activeConversationId ? { ...t, title } : t)));
-      setMenuOpen(false);
+      setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, title } : t)));
     } catch (e: any) {
       if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "rename failed");
     }
+  };
+
+  const deleteThreadById = async (id: string) => {
+    const ok = window.confirm("このスレッドを削除します。よろしいですか？");
+    if (!ok) return;
+
+    try {
+      const token = await getToken();
+      if (!token) return await handleAuthishError("Not logged in");
+
+      const { data: u, error: uErr } = await supabase.auth.getUser();
+      if (uErr || !u?.user?.id) return await handleAuthishError("Not logged in");
+      const userId = u.user.id;
+
+      // conversations を消す（messages は FK で cascade or trigger を期待）
+      const { error } = await supabase.from("conversations").delete().eq("id", id).eq("user_id", userId);
+      if (error) throw error;
+
+      // UI更新
+      setThreads((prev) => prev.filter((t) => t.id !== id));
+      const nextPins = new Set(pinnedIds);
+      nextPins.delete(id);
+      savePins(nextPins);
+
+      if (activeConversationId === id) {
+        newThread();
+        await loadThreads();
+      }
+    } catch (e: any) {
+      if (await handleAuthishError(e)) return;
+      setErrMsg(e?.message || "delete failed");
+    }
+  };
+
+  const togglePin = (id: string) => {
+    const next = new Set(pinnedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    savePins(next);
+    // 再ソート
+    setThreads((prev) => {
+      const items = [...prev];
+      items.sort((a, b) => {
+        const ap = next.has(a.id) ? 1 : 0;
+        const bp = next.has(b.id) ? 1 : 0;
+        if (ap !== bp) return bp - ap;
+        return 0;
+      });
+      return items;
+    });
   };
 
   const canSend = (() => {
@@ -515,8 +601,9 @@ export default function ChatClient() {
   const doCopy = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
+      showToast("コピーしました");
     } catch {
-      // ignore
+      showToast("コピー失敗");
     }
   };
 
@@ -537,6 +624,7 @@ export default function ChatClient() {
     const full = String(fullText ?? "");
     if (!full) return;
 
+    // code block は一括
     if (full.includes("```")) {
       setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: full } : m)));
       if (shouldAutoScrollRef.current) scrollBottom();
@@ -685,7 +773,8 @@ export default function ChatClient() {
     }
   };
 
-  // 初回だけ保存（無い人だけ）
+  /** ===== effects ===== */
+  // local defaults
   useEffect(() => {
     const d = loadLocal("chat:dialect");
     const s = loadLocal("chat:stance");
@@ -693,12 +782,11 @@ export default function ChatClient() {
     if (!s) saveLocal("chat:stance", stance);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   useEffect(() => saveLocal("chat:dialect", dialect), [dialect]);
   useEffect(() => saveLocal("chat:stance", stance), [stance]);
   useEffect(() => saveLocal("chat:sidebar", sidebarMode), [sidebarMode]);
 
-  // 小さめPC/タブレットは初回だけ自動で畳む（保存が無い人だけ）
+  // collapse on mid screen first time
   useEffect(() => {
     const saved = loadLocal("chat:sidebar");
     if (saved) return;
@@ -718,7 +806,7 @@ export default function ChatClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversationId]);
 
-  // 初回起動ウェルカム（ユーザー単位で1回だけ：localStorage）
+  // welcome
   useEffect(() => {
     if (!threadsLoaded) return;
     if (activeConversationId) return;
@@ -741,12 +829,24 @@ export default function ChatClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadsLoaded, activeConversationId, threads.length]);
 
-  // swipe（左スワイプでスレッド overlay）
-  const swipeRef = useRef<{ x: number; y: number; t: number; active: boolean }>({ x: 0, y: 0, t: 0, active: false });
+  // lock body scroll for overlays (menu/thread/profile/threadMenu/composer)
+  useEffect(() => {
+    const anyOpen = menuOpen || threadsOverlayOpen || aiProfileOpen || threadMenuOpen || composerOpen;
+    if (!anyOpen) return;
+
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [menuOpen, threadsOverlayOpen, aiProfileOpen, threadMenuOpen, composerOpen]);
+
+  /** ===== swipe left to open threads overlay ===== */
+  const swipeRef = useRef<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false });
   const onTouchStart = (e: React.TouchEvent) => {
-    if (threadsOverlayOpen || menuOpen || composerOpen || aiProfileOpen) return;
+    if (threadsOverlayOpen || menuOpen || composerOpen || aiProfileOpen || threadMenuOpen) return;
     const t = e.touches[0];
-    swipeRef.current = { x: t.clientX, y: t.clientY, t: Date.now(), active: true };
+    swipeRef.current = { x: t.clientX, y: t.clientY, active: true };
   };
   const onTouchEnd = (e: React.TouchEvent) => {
     const st = swipeRef.current;
@@ -757,20 +857,49 @@ export default function ChatClient() {
     const dx = t.clientX - st.x;
     const dy = t.clientY - st.y;
 
-    // 左へスワイプ（dxがマイナス）
+    // 左へスワイプ
     if (dx < -70 && Math.abs(dx) > Math.abs(dy) * 1.3) {
       setThreadsOverlayOpen(true);
     }
   };
 
+  /** ===== helpers ===== */
   const openAiProfileFromAnswer = (text: string) => {
     setAiTargetText(text);
     setAiProfileOpen(true);
   };
 
-  const activeTitle = (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
-  const canRename = Boolean(activeConversationId);
+  // 段落ブロック区切り（話題っぽい区切り）
+  const renderAssistantContent = (rawContent: string) => {
+    const content = stripCatchphraseIfThreePatterns(rawContent);
+    const normalized = content.replace(/\r\n/g, "\n").trimEnd();
 
+    // 2連続改行で段落ブロック化
+    const blocks = normalized.split(/\n{2,}/g).map((b) => b.trim()).filter(Boolean);
+
+    return (
+      <div className="asstBlocks">
+        {blocks.map((block, bi) => {
+          const lines = block.split("\n");
+          const isLast = bi === blocks.length - 1;
+          return (
+            <div key={bi} className={`asstBlock ${isLast ? "last" : ""}`}>
+              {lines.map((line, i) => {
+                if (!line.trim()) return <div key={i} style={{ height: 10 }} />;
+                return (
+                  <div key={i} style={lineStyle(line)}>
+                    {renderBoldInline(line)}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const activeTitle = (activeConversationId && threads.find((t) => t.id === activeConversationId)?.title) || "(新規)";
   const showExpand = (input ?? "").length >= 120;
 
   return (
@@ -789,22 +918,42 @@ export default function ChatClient() {
             <div className="threadList">
               {threads.map((t) => {
                 const active = t.id === activeConversationId;
+                const pinned = pinnedIds.has(t.id);
+
                 return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveConversationId(t.id);
-                      saveLocal("chat:activeConversationId", t.id);
-                    }}
-                    className={`threadItem ${active ? "active" : ""}`}
-                  >
-                    <div className="threadTitle">{t.title}</div>
-                    <div className="threadMeta">
-                      {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
-                    </div>
-                    <div className="threadPreview">{t.preview || "(プレビューなし)"}</div>
-                  </button>
+                  <div key={t.id} className={`threadRow ${active ? "active" : ""}`}>
+                    <button
+                      type="button"
+                      className="threadMain"
+                      onClick={() => {
+                        setActiveConversationId(t.id);
+                        saveLocal("chat:activeConversationId", t.id);
+                      }}
+                      title={t.title}
+                    >
+                      <div className="threadTitleLine">
+                        <span className="threadTitle">{t.title}</span>
+                        {pinned && <span className="pinMark" title="ピン留め">📌</span>}
+                      </div>
+                      <div className="threadMeta">
+                        {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
+                      </div>
+                      <div className="threadPreview">{t.preview || "(プレビューなし)"}</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="threadMore"
+                      aria-label="スレッド操作"
+                      title="スレッド操作"
+                      onClick={() => {
+                        setThreadMenuTarget(t);
+                        setThreadMenuOpen(true);
+                      }}
+                    >
+                      ⋯
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -863,7 +1012,7 @@ export default function ChatClient() {
                 setShowJump(!near);
               }}
             >
-              {/* スレッドタイトル（PCだけ薄く） */}
+              {/* PCだけ薄くスレッド名 */}
               <div className="pcOnly" style={{ fontSize: 12, color: "#777", marginBottom: 6 }}>
                 {activeTitle}
               </div>
@@ -913,43 +1062,19 @@ export default function ChatClient() {
                       </div>
 
                       <div className="asstText">
-                        {content
-                          .replace(/\r\n/g, "\n")
-                          .split("\n")
-                          .map((line, i) => {
-                            if (!line.trim()) return <div key={i} style={{ height: 6 }} />;
-                            return (
-                              <div key={i} style={lineStyle(line)}>
-                                {renderBoldInline(line)}
-                              </div>
-                            );
-                          })}
+                        {renderAssistantContent(raw)}
                       </div>
 
-                      {/* 免責：回答ごと（ウェルカムは除外） */}
                       {!isWelcome && (
                         <div className="asstDisclaimer">※ AIの回答は参考情報です。最終判断はご自身でお願いします。</div>
                       )}
 
-                      {/* アクション：コピー / 共有 / 旗（不適切） */}
                       {!isWelcome && (
                         <div className="asstActions">
-                          <button
-                            type="button"
-                            className="actBtn"
-                            title="コピー"
-                            aria-label="コピー"
-                            onClick={() => doCopy(content)}
-                          >
+                          <button type="button" className="actBtn" title="コピー" aria-label="コピー" onClick={() => doCopy(content)}>
                             ⧉
                           </button>
-                          <button
-                            type="button"
-                            className="actBtn"
-                            title="共有"
-                            aria-label="共有"
-                            onClick={() => doShare(content)}
-                          >
+                          <button type="button" className="actBtn" title="共有" aria-label="共有" onClick={() => doShare(content)}>
                             ↗︎
                           </button>
                           <button
@@ -968,15 +1093,11 @@ export default function ChatClient() {
                 );
               })}
 
-              {/* 回答中表示（入力側じゃなく、出力側） */}
+              {/* 回答中（ここで動く … を出す） */}
               {thinking && (
                 <div className="msgRow asstRow">
                   <div className="asstAvatar">
-                    {aiAvatarOk ? (
-                      <img src={AI_AVATAR_URL} alt="AI野口" className="avatarImg" />
-                    ) : (
-                      <div className="avatarFallback">🤖</div>
-                    )}
+                    {aiAvatarOk ? <img src={AI_AVATAR_URL} alt="AI野口" className="avatarImg" /> : <div className="avatarFallback">🤖</div>}
                   </div>
                   <div className="asstBody">
                     <div className="thinkingLine">
@@ -989,7 +1110,7 @@ export default function ChatClient() {
                 </div>
               )}
 
-              {/* 最下部へ */}
+              {/* 最下部へジャンプ */}
               {showJump && (
                 <button
                   type="button"
@@ -1023,7 +1144,6 @@ export default function ChatClient() {
                   disabled={!canSend}
                 />
 
-                {/* 120文字以上で「全画面」ボタン */}
                 {showExpand && (
                   <button
                     type="button"
@@ -1056,6 +1176,9 @@ export default function ChatClient() {
         </div>
       </div>
 
+      {/* ===== Toast ===== */}
+      {toast && <div className="toast">{toast}</div>}
+
       {/* ===== スレッド overlay（SP） ===== */}
       {threadsOverlayOpen && (
         <div className="overlay overlayWhite" role="dialog" aria-modal="true">
@@ -1073,14 +1196,33 @@ export default function ChatClient() {
             <div className="fullList">
               {threads.map((t) => {
                 const active = t.id === activeConversationId;
+                const pinned = pinnedIds.has(t.id);
                 return (
-                  <button key={t.id} type="button" onClick={() => selectThread(t.id)} className={`threadItemFull ${active ? "active" : ""}`}>
-                    <div className="threadTitle">{t.title}</div>
-                    <div className="threadMeta">
-                      {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
-                    </div>
-                    <div className="threadPreview">{t.preview || "(プレビューなし)"}</div>
-                  </button>
+                  <div key={t.id} className={`threadRowFull ${active ? "active" : ""}`}>
+                    <button type="button" className="threadMain" onClick={() => selectThread(t.id)}>
+                      <div className="threadTitleLine">
+                        <span className="threadTitle">{t.title}</span>
+                        {pinned && <span className="pinMark">📌</span>}
+                      </div>
+                      <div className="threadMeta">
+                        {toJstLabel(t.createdAt)} {toHm(t.createdAt)}
+                      </div>
+                      <div className="threadPreview">{t.preview || "(プレビューなし)"}</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="threadMore"
+                      aria-label="スレッド操作"
+                      title="スレッド操作"
+                      onClick={() => {
+                        setThreadMenuTarget(t);
+                        setThreadMenuOpen(true);
+                      }}
+                    >
+                      ⋯
+                    </button>
+                  </div>
                 );
               })}
               {threads.length === 0 && (
@@ -1091,7 +1233,71 @@ export default function ChatClient() {
         </div>
       )}
 
-      {/* ===== メニュー（⋯） ===== */}
+      {/* ===== スレッド「…」メニュー ===== */}
+      {threadMenuOpen && threadMenuTarget && (
+        <div className="overlay" role="dialog" aria-modal="true" onClick={() => setThreadMenuOpen(false)}>
+          <div className="menuSheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheetTop">
+              <div style={{ fontWeight: 900, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {threadMenuTarget.title}
+              </div>
+              <button type="button" style={BTN} onClick={() => setThreadMenuOpen(false)}>
+                閉じる
+              </button>
+            </div>
+
+            <div className="sheetSection">
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button
+                  type="button"
+                  style={{ ...BTN, width: "100%" }}
+                  onClick={() => {
+                    setThreadMenuOpen(false);
+                    renameThreadById(threadMenuTarget.id);
+                  }}
+                >
+                  名前の変更
+                </button>
+
+                <button
+                  type="button"
+                  style={{ ...BTN, width: "100%" }}
+                  onClick={() => {
+                    togglePin(threadMenuTarget.id);
+                    setThreadMenuOpen(false);
+                  }}
+                >
+                  {pinnedIds.has(threadMenuTarget.id) ? "ピン解除" : "ピン止め"}
+                </button>
+
+                <button
+                  type="button"
+                  style={{ ...BTN, width: "100%" }}
+                  onClick={async () => {
+                    await doShare(`さじかげん｜スレッド: ${threadMenuTarget.title}`);
+                    setThreadMenuOpen(false);
+                  }}
+                >
+                  共有
+                </button>
+
+                <button
+                  type="button"
+                  style={{ ...BTN, width: "100%", borderColor: "#fca5a5", color: "#b91c1c" }}
+                  onClick={async () => {
+                    setThreadMenuOpen(false);
+                    await deleteThreadById(threadMenuTarget.id);
+                  }}
+                >
+                  削除
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== メニュー（⋯）— スレッド操作は撤去 ===== */}
       {menuOpen && (
         <div className="overlay" role="dialog" aria-modal="true" onClick={() => setMenuOpen(false)}>
           <div className="menuSheet" onClick={(e) => e.stopPropagation()}>
@@ -1108,28 +1314,6 @@ export default function ChatClient() {
                 <div style={{ fontSize: 12, color: "#333", fontWeight: 800 }}>{badge}</div>
                 <button type="button" style={{ ...BTN, minWidth: 78 }} onClick={() => refreshStatus()}>
                   更新
-                </button>
-              </div>
-            </div>
-
-            <div className="sheetSection">
-              <div className="sheetLabel">スレッド</div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <button type="button" style={BTN} onClick={() => newThread()}>
-                  新規スレッド
-                </button>
-                <button
-                  type="button"
-                  style={{ ...BTN, opacity: canRename ? 1 : 0.5, cursor: canRename ? "pointer" : "not-allowed" }}
-                  onClick={() => {
-                    if (canRename) renameThread();
-                  }}
-                  aria-disabled={!canRename}
-                >
-                  タイトル変更
-                </button>
-                <button type="button" className="pcOnly" style={BTN} onClick={() => setSidebarMode((p) => (p === "open" ? "collapsed" : "open"))}>
-                  スレッド欄：{sidebarMode === "open" ? "表示中" : "非表示"}（切替）
                 </button>
               </div>
             </div>
@@ -1226,7 +1410,7 @@ export default function ChatClient() {
 
       {/* ===== AI野口プロフィール（フル） ===== */}
       {aiProfileOpen && (
-        <div className="overlay overlayProfile" role="dialog" aria-modal="true">
+        <div className="overlay overlayProfile" role="dialog" aria-modal="true" onClick={() => setAiProfileOpen(false)}>
           <div className="profileSheet" onClick={(e) => e.stopPropagation()}>
             <div className="fullTopBar">
               <div style={{ fontWeight: 900 }}>AI野口</div>
@@ -1261,19 +1445,11 @@ export default function ChatClient() {
               )}
 
               <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
-                <button
-                  type="button"
-                  style={{ ...BTN, width: "100%", padding: "12px 12px" }}
-                  onClick={() => openUrl(CONTACT_URL)}
-                >
+                <button type="button" style={{ ...BTN, width: "100%", padding: "12px 12px" }} onClick={() => openUrl(CONTACT_URL)}>
                   不適切な回答を報告
                 </button>
 
-                <button
-                  type="button"
-                  style={{ ...BTN, width: "100%", padding: "12px 12px" }}
-                  onClick={() => openUrl(CONTACT_URL)}
-                >
+                <button type="button" style={{ ...BTN, width: "100%", padding: "12px 12px" }} onClick={() => openUrl(CONTACT_URL)}>
                   問い合わせ・要望など
                 </button>
               </div>
@@ -1282,6 +1458,7 @@ export default function ChatClient() {
         </div>
       )}
 
+      {/* ===== styles ===== */}
       <style jsx global>{`
         .appRoot {
           height: 100dvh;
@@ -1317,7 +1494,7 @@ export default function ChatClient() {
           display: none;
         }
 
-        /* ===== Thread Col ===== */
+        /* ===== Thread ===== */
         .threadCol {
           width: 330px;
           border-right: 1px solid #eee;
@@ -1347,35 +1524,69 @@ export default function ChatClient() {
           -webkit-overflow-scrolling: touch;
         }
 
-        .threadItem {
-          width: 100%;
+        .threadRow {
+          display: flex;
+          gap: 8px;
+          align-items: stretch;
+          margin-bottom: 8px;
+        }
+        .threadRow.active .threadMain {
+          border: 2px solid #c7d2fe;
+          background: #eef2ff;
+        }
+
+        .threadMain {
+          flex: 1;
           text-align: left;
           padding: 10px;
-          margin-bottom: 8px;
           border-radius: 12px;
           border: 1px solid #e5e5e5;
           background: #fff;
           cursor: pointer;
         }
-        .threadItem.active {
-          border: 2px solid #c7d2fe;
-          background: #eef2ff;
+
+        .threadMore {
+          width: 42px;
+          border-radius: 12px;
+          border: 1px solid #e5e5e5;
+          background: #fff;
+          cursor: pointer;
+          font-size: 18px;
+          line-height: 1;
         }
-        .threadTitle {
-          font-weight: 900;
+
+        .threadTitleLine {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
           margin-bottom: 6px;
         }
+
+        .threadTitle {
+          font-weight: 900;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .pinMark {
+          flex: 0 0 auto;
+          font-size: 14px;
+        }
+
         .threadMeta {
           font-size: 12px;
           color: #666;
           margin-bottom: 4px;
         }
+
         .threadPreview {
           font-size: 12px;
           color: #333;
         }
 
-        /* ===== Chat Col ===== */
+        /* ===== Chat ===== */
         .chatCol {
           flex: 1;
           display: flex;
@@ -1384,8 +1595,9 @@ export default function ChatClient() {
           background: #fff;
         }
 
+        /* 上下固定の幅を縮める */
         .topBar {
-          padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
+          padding: calc(6px + env(safe-area-inset-top)) 10px 6px;
           border-bottom: 1px solid #eee;
           display: flex;
           justify-content: space-between;
@@ -1450,7 +1662,6 @@ export default function ChatClient() {
           overscroll-behavior: contain;
         }
 
-        /* Messages */
         .msgRow {
           margin: 12px 0;
           display: flex;
@@ -1465,11 +1676,10 @@ export default function ChatClient() {
           align-items: flex-start;
         }
 
-        /* font size統一：16px */
         .bubbleText {
           white-space: pre-wrap;
           overflow-wrap: anywhere;
-          line-height: 1.6;
+          line-height: 1.75;
           font-size: 16px;
         }
 
@@ -1546,7 +1756,22 @@ export default function ChatClient() {
         }
 
         .asstText {
-          font-size: 16px; /* 質問と同じ */
+          font-size: 16px;
+        }
+
+        /* 段落ブロック間の薄い線（話題区切り） */
+        .asstBlocks {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .asstBlock {
+          padding-bottom: 12px;
+          border-bottom: 1px solid #eef2f7;
+        }
+        .asstBlock.last {
+          border-bottom: none;
+          padding-bottom: 0;
         }
 
         .asstDisclaimer {
@@ -1586,7 +1811,6 @@ export default function ChatClient() {
           padding: 8px 0;
         }
 
-        /* Jump */
         .jumpBtn {
           position: absolute;
           right: 12px;
@@ -1601,10 +1825,9 @@ export default function ChatClient() {
           font-size: 18px;
         }
 
-        /* Input */
         .chatInputWrap {
           flex: 0 0 auto;
-          padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+          padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
           border-top: 1px solid #eee;
           background: #fff;
         }
@@ -1632,10 +1855,6 @@ export default function ChatClient() {
           white-space: nowrap;
           font-size: 13px;
         }
-        .expandBtn:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
 
         .sendBtn {
           padding: 10px 14px;
@@ -1648,12 +1867,13 @@ export default function ChatClient() {
           font-size: 13px;
           font-weight: 800;
         }
-        .sendBtn:disabled {
+        .sendBtn:disabled,
+        .expandBtn:disabled {
           opacity: 0.5;
           cursor: not-allowed;
         }
 
-        /* ===== Overlay ===== */
+        /* overlay */
         .overlay {
           position: fixed;
           inset: 0;
@@ -1671,6 +1891,7 @@ export default function ChatClient() {
           align-items: stretch;
         }
 
+        /* menu: “閉じる”を確実に押せる */
         .menuSheet {
           width: min(560px, 100%);
           background: #fff;
@@ -1679,7 +1900,7 @@ export default function ChatClient() {
           border: 1px solid #ddd;
           border-bottom: none;
           padding-bottom: calc(12px + env(safe-area-inset-bottom));
-          max-height: 90vh;
+          max-height: calc(100dvh - 16px);
           overflow: auto;
         }
 
@@ -1704,7 +1925,7 @@ export default function ChatClient() {
           margin-bottom: 8px;
         }
 
-        /* Full sheet */
+        /* full sheet */
         .fullSheet {
           width: 100%;
           height: 100%;
@@ -1714,7 +1935,7 @@ export default function ChatClient() {
         }
 
         .fullTopBar {
-          padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
+          padding: calc(6px + env(safe-area-inset-top)) 10px 6px;
           border-bottom: 1px solid #eee;
           display: flex;
           justify-content: space-between;
@@ -1735,22 +1956,18 @@ export default function ChatClient() {
           touch-action: pan-y;
         }
 
-        .threadItemFull {
-          width: 100%;
-          text-align: left;
-          padding: 10px;
+        .threadRowFull {
+          display: flex;
+          gap: 8px;
+          align-items: stretch;
           margin-bottom: 8px;
-          border-radius: 12px;
-          border: 1px solid #e5e5e5;
-          background: #fff;
-          cursor: pointer;
         }
-        .threadItemFull.active {
+        .threadRowFull.active .threadMain {
           border: 2px solid #c7d2fe;
           background: #eef2ff;
         }
 
-        /* Composer (optional) */
+        /* composer */
         .composerOverlay {
           position: fixed;
           inset: 0;
@@ -1761,7 +1978,7 @@ export default function ChatClient() {
         }
 
         .composerTopBar {
-          padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
+          padding: calc(6px + env(safe-area-inset-top)) 10px 6px;
           border-bottom: 1px solid #eee;
           display: flex;
           justify-content: space-between;
@@ -1786,7 +2003,7 @@ export default function ChatClient() {
           border-radius: 14px;
           padding: 12px;
           font-size: 16px;
-          line-height: 1.55;
+          line-height: 1.7;
           resize: none;
           outline: none;
         }
@@ -1805,7 +2022,7 @@ export default function ChatClient() {
           cursor: not-allowed;
         }
 
-        /* Profile */
+        /* profile */
         .overlayProfile {
           background: #fff !important;
           padding: 0 !important;
@@ -1854,13 +2071,28 @@ export default function ChatClient() {
           color: #111;
           white-space: pre-wrap;
           overflow-wrap: anywhere;
-          line-height: 1.55;
+          line-height: 1.6;
           max-height: 42vh;
           overflow: auto;
           -webkit-overflow-scrolling: touch;
         }
 
-        /* Dots */
+        /* toast */
+        .toast {
+          position: fixed;
+          left: 50%;
+          bottom: calc(18px + env(safe-area-inset-bottom));
+          transform: translateX(-50%);
+          background: rgba(17, 17, 17, 0.92);
+          color: #fff;
+          padding: 10px 14px;
+          border-radius: 999px;
+          font-size: 13px;
+          z-index: 400;
+          pointer-events: none;
+        }
+
+        /* dots */
         .dots {
           display: inline-block;
           width: 18px;
