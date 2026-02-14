@@ -216,6 +216,7 @@ export default function ChatClient() {
 
   // iOSキーボード対策
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [keyboardPx, setKeyboardPx] = useState(0);
 
   // overlays
   const [threadsOverlayOpen, setThreadsOverlayOpen] = useState(false);
@@ -817,14 +818,26 @@ export default function ChatClient() {
     setShowJump(!near);
   }, [messages.length]);
 
+  // ✅ 初期表示でも↓ボタン判定（iOSでscrollイベントが遅い時の保険）
+  useEffect(() => {
+    const el = msgsRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      const near = isNearBottom(el);
+      setShowJump(!near);
+    });
+  }, []);
+
   // ✅ iOSキーボード時に入力欄が浮く問題を潰す（visualViewport）
   useEffect(() => {
     const vv = (window as any).visualViewport;
     if (!vv) return;
     const onResize = () => {
-      // キーボードが出ると visualViewport.height が縮む
-      const ratio = vv.height / window.innerHeight;
-      setKeyboardOpen(ratio < 0.8);
+      // iOS: キーボードが出ると visualViewport.height が縮む + offsetTop が動く
+      const offsetTop = typeof vv.offsetTop === "number" ? vv.offsetTop : 0;
+      const kb = Math.max(0, window.innerHeight - vv.height - offsetTop);
+      setKeyboardPx(kb);
+      setKeyboardOpen(kb > 0);
     };
     vv.addEventListener("resize", onResize);
     vv.addEventListener("scroll", onResize);
@@ -1153,7 +1166,10 @@ export default function ChatClient() {
             </div>
 
             {/* 入力（1行固定） */}
-            <div className={`chatInputWrap ${keyboardOpen ? "kbOpen" : ""}`}>
+            <div
+              className={`chatInputWrap ${keyboardOpen ? "kbOpen" : ""}`}
+              style={keyboardOpen ? { transform: `translateY(-${keyboardPx}px)` } : undefined}
+            >
               <div className="inputRow">
                 <input
                   value={input}
@@ -1585,13 +1601,17 @@ export default function ChatClient() {
         }
 
         .threadTitle {
-          font-weight: 900;
+          font-weight: 500; /* 太字やめる */
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
           max-width: 100%;
         }
 
+        /* 横スクロール防止（特にSP overlay） */
+        .threadMain { min-width: 0; overflow: hidden; }
+        .threadRowFull, .threadRow { overflow: hidden; }
+        
         .pinMark {
           flex: 0 0 auto;
           font-size: 14px;
@@ -1831,9 +1851,10 @@ export default function ChatClient() {
         }
 
         .jumpBtn {
-          position: absolute;
+          /* ✅ スクロール領域に埋め込まず fixed で確実に出す */
+          position: fixed;
           right: 12px;
-          bottom: 12px;
+          bottom: calc(74px + env(safe-area-inset-bottom));
           width: 44px;
           height: 44px;
           border-radius: 14px;
@@ -1842,6 +1863,7 @@ export default function ChatClient() {
           cursor: pointer;
           box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
           font-size: 18px;
+           z-index: 120;
         }
 
         .chatInputWrap {
@@ -1849,6 +1871,7 @@ export default function ChatClient() {
           padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
           border-top: 1px solid #eee;
           background: #fff;
+          will-change: transform;
         }
 
         .inputRow {
@@ -2161,11 +2184,13 @@ export default function ChatClient() {
 
           .chatArea {
             padding: 10px;
+            /* ✅ fixed入力に近い挙動にするため、下に逃げを持たせる */
+            padding-bottom: calc(90px + env(safe-area-inset-bottom));
           }
 
           .jumpBtn {
             right: 10px;
-            bottom: 10px;
+            bottom: calc(74px + env(safe-area-inset-bottom));
           }
         }
       `}</style>
