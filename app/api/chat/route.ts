@@ -1378,20 +1378,37 @@ function stripInternalLeaks(text: string): string {
 // （〆）以降の最大3行を取り出し、本文から除去する
 function splitWarmClose(answer: string): { body: string; close: string } {
   const lines = String(answer ?? "").replace(/\r\n/g, "\n").split("\n");
-  const isMark = (l: string) => l.trimStart().startsWith("（〆）");
+
+  const isMark = (l: string) => {
+   const t = l.trimStart();
+    return t.startsWith("（〆）") || t.startsWith("(〆)");
+  };
+
+  const stripMark = (l: string) =>
+   l
+      .trimStart()
+      .replace(/^（〆）\s*/, "")
+      .replace(/^\(〆\)\s*/, "")
+      .trim();
+
   const idx = lines.findIndex((l) => isMark(l));
   if (idx < 0) return { body: String(answer ?? "").trim(), close: "" };
 
+  // （〆）行を最大3行吸い取る（連続してる分だけ）
   const closeLines: string[] = [];
   let j = idx;
   while (j < lines.length && closeLines.length < 3 && isMark(lines[j])) {
-    const t = lines[j].trimStart().replace(/^（〆）\s*/, "").trim();
+    const t = stripMark(lines[j]);
     if (t) closeLines.push(t);
     j++;
   }
 
-  // マーカー行だけ抜いて、残りは body に残す（事故耐性）
-  const body = [...lines.slice(0, idx), ...lines.slice(j)].join("\n").trim();
+  // マーカー行は本文から除去（残留防止）
+  const body = [...lines.slice(0, idx), ...lines.slice(j)]
+    .filter((l) => !isMark(l))
+    .join("\n")
+    .trim();
+
   return { body, close: closeLines.join("\n").trim() };
  }
 
@@ -1587,6 +1604,8 @@ function postProcessAnswer(
     .trim();
 
   a = a.replace(/^返事いらんメモ[:：].*$/gm, "").trim();
+  // 念押し：LLMが変な場所に(〆)を出してもユーザー表示では消す
+  a = a.split("\n").filter((l) => !/^\s*[（(]〆[）)]/.test(l.trimStart())).join("\n").trim();
   return stripInternalLeaks(a);
 }
 
@@ -2271,6 +2290,22 @@ let suppressBrandingReason = "unset";
     let answer = "";
 
     try {
+      // prev user raw（直近のユーザー発話そのまま：weakスキップしない）
+      const prevUserMessageRaw = await (async () => {
+        const { data: rows } = await db
+          .from("messages")
+          .select("content")
+          .eq("conversation_id", convId)
+          .eq("role", "user")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .limit(2);
+        if (!rows || rows.length === 0) return null;
+        const current = message.trim();
+        const cands = rows.map((r) => (r.content ?? "").trim()).filter((c) => c && c !== current);
+        return cands[0] ?? null;
+      })();
+
       // prev user (weak を飛ばして拾う)
       const prevUserMessage = await (async () => {
         const { data: rows } = await db
@@ -2332,6 +2367,12 @@ let suppressBrandingReason = "unset";
         startsWithContinuationPrefix(message) ||
         hasGenericContinuationCue(message) ||
         (weakUtterance && !shiftedRaw);
+        // ★借り推測モード：直前文脈を借りて回答を推測する局面だけ
+      const borrowingContext =
+        continuationLike &&
+        !shiftedRaw &&
+        Boolean(prevUserMessageRaw) &&
+        (weakUtterance || isShortAckLike(message) || followupOnly || followupPhaseRaw);
 
       const followupPhase = followupPhaseRaw && continuationLike;
       const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shiftedRaw);
@@ -2568,8 +2609,8 @@ if (topicsNow.length === 0 && subjectTopic) {
 
         // ★ followup短文のQA選抜用：前の実質問 + 今回短文 を合成してブレを止める
 const retrievalMessageForQa =
-  continuationLike && !shiftedRaw && prevUserMessage
-    ? `${String(prevUserMessage)}\n${String(message)}`
+  continuationLike && !shiftedRaw && (prevUserMessageRaw || prevUserMessage)
+    ? `${String(prevUserMessageRaw || prevUserMessage)}\n${String(message)}`
     : String(message);
 
       const lensRule: Lens = inferLensWithContext({
@@ -3209,6 +3250,16 @@ const warmCloseRule = wantWarmClose
         ].join("\n")
   : null;
 
+  // 借り推測の時は税務・経営前提に固定（ユーザーに宣言文は書かない）
+const borrowAssumeTaxRule = borrowingContext
+  ? [
+      "【前提（内規）】直前の会話文脈を参照して推測で答える場合は、税務・経営の前提で回答を組み立てる。",
+      "【前提（内規）】生活一般論（商品比較・雑談）に逃げない。必要なら最小限の前提確認を1つだけ入れる。",
+      "【前提（内規）】ただしユーザーが『税務じゃない/雑談/商品選び』を明示した場合はその前提に切り替える。",
+      "【注意】この前提をユーザー向けに宣言文として書かない（くどいので）。",
+    ].join("\n")
+  : null;
+
 
 
 
@@ -3245,6 +3296,7 @@ const noApportionmentBias: string[] = [
           injectedRules: [
             ...outputRules,
             ...clarifyBias,
+            ...(borrowAssumeTaxRule ? [borrowAssumeTaxRule] : []),
             ...(warmCloseRule ? [warmCloseRule] : []),
             ...(positiveCloseRule ? [positiveCloseRule] : []),
             ...SERVICE_BASE_RULES,
