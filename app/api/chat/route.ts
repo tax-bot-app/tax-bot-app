@@ -1380,15 +1380,16 @@ function splitWarmClose(answer: string): { body: string; close: string } {
   const lines = String(answer ?? "").replace(/\r\n/g, "\n").split("\n");
 
   const isMark = (l: string) => {
-   const t = l.trimStart();
-    return t.startsWith("（〆）") || t.startsWith("(〆)");
+    const t = l.trimStart();
+    return t.startsWith("（〆）") || t.startsWith("(〆)") || t.startsWith("〆");
   };
 
-  const stripMark = (l: string) =>
+ const stripMark = (l: string) =>
    l
       .trimStart()
       .replace(/^（〆）\s*/, "")
       .replace(/^\(〆\)\s*/, "")
+      .replace(/^〆\s*/, "")
       .trim();
 
   const idx = lines.findIndex((l) => isMark(l));
@@ -1605,7 +1606,11 @@ function postProcessAnswer(
 
   a = a.replace(/^返事いらんメモ[:：].*$/gm, "").trim();
   // 念押し：LLMが変な場所に(〆)を出してもユーザー表示では消す
-  a = a.split("\n").filter((l) => !/^\s*[（(]〆[）)]/.test(l.trimStart())).join("\n").trim();
+  a = a
+    .split("\n")
+    .filter((l) => !/^\s*(?:[（(]?\s*〆[）)]?)\s*/.test(l.trimStart()))
+    .join("\n")
+    .trim();
   return stripInternalLeaks(a);
 }
 
