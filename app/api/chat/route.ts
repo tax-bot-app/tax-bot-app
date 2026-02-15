@@ -139,6 +139,7 @@ guardrail_action?: "block" | "inject" | "none";
 
 type Dialect = "kansai" | "standard";
 type Stance = "zubatto" | "sanbo";
+type WarmCloseMode = "amb" | "followup" | "light";
 type MsgMini = {
   id: string;
   role: "user" | "assistant";
@@ -358,6 +359,28 @@ function normalizeDialect(x: string): Dialect {
 }
 function normalizeStance(x: Stance): Stance {
   return x === "sanbo" ? "sanbo" : "zubatto";
+}
+
+function pickStrongTopicFromHits(
+  hits: any,
+  availableTopics: string[],
+  minScore = 9
+): string {
+  const hs = Array.isArray(hits) ? hits : [];
+  const allowed = new Set(
+    (availableTopics ?? []).map((t) => String(t ?? "").trim()).filter(Boolean)
+  );
+
+  const best = hs
+    .map((h) => ({
+      topic: String(h?.topic ?? "").trim(),
+      score: Number(h?.score ?? 0),
+    }))
+    .filter((x) => x.topic && x.score >= minScore)
+    .filter((x) => (allowed.size ? allowed.has(x.topic) : true))
+    .sort((a, b) => b.score - a.score)[0];
+
+  return best?.topic ?? "";
 }
 
 /** ===== clarify / implicit shift helpers ===== */
@@ -1231,28 +1254,10 @@ function extractSection(answer: string, head: "🥄" | "✅" | "⚠️" ): strin
   return out;
 }
 
-function extractClosing(answer: string): string[] {
-  const lines = answer.replace(/\r\n/g, "\n").split("\n");
-  const markers = ["🥄", "✅", "⚠️", "🍚", "🧂"];
-
-  let lastMarkerIndex = -1;
-
-  for (let i = 0; i < lines.length; i++) {
-    const t = lines[i].trimStart();
-    if (markers.some((m) => t.startsWith(m))) {
-      lastMarkerIndex = i;
-    }
-  }
-
-  if (lastMarkerIndex === -1) return [];
-
-  const closing = lines.slice(lastMarkerIndex + 1).map((l) => l.trimEnd());
-
-  // 空行だけなら無し扱い
-  if (closing.every((l) => !l.trim())) return [];
-
-  return closing;
-}
+// NOTE:
+// 締め（ラベル無し末尾文）は enforceTemplate では推測・復元しない。
+// （重複/消失の原因になるため）
+// warm close は（〆）マーカーで分離し、postProcessAnswer で末尾に1回だけ付与する。
 
 
 function ensureLineBold(secLine: string[]): string[] {
@@ -1295,7 +1300,6 @@ function enforceTemplate(answer: string): string {
   const secLine = ensureLineBold(extractSection(a, "🥄"));
   const key = extractSection(a, "✅");
   const warn = extractSection(a, "⚠️");
-  const closing = extractClosing(a);
 
   if (secLine.length === 0 || key.length === 0) return a;
 
@@ -1307,10 +1311,7 @@ function enforceTemplate(answer: string): string {
     parts.push("", ...warn);
   }
 
-  // 👇ここが今回のキモ
-  if (closing.length > 0) {
-    parts.push("", ...closing);
-  }
+  // closing（ラベル無しの締め）はここでは扱わない（postProcessAnswer に任せる）
 
   return parts.join("\n").trim();
 }
@@ -1377,17 +1378,88 @@ function stripInternalLeaks(text: string): string {
 // （〆）以降の最大3行を取り出し、本文から除去する
 function splitWarmClose(answer: string): { body: string; close: string } {
   const lines = String(answer ?? "").replace(/\r\n/g, "\n").split("\n");
-  const idx = lines.findIndex((l) => l.trimStart().startsWith("（〆）"));
+  const isMark = (l: string) => l.trimStart().startsWith("（〆）");
+  const idx = lines.findIndex((l) => isMark(l));
   if (idx < 0) return { body: String(answer ?? "").trim(), close: "" };
 
-  const body = lines.slice(0, idx).join("\n").trim();
-  const closeLines = lines
-    .slice(idx, idx + 3)
-    .map((l) => l.replace(/^（〆）\s*/, "").trim())
-    .filter(Boolean);
+  const closeLines: string[] = [];
+  let j = idx;
+  while (j < lines.length && closeLines.length < 3 && isMark(lines[j])) {
+    const t = lines[j].trimStart().replace(/^（〆）\s*/, "").trim();
+    if (t) closeLines.push(t);
+    j++;
+  }
 
+  // マーカー行だけ抜いて、残りは body に残す（事故耐性）
+  const body = [...lines.slice(0, idx), ...lines.slice(j)].join("\n").trim();
   return { body, close: closeLines.join("\n").trim() };
+ }
+
+function tailLooksLikeWarmClose(text: string): boolean {
+  const lines = String(text ?? "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const tail = lines.slice(-3).join("\n");
+  if (!tail) return false;
+  if (/[?？]/.test(tail)) return true;
+  if (/(どっち|どちら|教えて|言うて|前提|状況|続き|つづき|もう少し)/.test(tail)) return true;
+  return false;
 }
+
+function buildWarmCloseFallback(params: {
+  mode: WarmCloseMode;
+  dialect: Dialect;
+  stance: Stance;
+}): string {
+  const { mode, dialect, stance } = params;
+
+  // kansai + zubatto（現状ログのメイン）
+  if (dialect === "kansai" && stance === "zubatto") {
+    if (mode === "followup")
+      return [
+        "今いちばん詰めたいの、金額の話？それとも運用ルール？",
+        "そこ決めたら一気に整理できるで。",
+      ].join("\n");
+    if (mode === "light")
+      return "前提が増えたら結論も動くから、気になったとこだけ言うて。";
+    // amb
+    return [
+      "これ、一般論の整理で聞きたいんか、税務の落としどころまで見たいんか、どっちや？",
+      "どっち寄りかだけ分かったら、次の一手まで出すで。",
+    ].join("\n");
+  }
+
+  // kansai + sanbo（丁寧関西）
+  if (dialect === "kansai" && stance === "sanbo") {
+    if (mode === "followup")
+      return [
+        "いちばん詰めたいのは金額のレンジですやろか、それとも運用ルールですやろか。",
+        "そこ決めたら、次の一手が早いですわ。",
+      ].join("\n");
+    if (mode === "light")
+      return "前提が増えたら結論も動きますさかい、気になる点だけ足してもろたら十分ですわ。";
+    return [
+      "一般論の整理でええんか、税務の落としどころまで見たいんか、どっちでっしゃろ。",
+      "どっち寄りかだけ分かったら、次の一手まで出せますわ。",
+    ].join("\n");
+  }
+
+  // standard（ざっくり）
+  if (stance === "zubatto") {
+    if (mode === "followup")
+      return ["いま一番詰めたいのは金額？それとも運用ルール？", "そこから潰すよ。"].join("\n");
+    if (mode === "light") return "前提が増えたら結論も動く。気になった点だけ投げて。";
+    return ["一般論で整理したい？それとも税務の落としどころまで見る？", "どっち寄りか教えて。"].join("\n");
+  }
+  // standard + sanbo
+  if (mode === "followup")
+    return ["一番詰めたいのは金額でしょうか、それとも運用ルールでしょうか。", "そこから整理します。"].join("\n");
+  if (mode === "light") return "前提が増えたら結論も動きますので、追加があれば教えてください。";
+  return ["一般論で整理したいか、税務の落としどころまで見るか、どちらでしょうか。", "どちら寄りか分かれば次の一手まで出します。"].join("\n");
+}
+
 
 function postProcessAnswer(
   raw: string,
@@ -1403,6 +1475,10 @@ function postProcessAnswer(
 
     // ★追加
     suppressBranding?: boolean;
+
+    // ★warm close（server責務）
+    allowWarmClose?: boolean;
+    warmCloseMode?: WarmCloseMode | null;
   }
 ): string {
   const llmIntent = safeStr(opts.llmIntent ?? "").trim();
@@ -1414,6 +1490,11 @@ function postProcessAnswer(
 
   let a = String(raw ?? "").replace(/\r\n/g, "\n").trim();
   a = a.replace(/[\(（]最大[^)）]*[\)）]/g, "");
+
+  // （〆）締めはテンプレ再構築前に分離しておく（重複/混入防止）
+  const split = splitWarmClose(a);
+  a = split.body;
+  const warmCloseFromLLM = split.close; // 1〜3行（マーカーは除去済み）
 
   if (hasThreePatterns(a)) {
     const lines = a.split("\n");
@@ -1478,6 +1559,24 @@ function postProcessAnswer(
   // CTA抑制（既存：私的混在）
   const suppressCta = isPrivateMix || suppressBranding;
 
+  // ===== warm close（末尾の自然文）=====
+  const allowWarmClose = Boolean(opts.allowWarmClose);
+  const warmCloseMode: WarmCloseMode = (opts.warmCloseMode ?? "amb") as WarmCloseMode;
+
+  // LLMが（〆）を出していればそれを採用。無ければfallback（ただし既に末尾が締めっぽいなら足さない）
+  let warmCloseFinal = "";
+  if (allowWarmClose) {
+    if (warmCloseFromLLM) {
+      warmCloseFinal = warmCloseFromLLM;
+    } else if (!tailLooksLikeWarmClose(a)) {
+      warmCloseFinal = buildWarmCloseFallback({ mode: warmCloseMode, dialect, stance });
+    }
+  }
+
+  if (warmCloseFinal) {
+    a = `${a}\n\n${warmCloseFinal}`.replace(/\n{3,}/g, "\n\n").trim();
+  }
+
   if (stance === "zubatto") a = forceCasual(a, dialect);
 
    // 🔎は廃止：来ても落とす
@@ -1503,7 +1602,10 @@ async function generateAnswerStrict(params: {
   topicsNow?: string[] | null;
   inquiryOverride?: string | null;
   llmIntent?: string | null;
-  suppressBranding?: boolean; // ★追加
+  suppressBranding?: boolean;
+  // ★追加：warm close
+  allowWarmClose?: boolean;
+  warmCloseMode?: WarmCloseMode | null;
 }): Promise<string> {
   const { promptPartsBase, dialect, stance } = params;
   const forbidden = forbiddenFor(dialect, stance);
@@ -1535,6 +1637,8 @@ async function generateAnswerStrict(params: {
       subjectTopic: params.subjectTopic ?? null,
       topicsNow: params.topicsNow ?? null,
       suppressBranding: Boolean(params.suppressBranding),
+      allowWarmClose: Boolean(params.allowWarmClose),
+      warmCloseMode: (params.warmCloseMode ?? null) as any,
     });
 
     if (params.allowAttackDefenseDetail && hasAttackOrDefense(last) && !hasThreePatterns(last)) {
@@ -2316,11 +2420,24 @@ if (topicMode === "llm") {
     llmAxis = llm.decision.axisTopic ?? "";
     llmAudit = Boolean(llm.decision.auditAxis);
     llmNudgeLines = Boolean(llm.decision.nudgeLines);
-    llmNudgeReason = String(llm.decision.nudgeReason ?? "");
-
-    // ★NEW: 話題転換の空気（キーワード依存を避ける）
+    llmNudgeReason = String(llm.decision.nudgeReason ?? ""); 
     llmShiftCue = Boolean((llm.decision as any).shiftCue);
     llmShiftCueReason = String((llm.decision as any).shiftCueReason ?? "");
+   // ★NEW: clarify でも「regex強ヒット」なら主題は確定させる（topic空の根治）
+    // LLMが subject/topicsNow を空で返す事故を、regex側の強ヒットで補完する。
+    if ((!llmSubject || !llmSubject.trim()) && (!llmTopicsNow || llmTopicsNow.length === 0)) {
+      const strong = pickStrongTopicFromHits(topicsNowDbg.hits, availableTopics, 9);
+      if (strong) {
+        llmSubject = strong;
+        llmTopicsNow = [strong];
+        llmReason = `${llmReason || ""} | regex補完:${strong}`.trim();
+      }
+    }
+
+    // topicsNow はあるのに subject が空、も地味に起きるので吸収
+    if ((!llmSubject || !llmSubject.trim()) && llmTopicsNow && llmTopicsNow.length > 0) {
+      llmSubject = String(llmTopicsNow[0] ?? "").trim();
+    }
 
     decision = decideAxisSubject({
       message,
@@ -2358,7 +2475,7 @@ const topicsNowRaw =
     ? (llmOk ? (llmTopicsNow ?? []).slice(0, 3) : topicsNowRegex)
     : topicsNowRegex;
 
-const topicsNow = (topicsNowRaw ?? [])
+let topicsNow = (topicsNowRaw ?? [])
   .map((t) => String(t ?? "").trim())
   .filter(Boolean)
   .filter((t) => !TOPICS_NOW_DENYLIST.has(t))
@@ -2405,7 +2522,10 @@ if (shouldBorrowSubject) {
   subjectTopic = prevSubject;
 }
 
-
+// ★ topicsNow が空なら subjectTopic を入れる（topics_now空の観測を潰す）
+if (topicsNow.length === 0 && subjectTopic) {
+  topicsNow = [subjectTopic];
+}
 
       // implicit shift で sticky を外す
       const hasAuditWordsNow = hasTaxAuditWordsLite(message);
@@ -2445,6 +2565,12 @@ if (shouldBorrowSubject) {
       const lensInputUsePrev = (followupOnly || weakUtterance) && Boolean(prevUserMessage);
       const lensMessage =
         lensInputUsePrev && prevUserMessage ? String(prevUserMessage) : message;
+
+        // ★ followup短文のQA選抜用：前の実質問 + 今回短文 を合成してブレを止める
+const retrievalMessageForQa =
+  continuationLike && !shiftedRaw && prevUserMessage
+    ? `${String(prevUserMessage)}\n${String(message)}`
+    : String(message);
 
       const lensRule: Lens = inferLensWithContext({
         message,
@@ -2541,16 +2667,15 @@ const topicQaAll = subjectTopic
   : [];
 
       const hybridBase = splitQaForHybrid({
-  itemsForPrompt: topicQaAll,   // ← 新しく取る
+  itemsForPrompt: topicQaAll,   
   subjectTopic,
   auditAxis,
-  message: lensMessage,      // followupは「実質問」を使う
+  message: retrievalMessageForQa,
   candidate50N: 50,
 });
 
 // ===== cross candidates (ilike) =====
       // ===== hybrid cand policy =====
-      // subject(topic)は厚め、crossは6固定（ノイズ抑制）
       const HYBRID_CAND_TOTAL = 50;
       const HYBRID_CROSS_N = 10;
       const HYBRID_TOPIC_N = HYBRID_CAND_TOTAL - HYBRID_CROSS_N; 
@@ -2558,7 +2683,7 @@ const topicQaAll = subjectTopic
       // ★ cross検索は「今回のユーザー発話」で固定（前の話題混入を防ぐ）
       // ★ cross召集は「LLMに寄せる」：DBから横断プールを機械取得 → LLMで10枚選ぶ
       // （subjectTopic と 税務調査 は除外：重複は横断の意味がない）
-      const crossMessage = message;
+      const crossMessage = retrievalMessageForQa;
       const crossPool = await fetchCrossQaPool({
         db,
         excludeTopics: [subjectTopic, TOPIC_TAX_AUDIT].filter(Boolean),
@@ -2637,7 +2762,7 @@ const anchorCandidates = pickedQaOnly.slice(0, 3).map((q) => ({
 }));
 
 const anchor = await decideAnchorQaByLLM({
-  message: String(message ?? ""),
+ message: String(retrievalMessageForQa ?? ""),
   candidates: anchorCandidates,
 });
 
@@ -3028,7 +3153,6 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
 
 // ✅ 会話的な締め（LLMフリー / 記号なし / 深掘り誘導）
 // ===== warm close gate =====
-// ===== warm close gate =====
 // 方針：ガードレイル発動（inject/block）と Lines（followup_lines）と lineRequest（Lines要求）以外は基本出す。
 
 const isAmbiguousOrShift =
@@ -3064,20 +3188,20 @@ meta.warm_close_reason = wantWarmClose
 const warmCloseRule = wantWarmClose
   ? closeMode === "followup"
     ? [
-        "【締め】最後に自然な会話調で1〜3行の締めを付ける（基本付ける）。",
+        "【締め】最後に1〜3行の締めを書く。各行の行頭に（〆）を付ける（目印。ユーザー表示では消える）。",
         "【締め】記号やラベル（🔎・👉など）は使わない。箇条書き禁止。括弧（）も使わない。",
         "【締め】質問は最大2つまで。『A？それともB？』の二択は1つの質問として数える。二択を2回やらない。",
         "【締め】続きの流れでは交通整理はしない。代わりに、深掘りできる論点を1〜2個だけ提示して、軽い問いかけで次に繋げる。",
       ].join("\n")
     : closeMode === "light"
       ? [
-          "【締め】通常時は最後に軽い一言で締める（1行〜2行）。深掘り誘導は必須ではない。",
+          "【締め】最後に1〜2行の締めを書く。各行の行頭に（〆）を付ける（目印。ユーザー表示では消える）。",
           "【締め】記号やラベル（🔎・👉など）は使わない。括弧（）も使わない。",
           "【締め】内容は『追加で聞きたいことあったら言うて』か『前提が増えたら教えて』のような短い一言。質問形で終えない。脱線は禁止。",
         ].join("\n")
       : [
           // default = amb
-          "【締め】最後に自然な会話調で1〜3行の締めを付ける（基本付ける）。",
+           "【締め】最後に1〜3行の締めを書く。各行の行頭に（〆）を付ける（目印。ユーザー表示では消える）。",
           "【締め】記号やラベル（🔎・👉など）は使わない。箇条書き禁止。括弧（）も使わない。",
           "【締め】質問は最大2つまで。『A？それともB？』の二択は1つの質問として数える。二択を2回やらない。",
           "【締め】基本は交通整理スタンス：一般論の話か税務の話かをやわらかく聞き分ける。ただし押し付けない。",
@@ -3153,6 +3277,8 @@ const noApportionmentBias: string[] = [
           topicsNow,
           llmIntent: topicMode === "llm" && llmOk ? llmIntent : null,
           suppressBranding,
+          allowWarmClose: Boolean(wantWarmClose),
+          warmCloseMode: closeMode,
         });
 
         path = "normal_llm";
@@ -3183,6 +3309,7 @@ const allowNudge =
   !alreadyPrompted &&
   llmIntent !== "clarify" &&
   llmIntent !== "qa_more" &&  
+  llmIntent !== "need_lines" &&
   !weakUtterance &&
   !isShortAckLike(message) &&
  !isPrivateMix;
