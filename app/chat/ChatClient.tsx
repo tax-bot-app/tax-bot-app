@@ -2322,16 +2322,22 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
           overflow: auto;
         }
 
-        .styleRow{
-  display:flex;
-  gap:14px;
-  flex-wrap:wrap;          /* SPで詰まったら折り返す */
-  align-items:flex-start;
+        /* PC: 2カラム / SP: 1カラム に固定 */
+.styleRow{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 760px){
+  .styleRow{
+    grid-template-columns: 1fr; /* SPは2段（縦） */
+  }
 }
 
 .styleGroup{
-  flex:1 1 220px;          /* 2カラムっぽく。狭ければ縦に落ちる */
-  min-width:220px;
+  min-width: 0; /* これ大事：はみ出しで崩れない */
 }
 
 .styleMiniLabel{
@@ -2344,7 +2350,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
 .btnRow{
   display:flex;
   gap:10px;
-  flex-wrap:wrap;          /* ボタンがはみ出さない */
+  flex-wrap:wrap;
 }
 
 
