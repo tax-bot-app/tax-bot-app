@@ -194,6 +194,7 @@ export default function ChatClient() {
 
   const MAX_INPUT_LENGTH = 6000;
   const WARN_THRESHOLD = Math.floor(MAX_INPUT_LENGTH * 0.8); // 4800
+  const cut = (s: string) => (s.length > MAX_INPUT_LENGTH ? s.slice(0, MAX_INPUT_LENGTH) : s);
 
   const [loading, setLoading] = useState(false);
   const [thinking, setThinking] = useState(false);
@@ -1228,7 +1229,8 @@ export default function ChatClient() {
                 <div className="pcOnly" style={{ display: "flex", gap: 8, alignItems: "center", width: "100%" }}>
                   <input
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={(e) => setInput(cut(e.target.value))}
+                    onCompositionEnd={(e) => setInput(cut((e.target as HTMLInputElement).value))}
                     maxLength={MAX_INPUT_LENGTH}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
@@ -1522,6 +1524,7 @@ export default function ChatClient() {
             <textarea
   value={composerText}
   onChange={(e) => setComposerText(e.target.value)}
+  onCompositionEnd={(e) => setComposerText(cut((e.target as HTMLTextAreaElement).value))}
  maxLength={MAX_INPUT_LENGTH}
   placeholder="相談内容を入力してください"
   className="composerTextarea"
@@ -1682,7 +1685,8 @@ export default function ChatClient() {
             <div className="sheetBody">
               <textarea
   value={inputSheetText}
-  onChange={(e) => setInputSheetText(e.target.value)}
+  onChange={(e) => setInputSheetText(cut(e.target.value))}
+  onCompositionEnd={(e) => setInputSheetText(cut((e.target as HTMLTextAreaElement).value))}
  maxLength={MAX_INPUT_LENGTH}
   placeholder="相談内容を入力"
   className="sheetTextarea"
