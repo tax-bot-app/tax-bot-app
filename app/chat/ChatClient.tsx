@@ -272,6 +272,8 @@ export default function ChatClient() {
   const [showJump, setShowJump] = useState(false);
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
+const FAQ_URL = process.env.NEXT_PUBLIC_FAQ_URL || "https://gladz.example.com/faq";
+const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.com/terms";
   const AI_AVATAR_URL = "/ai-noguchi.jpg";
 
   const BTN: CSSProperties = {
@@ -622,9 +624,13 @@ export default function ChatClient() {
   })();
 
   const openUrl = (url: string) => {
-    if (url.startsWith("http")) window.open(url, "_blank", "noreferrer");
-    else window.location.href = url;
+    window.location.href = url;
   };
+
+  const openUrlNewTab = (url: string) => {
+  if (url.startsWith("http")) window.open(url, "_blank", "noreferrer");
+  else window.location.href = url;
+};
 
   const doLogout = async () => {
     await supabase.auth.signOut().catch(() => null);
@@ -1460,6 +1466,34 @@ export default function ChatClient() {
                 </button>
               </div>
             </div>
+
+            <div className="sheetSection">
+  <div className="sheetLabel">ヘルプ</div>
+  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <button
+      type="button"
+      style={{ ...BTN, width: "100%" }}
+      onClick={() => {
+        setMenuOpen(false);
+        openUrl(FAQ_URL); // ✅ 同一タブ
+      }}
+    >
+      FAQ
+    </button>
+
+    <button
+      type="button"
+      style={{ ...BTN, width: "100%" }}
+      onClick={() => {
+        setMenuOpen(false);
+        openUrl(TERMS_URL); // ✅ 同一タブ
+      }}
+    >
+      利用規約
+    </button>
+  </div>
+</div>
+
 
             <div className="sheetSection">
               <div className="sheetLabel">その他</div>
