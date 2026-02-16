@@ -272,8 +272,8 @@ export default function ChatClient() {
   const [showJump, setShowJump] = useState(false);
 
   const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
-const FAQ_URL = process.env.NEXT_PUBLIC_FAQ_URL || "https://gladz.example.com/faq";
-const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.com/terms";
+const FAQ_URL = process.env.NEXT_PUBLIC_FAQ_URL || "";
+const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
   const AI_AVATAR_URL = "/ai-noguchi.jpg";
 
   const BTN: CSSProperties = {
@@ -624,13 +624,14 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
   })();
 
   const openUrl = (url: string) => {
-    window.location.href = url;
-  };
+  window.location.href = url;
+};
 
-  const openUrlNewTab = (url: string) => {
+const openUrlNewTab = (url: string) => {
   if (url.startsWith("http")) window.open(url, "_blank", "noreferrer");
   else window.location.href = url;
 };
+
 
   const doLogout = async () => {
     await supabase.auth.signOut().catch(() => null);
@@ -721,6 +722,10 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
   const sendMessage = async (overrideText?: string) => {
     const text = String(overrideText ?? input).trim();
     if (!text) return;
+    if (text.length > MAX_INPUT_LENGTH) {
+      showToast(`長すぎるで（最大 ${MAX_INPUT_LENGTH} 文字）`);
+      return;
+    }
 
     setErrMsg(null);
     setLoading(true);
@@ -1232,7 +1237,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
             <div className={`chatInputWrap ${keyboardOpen ? "kbOpen" : ""} ${inputSheetOpen ? "hiddenWhenSheet" : ""}`}>
               <div className="inputRow">
                 {/* PCは従来通り */}
-                <div className="pcOnly" style={{ display: "flex", gap: 8, alignItems: "center", width: "100%" }}>
+                <div className="pcOnly" style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}></div><div className="pcOnly" style={{ display: "flex", gap: 8, alignItems: "center", width: "100%" }}>
                   <input
                     value={input}
                     onChange={(e) => setInput(cut(e.target.value))}
@@ -1248,6 +1253,11 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
                     className="chatInput"
                     disabled={!canSend}
                   />
+                  {input.length >= WARN_THRESHOLD && (
+     <div className={`charCount ${input.length >= MAX_INPUT_LENGTH ? "limit" : ""}`}>
+       残り {MAX_INPUT_LENGTH - input.length} 文字
+     </div>
+   )}
 
                                   </div>
 
@@ -1257,7 +1267,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
                   className="spOnly inputDock"
                   onClick={() => {
                     if (!canSend) return;
-                    setInputSheetText(input);
+                    setInputSheetText(cut(input));
                     setInputSheetOpen(true);
                     // iOS: open直後フォーカスが外れることがあるので、sheet側でautoFocusする
                   }}
@@ -1271,7 +1281,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
                     type="button"
                     className="expandBtn"
                     onClick={() => {
-                      setComposerText(input);
+                      setComposerText(cut(input));
                       setComposerOpen(true);
                     }}
                     aria-label="全画面で編集"
@@ -1282,12 +1292,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
                   </button>
                 )}
 
-                {input.length >= WARN_THRESHOLD && (
-  <div className={`charCount ${input.length >= MAX_INPUT_LENGTH ? "limit" : ""}`}>
-    残り {MAX_INPUT_LENGTH - input.length} 文字
-  </div>
-)}
-               
+                             
 
                 <button
                   type="button"
@@ -1541,7 +1546,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
             <button type="button" className="topIconBtn" 
             onClick={() => {
                setComposerOpen(false);
-               setInput(composerText);
+               setInput(cut(composerText));
              }}
             aria-label="戻る" title="戻る">
               ←
@@ -1549,13 +1554,13 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
             <div style={{ fontWeight: 900 }}>相談内容</div>
             <button
               type="button"
-              className={`composerSendBtn ${!canSend || !composerText.trim() ? "disabled" : ""}`}
+              className={`composerSendBtn ${!canSend || !composerText.trim() || composerText.length > MAX_INPUT_LENGTH ? "disabled" : ""}`}
               onClick={() => {
                 if (!canSend) return;
                 if (!composerText.trim()) return;
                 sendMessage(composerText);
               }}
-              disabled={!canSend || !composerText.trim()}
+              disabled={!canSend || !composerText.trim() || composerText.length > MAX_INPUT_LENGTH}
             >
               送信
             </button>
@@ -1564,7 +1569,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
           <div className="composerBody">
             <textarea
   value={composerText}
-  onChange={(e) => setComposerText(e.target.value)}
+   onChange={(e) => setComposerText(cut(e.target.value))}
   onCompositionEnd={(e) => setComposerText(cut((e.target as HTMLTextAreaElement).value))}
  maxLength={MAX_INPUT_LENGTH}
   placeholder="相談内容を入力してください"
@@ -1639,7 +1644,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
           role="dialog"
           aria-modal="true"
           onClick={() => {
-            setInput(inputSheetText);
+            setInput(cut(inputSheetText));
             setInputSheetOpen(false);
           }}
         >
@@ -1651,7 +1656,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
       className="sheetBtn"
       onClick={(e) => {
         e.stopPropagation();
-        setInput(inputSheetText);
+        setInput(cut(inputSheetText));
         setInputSheetOpen(false);
       }}
     >
@@ -1693,9 +1698,8 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
                     type="button"
                     className="sheetBtn"
                     onClick={() => {
-                      // 下書きを保持してフルスクリーンへ
-                      setComposerText(inputSheetText);
-                      setInput(inputSheetText);
+                      setComposerText(cut(inputSheetText));
+ setInput(cut(inputSheetText));
                       setInputSheetOpen(false);
                       setComposerOpen(true);
                     }}
@@ -2198,14 +2202,15 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
           display: flex;
           flex-direction: column;
         }
-        .sheetTop {
-          padding: 10px 12px;
-          border-bottom: 1px solid #eee;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-        }
+        .inputSheet .sheetTop {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
           
         .sheetTitle { font-weight: 900; }
         .sheetBtn {
@@ -2232,6 +2237,15 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
   align-items:center;
   flex:0 0 auto;
 }
+
+.sheetLeft{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex:0 0 auto;
+  min-width:0;
+}
+
 
         .sheetBtnPrimary.disabled { opacity: 0.5; cursor: not-allowed; }
         .sheetBody {
@@ -2354,17 +2368,18 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
 }
 
 
-        .sheetTop {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 12px;
-          border-bottom: 1px solid #eee;
-          position: sticky;
-          top: 0;
-          background: #fff;
-          z-index: 1;
-        }
+        .menuSheet .sheetTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid #eee;
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 1;
+}
+
 
         .sheetSection {
           padding: 12px;

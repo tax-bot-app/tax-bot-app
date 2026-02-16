@@ -2120,6 +2120,18 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => null);
 
+    const MAX = 6000;
+  const msg = String(body?.message ?? "").trim();
+  if (!msg) {
+    return NextResponse.json({ ok: false, error: "空のメッセージです" }, { status: 400 });
+  }
+  if (msg.length > MAX) {
+    return NextResponse.json(
+      { ok: false, error: `相談内容が長すぎます（最大 ${MAX} 文字）` },
+      { status: 400 }
+    );
+  }
+
     const message = safeStr(body?.message).trim();
     const idempotencyKey = safeStr(body?.idempotencyKey).trim();
     const conversationIdRaw = safeStr(body?.conversationId).trim();
