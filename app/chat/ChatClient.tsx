@@ -192,6 +192,9 @@ export default function ChatClient() {
   const supabase = useMemo(() => getSupabaseClient(), []);
   const router = useRouter();
 
+  const MAX_INPUT_LENGTH = 6000;
+  const WARN_THRESHOLD = Math.floor(MAX_INPUT_LENGTH * 0.8); // 4800
+
   const [loading, setLoading] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
@@ -1226,6 +1229,7 @@ export default function ChatClient() {
                   <input
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
+                    maxLength={MAX_INPUT_LENGTH}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
@@ -1270,13 +1274,20 @@ export default function ChatClient() {
                   </button>
                 )}
 
+                {input.length >= WARN_THRESHOLD && (
+  <div className={`charCount ${input.length >= MAX_INPUT_LENGTH ? "limit" : ""}`}>
+    残り {MAX_INPUT_LENGTH - input.length} 文字
+  </div>
+)}
+               
+
                 <button
                   type="button"
                   className="sendBtn"
                   onClick={() => {
                     if (canSend) sendMessage();
                   }}
-                  disabled={!canSend}
+                  disabled={!canSend || input.length > MAX_INPUT_LENGTH}
                 >
                   送信
                 </button>
@@ -1509,12 +1520,20 @@ export default function ChatClient() {
 
           <div className="composerBody">
             <textarea
-              value={composerText}
-              onChange={(e) => setComposerText(e.target.value)}
-              placeholder="相談内容を入力してください"
-              className="composerTextarea"
-              autoFocus
-            />
+  value={composerText}
+  onChange={(e) => setComposerText(e.target.value)}
+ maxLength={MAX_INPUT_LENGTH}
+  placeholder="相談内容を入力してください"
+  className="composerTextarea"
+  autoFocus
+/>
+
+{composerText.length >= WARN_THRESHOLD && (
+  <div className={`charCount ${composerText.length >= MAX_INPUT_LENGTH ? "limit" : ""}`}>
+    残り {MAX_INPUT_LENGTH - composerText.length} 文字
+  </div>
+)}
+
           </div>
         </div>
       )}
@@ -1644,7 +1663,7 @@ export default function ChatClient() {
                 <button
                   type="button"
                   className={`sheetBtnPrimary ${!inputSheetText.trim() ? "disabled" : ""}`}
-                  disabled={!inputSheetText.trim() || !canSend}
+                  disabled={!inputSheetText.trim() || !canSend || inputSheetText.length > MAX_INPUT_LENGTH}
                   onClick={(e) => {
    e.stopPropagation();
                     if (!canSend) return;
@@ -1662,12 +1681,21 @@ export default function ChatClient() {
 
             <div className="sheetBody">
               <textarea
-                value={inputSheetText}
-                onChange={(e) => setInputSheetText(e.target.value)}
-                placeholder="相談内容を入力"
-                className="sheetTextarea"
-                autoFocus
-              />
+  value={inputSheetText}
+  onChange={(e) => setInputSheetText(e.target.value)}
+ maxLength={MAX_INPUT_LENGTH}
+  placeholder="相談内容を入力"
+  className="sheetTextarea"
+  autoFocus
+/>
+
+{inputSheetText.length >= WARN_THRESHOLD && (
+  <div className={`charCount ${inputSheetText.length >= MAX_INPUT_LENGTH ? "limit" : ""}`}>
+    残り {MAX_INPUT_LENGTH - inputSheetText.length} 文字
+  </div>
+)}
+
+
               <div className="sheetHint">※ 口調はメニュー（⋯）から固定できます。</div>
             </div>
           </div>
@@ -2062,6 +2090,18 @@ export default function ChatClient() {
         .chatInputWrap.kbOpen {
           padding-bottom: 8px;
         }
+
+        .charCount{
+  font-size:12px;
+  color:#666;
+  margin-top:6px;
+  text-align:right;
+}
+.charCount.limit{
+  color:#b91c1c;
+  font-weight:700;
+}
+
 
          /* ✅ SPダミー入力（dock） */
         .inputDock {
