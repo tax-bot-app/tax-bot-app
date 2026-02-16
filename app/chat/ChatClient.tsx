@@ -1444,28 +1444,35 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
             </div>
 
             <div className="sheetSection">
-              <div className="sheetLabel">口調</div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button type="button" style={toggleBtn(dialect === "standard")} onClick={() => setDialect("standard")}>
-                  標準語
-                </button>
-                <button type="button" style={toggleBtn(dialect === "kansai")} onClick={() => setDialect("kansai")}>
-                  関西弁
-                </button>
-              </div>
-            </div>
+  <div className="sheetLabel">スタイル</div>
 
-            <div className="sheetSection">
-              <div className="sheetLabel">モード</div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button type="button" style={toggleBtn(stance === "sanbo")} onClick={() => setStance("sanbo")}>
-                  参謀
-                </button>
-                <button type="button" style={toggleBtn(stance === "zubatto")} onClick={() => setStance("zubatto")}>
-                  ズバっと
-                </button>
-              </div>
-            </div>
+  <div className="styleRow">
+    <div className="styleGroup">
+      <div className="styleMiniLabel">口調</div>
+      <div className="btnRow">
+        <button type="button" style={toggleBtn(dialect === "standard")} onClick={() => setDialect("standard")}>
+          標準語
+        </button>
+        <button type="button" style={toggleBtn(dialect === "kansai")} onClick={() => setDialect("kansai")}>
+          関西弁
+        </button>
+      </div>
+    </div>
+
+    <div className="styleGroup">
+      <div className="styleMiniLabel">モード</div>
+      <div className="btnRow">
+        <button type="button" style={toggleBtn(stance === "sanbo")} onClick={() => setStance("sanbo")}>
+          参謀
+        </button>
+        <button type="button" style={toggleBtn(stance === "zubatto")} onClick={() => setStance("zubatto")}>
+          ズバっと
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 
             <div className="sheetSection">
   <div className="sheetLabel">ヘルプ</div>
@@ -2314,6 +2321,32 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "https://gladz.example.co
           max-height: calc(100dvh - 16px);
           overflow: auto;
         }
+
+        .styleRow{
+  display:flex;
+  gap:14px;
+  flex-wrap:wrap;          /* SPで詰まったら折り返す */
+  align-items:flex-start;
+}
+
+.styleGroup{
+  flex:1 1 220px;          /* 2カラムっぽく。狭ければ縦に落ちる */
+  min-width:220px;
+}
+
+.styleMiniLabel{
+  font-size:12px;
+  font-weight:900;
+  color:#444;
+  margin-bottom:8px;
+}
+
+.btnRow{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;          /* ボタンがはみ出さない */
+}
+
 
         .sheetTop {
           display: flex;
