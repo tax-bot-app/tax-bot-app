@@ -1263,21 +1263,19 @@ const openUrlNewTab = (url: string) => {
         </div>
       )}
 
-      {showExpand && (
-        <button
-          type="button"
-          className="expandBtn"
-          onClick={() => {
-            setComposerText(cut(input));
-            setComposerOpen(true);
-          }}
-          aria-label="全画面で編集"
-          title="全画面で編集"
-          disabled={!canSend}
-        >
-          ⤢
-        </button>
-      )}
+      <button
+   type="button"
+   className="expandBtn"
+   onClick={() => {
+     setComposerText(cut(input));
+     setComposerOpen(true);
+   }}
+   aria-label="全画面で編集"
+   title="全画面で編集"
+   disabled={!canSend}
+ >
+   ⤢
+ </button>
 
       <button
         type="button"
@@ -1552,31 +1550,57 @@ const openUrlNewTab = (url: string) => {
         </div>
       )}
 
-      {/* ===== 全画面入力（任意：120文字以上から） ===== */}
+      {/* ===== 全画面入力 ===== */}
       {composerOpen && (
         <div className="composerOverlay" role="dialog" aria-modal="true">
           <div className="composerTopBar">
-            <button type="button" className="topIconBtn" 
-            onClick={() => {
-               setComposerOpen(false);
-               setInput(cut(composerText));
-             }}
-            aria-label="戻る" title="戻る">
-              ←
-            </button>
-            <div style={{ fontWeight: 900 }}>相談内容</div>
-            <button
-              type="button"
-              className={`composerSendBtn ${!canSend || !composerText.trim() || composerText.length > MAX_INPUT_LENGTH ? "disabled" : ""}`}
-              onClick={() => {
-                if (!canSend) return;
-                if (!composerText.trim()) return;
-                sendMessage(composerText);
-              }}
-              disabled={!canSend || !composerText.trim() || composerText.length > MAX_INPUT_LENGTH}
-            >
-              送信
-            </button>
+            <div className="composerLeft">
+    <button
+      type="button"
+      className="sheetBtn"
+      onClick={() => {
+        setComposerOpen(false);
+        setInput(cut(composerText));
+      }}
+      aria-label="戻る"
+      title="戻る"
+    >
+      戻る
+    </button>
+
+    <button
+      type="button"
+      className="sheetBtn"
+      onClick={() => setDialect((p) => (p === "standard" ? "kansai" : "standard"))}
+      title="口調（標準語/関西弁）"
+    >
+      {dialect === "kansai" ? "関西弁" : "標準語"}
+    </button>
+
+    <button
+      type="button"
+      className="sheetBtn"
+      onClick={() => setStance((p) => (p === "sanbo" ? "zubatto" : "sanbo"))}
+      title="モード（参謀/ズバっと）"
+    >
+      {stance === "sanbo" ? "参謀" : "ズバ"}
+    </button>
+  </div>
+
+  <div className="composerTitle">相談内容</div>
+
+  <button
+    type="button"
+    className={`composerSendBtn ${!canSend || !composerText.trim() || composerText.length > MAX_INPUT_LENGTH ? "disabled" : ""}`}
+    onClick={() => {
+      if (!canSend) return;
+      if (!composerText.trim()) return;
+      sendMessage(composerText);
+    }}
+    disabled={!canSend || !composerText.trim() || composerText.length > MAX_INPUT_LENGTH}
+  >
+    送信
+  </button>
           </div>
 
           <div className="composerBody">
@@ -2523,6 +2547,19 @@ const openUrlNewTab = (url: string) => {
           gap: 10px;
           background: #fff;
         }
+
+        .composerTitle{
+  font-weight: 900;
+}
+
+.composerLeft{
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
 
         .composerBody {
           flex: 1 1 auto;
