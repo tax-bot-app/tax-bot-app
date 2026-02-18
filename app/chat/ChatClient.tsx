@@ -1946,7 +1946,7 @@ const openUrlNewTab = (url: string) => {
   font-size:18px;
   font-weight:900;
   letter-spacing:0.08em;
-  line-height:1;
+  line-height: 0.92;  /* ← 1 → 0.92 くらいから試す */
   white-space:nowrap;
   transform: translateY(0px);  /* ← 1px→0：ベースラインを安定 */
 }
