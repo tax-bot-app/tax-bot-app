@@ -1925,25 +1925,32 @@ const openUrlNewTab = (url: string) => {
           text-overflow: ellipsis;
         }
 
-        .appBrand{
+        /* ロゴ＋じかげん（トップバー専用に限定） */
+.topBar .appBrand{
   display:flex;
   align-items:center;
-  gap:6px;              /* ← 8→6 で詰める */
+  gap:6px;
 }
 
-.appLogo{
-  width:22px;           /* ← 24/26より少し小さく */
+.topBar .appLogo{
+  width:22px;
   height:22px;
   object-fit:contain;
-  display:block;        /* ← 画像の余計な隙間消える */
-  transform: translateY(-1px); /* ← これが“高さズレ”の補正 */
+  display:block;
+  transform: translateY(-1px);
 }
 
-.appTitleText{
-  line-height:1;        /* ← 文字の上下余白を締める */
+/* ここが肝：元の .appTitle と同じ“強さ”を戻す */
+.topBar .appTitleText{
+  font-size:18px;
+  font-weight:900;
+  letter-spacing:0.08em;
+  line-height:1;
+  white-space:nowrap;
   display:inline-block;
-  transform: translateY(1px);  /* ← 必要なら。ロゴとの相殺 */
+  transform: translateY(1px);
 }
+
 
 
 @media (max-width: 760px){
