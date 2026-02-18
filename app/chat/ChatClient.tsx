@@ -1089,7 +1089,7 @@ const openUrlNewTab = (url: string) => {
                 </button>
 
                 <div className="appBrand" title="さじかげん">
-  <img src="/sa-logo.png" alt="さ" className="appLogo" />
+  <img src="/sa-logo-header.png" alt="さ" className="appLogo" />
   <span className={`appTitleText ${yuji.className}`}>じかげん</span>
 </div>
 
@@ -1926,21 +1926,22 @@ const openUrlNewTab = (url: string) => {
         }
 
         /* ロゴ＋じかげん（トップバー専用に限定） */
+/* ロゴ＋じかげん（トップバー専用に限定） */
 .topBar .appBrand{
   display:flex;
   align-items:center;
-  gap:6px;
+  gap:7px;              /* ← 6→7：詰まりすぎ解消 */
 }
 
 .topBar .appLogo{
-  width:22px;
-  height:22px;
+  width:1.1em;
+  height:1.1em;
   object-fit:contain;
   display:block;
-  transform: translateY(-1px);
 }
 
-/* ここが肝：元の .appTitle と同じ“強さ”を戻す */
+
+/* “じかげん”は文字だけ整える（位置はいじらない） */
 .topBar .appTitleText{
   font-size:18px;
   font-weight:900;
@@ -1948,8 +1949,9 @@ const openUrlNewTab = (url: string) => {
   line-height:1;
   white-space:nowrap;
   display:inline-block;
-  transform: translateY(1px);
+  transform: translateY(0px);  /* ← 1px→0：ベースラインを安定 */
 }
+
 
 
 
