@@ -1239,75 +1239,85 @@ const openUrlNewTab = (url: string) => {
             {/* 入力（1行固定） */}
             <div className={`chatInputWrap ${keyboardOpen ? "kbOpen" : ""} ${inputSheetOpen ? "hiddenWhenSheet" : ""}`}>
               <div className="inputRow">
-                {/* PCは従来通り */}
-                <div className="pcOnly" style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}></div><div className="pcOnly" style={{ display: "flex", gap: 8, alignItems: "center", width: "100%" }}>
-                  <input
-                    value={input}
-                    onChange={(e) => setInput(cut(e.target.value))}
-                    onCompositionEnd={(e) => setInput(cut((e.target as HTMLInputElement).value))}
-                    maxLength={MAX_INPUT_LENGTH}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        if (canSend) sendMessage();
-                      }
-                    }}
-                    placeholder={loading ? "回答中…" : "相談内容を入力"}
-                    className="chatInput"
-                    disabled={!canSend}
-                  />
-                  {input.length >= WARN_THRESHOLD && (
-     <div className={`charCount ${input.length >= MAX_INPUT_LENGTH ? "limit" : ""}`}>
-       残り {MAX_INPUT_LENGTH - input.length} 文字
-     </div>
-   )}
+    {/* PC */}
+    <div className="pcOnly inputRowPc">
+      <input
+        value={input}
+        onChange={(e) => setInput(cut(e.target.value))}
+        onCompositionEnd={(e) => setInput(cut((e.target as HTMLInputElement).value))}
+        maxLength={MAX_INPUT_LENGTH}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            if (canSend) sendMessage();
+          }
+        }}
+        placeholder={loading ? "回答中…" : "相談内容を入力"}
+        className="chatInput"
+        disabled={!canSend}
+      />
 
-                                  </div>
+      {input.length >= WARN_THRESHOLD && (
+        <div className={`charCount ${input.length >= MAX_INPUT_LENGTH ? "limit" : ""}`}>
+          残り {MAX_INPUT_LENGTH - input.length} 文字
+        </div>
+      )}
 
-                {/* SPは“ダミー”→タップでBottom Sheet */}
-                <button
-                  type="button"
-                  className="spOnly inputDock"
-                  onClick={() => {
-                    if (!canSend) return;
-                    setInputSheetText(cut(input));
-                    setInputSheetOpen(true);
-                    // iOS: open直後フォーカスが外れることがあるので、sheet側でautoFocusする
-                  }}
-                  disabled={!canSend}
-                >
-                  <span className="dockPlaceholder">{loading ? "回答中…" : "相談内容を入力"}</span>
-                </button>
+      {showExpand && (
+        <button
+          type="button"
+          className="expandBtn"
+          onClick={() => {
+            setComposerText(cut(input));
+            setComposerOpen(true);
+          }}
+          aria-label="全画面で編集"
+          title="全画面で編集"
+          disabled={!canSend}
+        >
+          ⤢
+        </button>
+      )}
 
-                {showExpand && (
-                  <button
-                    type="button"
-                    className="expandBtn"
-                    onClick={() => {
-                      setComposerText(cut(input));
-                      setComposerOpen(true);
-                    }}
-                    aria-label="全画面で編集"
-                    title="全画面で編集"
-                    disabled={!canSend}
-                  >
-                    全画面
-                  </button>
-                )}
+      <button
+        type="button"
+        className="sendBtn"
+        onClick={() => {
+          if (canSend) sendMessage();
+        }}
+        disabled={!canSend || input.length > MAX_INPUT_LENGTH}
+      >
+        送信
+      </button>
+    </div>
 
-                             
+    {/* SP */}
+    <div className="spOnly inputRowSp">
+      <button
+        type="button"
+        className="inputDock"
+        onClick={() => {
+          if (!canSend) return;
+          setInputSheetText(cut(input));
+          setInputSheetOpen(true);
+        }}
+        disabled={!canSend}
+      >
+        <span className="dockPlaceholder">{loading ? "回答中…" : "相談内容を入力"}</span>
+      </button>
 
-                <button
-                  type="button"
-                  className="sendBtn"
-                  onClick={() => {
-                    if (canSend) sendMessage();
-                  }}
-                  disabled={!canSend || input.length > MAX_INPUT_LENGTH}
-                >
-                  送信
-                </button>
-              </div>
+      <button
+        type="button"
+        className="sendBtn"
+        onClick={() => {
+          if (canSend) sendMessage();
+        }}
+        disabled={!canSend || input.length > MAX_INPUT_LENGTH}
+      >
+        送信
+      </button>
+    </div>
+  </div>
             </div>
           </div>
         </div>
@@ -1946,7 +1956,7 @@ const openUrlNewTab = (url: string) => {
   font-size:18px;
   font-weight:900;
   letter-spacing:0.08em;
-  line-height: 1
+  line-height: 1;
   white-space:nowrap;
   position: relative;
   top: -0.07em;
@@ -2174,7 +2184,22 @@ const openUrlNewTab = (url: string) => {
           display: flex;
           gap: 8px;
           align-items: center;
+          width: 100%;
         }
+          .inputRowPc{
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+.inputRowSp{
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
           /* ✅ iOSキーボード表示時：余白を詰めて入力欄をキーボードに寄せる */
         .chatInputWrap.kbOpen {
           padding-bottom: 8px;
@@ -2183,8 +2208,8 @@ const openUrlNewTab = (url: string) => {
         .charCount{
   font-size:12px;
   color:#666;
-  margin-top:6px;
-  text-align:right;
+  margin-top:0;
+  white-space: nowrap;
 }
 .charCount.limit{
   color:#b91c1c;
@@ -2312,20 +2337,28 @@ const openUrlNewTab = (url: string) => {
 
         .chatInput {
           flex: 1;
-          padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
+          padding: 10px 12px;
           border-radius: 12px;
           border: 1px solid #ddd;
           font-size: 16px;
+          line-height: 1.2;
+  min-height: 44px; /* 1行の見た目を保証 */
         }
 
         .expandBtn {
-          padding: 10px 10px;
+          width: 40px;
+  height: 40px;
+  padding: 0;
           border-radius: 12px;
           border: 1px solid #ddd;
           background: #fff;
           cursor: pointer;
           white-space: nowrap;
-          font-size: 13px;
+          font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
         }
 
         .sendBtn {
@@ -2642,7 +2675,7 @@ const openUrlNewTab = (url: string) => {
     display: none !important;
   }
   .spOnly {
-    display: inline-flex !important;
+    display: flex !important;
   }
 
   .appBody {
