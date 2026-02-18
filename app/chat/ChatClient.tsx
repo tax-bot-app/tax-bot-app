@@ -1088,9 +1088,12 @@ const openUrlNewTab = (url: string) => {
                   ☰
                 </button>
 
-                <div className={`appTitle ${yuji.className}`} title="さじかげん">
-                  さじかげん
-                </div>
+                <div className="appBrand" title="さじかげん">
+  <img src="/sa-logo.png" alt="さ" className="appLogo" />
+  <span className={`appTitleText ${yuji.className}`}>じかげん</span>
+</div>
+
+
               </div>
 
               <div className="topRight">
@@ -1921,6 +1924,29 @@ const openUrlNewTab = (url: string) => {
           overflow: hidden;
           text-overflow: ellipsis;
         }
+
+        .appBrand{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+.appLogo{
+  width:24px;
+  height:24px;
+  object-fit:contain;
+}
+
+.appTitleText{
+  font-size:18px;
+  line-height:1;
+}
+
+@media (max-width: 760px){
+  .appLogo{ width:24px; height:24px; }
+  .appTitleText{ font-size:17px; }
+}
+
 
         .topRight {
           display: flex;
