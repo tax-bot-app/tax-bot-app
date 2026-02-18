@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
 import { Yuji_Syuku } from "next/font/google";
-import ClientProviders from "./ClientProviders"; // ★追加
+import "./globals.css";
 
 export const yuji = Yuji_Syuku({
   subsets: ["latin"],
@@ -19,24 +18,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "さじかげん｜税務相談",
-  description: "あなたの欲しい ちょうどいい さじかげん",
-  manifest: "/manifest.webmanifest",
-  icons: {
-    icon: [
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
-    ],
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
-  },
-};
+
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ja">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <ClientProviders>{children}</ClientProviders> {/* ★ここだけ差し替え */}
+        {children}
       </body>
     </html>
   );
