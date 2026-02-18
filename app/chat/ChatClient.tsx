@@ -1717,7 +1717,7 @@ const openUrlNewTab = (url: string) => {
                       setComposerOpen(true);
                     }}
                   >
-                    全画面
+                    ⤢
                   </button>
                 )}
 
@@ -2364,8 +2364,11 @@ const openUrlNewTab = (url: string) => {
           background: #111;
           color: #fff;
           cursor: pointer;
-          white-space: nowrap;
-          font-size: 13px;
+          font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
           font-weight: 800;
         }
         .sendBtn:disabled,
