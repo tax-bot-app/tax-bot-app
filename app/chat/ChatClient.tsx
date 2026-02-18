@@ -1928,19 +1928,23 @@ const openUrlNewTab = (url: string) => {
         .appBrand{
   display:flex;
   align-items:center;
-  gap:8px;
+  gap:6px;              /* ← 8→6 で詰める */
 }
 
 .appLogo{
-  width:24px;
-  height:24px;
+  width:22px;           /* ← 24/26より少し小さく */
+  height:22px;
   object-fit:contain;
+  display:block;        /* ← 画像の余計な隙間消える */
+  transform: translateY(-1px); /* ← これが“高さズレ”の補正 */
 }
 
 .appTitleText{
-  font-size:18px;
-  line-height:1;
+  line-height:1;        /* ← 文字の上下余白を締める */
+  display:inline-block;
+  transform: translateY(1px);  /* ← 必要なら。ロゴとの相殺 */
 }
+
 
 @media (max-width: 760px){
   .appLogo{ width:24px; height:24px; }
