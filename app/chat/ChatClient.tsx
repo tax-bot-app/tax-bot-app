@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSPropertie
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
-import { yuji } from "@/app/layout";
+import { yuji } from "../fonts";
 
 type Role = "user" | "assistant";
 
