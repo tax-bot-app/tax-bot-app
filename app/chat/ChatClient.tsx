@@ -1794,12 +1794,8 @@ const openUrlNewTab = (url: string) => {
           background: #fff;
         }
 
-        .pcOnly {
-          display: flex;
-        }
-        .spOnly {
-          display: none;
-        }
+        .pcOnly { display: flex !important; }
+        .spOnly { display: none !important; }
 
         /* ===== Thread ===== */
         .threadCol {
