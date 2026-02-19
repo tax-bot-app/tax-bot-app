@@ -1,63 +1,206 @@
 // app/api/demo-chat/route.ts
 import { NextResponse } from "next/server";
-import { generateAnswer } from "../../lib2/ai/generateAnswer";
+import { createClient } from "@supabase/supabase-js";
 import { judgeGuardrails } from "../../lib2/guardrails";
+import { buildAnswerCore } from "../chat/route";
 
 export const runtime = "nodejs";
 
-type Body = {
-  message?: string;
-};
+type DemoRes =
+  | { ok: true; answer: string }
+  | { ok: false; error: string };
 
-function stripLegacySections(text: string): string {
-  // 万一LLMが癖で出した場合の保険
-  return text
-    .replace(/🥄ちょうど良いライン[\s\S]*?(?=\n\n|$)/g, "")
-    .replace(/✅要点[\s\S]*?(?=\n\n|$)/g, "")
-    .replace(/⚠️注意[\s\S]*?(?=\n\n|$)/g, "")
-    .replace(/🔎確認[\s\S]*?(?=\n\n|$)/g, "")
-    .trim();
+const DEMO_MAX_INPUT = 400;
+const DEMO_MAX_OUTPUT = 750;
+
+function mustEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
+
+function extractSection(answer: string, head: "🥄" | "✅" | "⚠️"): string[] {
+  const lines = String(answer ?? "").replace(/\r\n/g, "\n").split("\n");
+  const out: string[] = [];
+  let inSec = false;
+  const markers = ["🥄", "✅", "⚠️", "🍚", "🧂", "👉", "🔎"];
+
+  for (const line of lines) {
+    const t = line.trimStart();
+    if (t.startsWith(head)) {
+      inSec = true;
+      out.push(line.trimEnd());
+      continue;
+    }
+    if (inSec) {
+      if (markers.some((m) => t.startsWith(m))) break;
+      out.push(line.trimEnd());
+    }
+  }
+  while (out.length > 0 && !out[out.length - 1].trim()) out.pop();
+  return out;
+}
+
+function stripHeadLine(line: string): string {
+  let t = (line ?? "").trim();
+
+  // 先頭の絵文字を落とす
+  t = t.replace(/^[🥄✅⚠️]\s*/, "");
+
+  // 「先に言うと：」「要点：」「注意：」みたいなラベルがあれば落とす
+  const m = t.match(/^.{0,18}[：:]\s*(.+)$/);
+  if (m?.[1]) t = m[1].trim();
+
+  return t.trim();
+}
+
+function pickBullets(lines: string[], max: number): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const line of lines) {
+    let t = (line ?? "").trim();
+    if (!t) continue;
+
+    // 見出し行（✅要点 ... / ⚠️注意 ...）も中身があれば拾う
+    if (/^[✅⚠️]/.test(t)) {
+      t = stripHeadLine(t);
+      if (t && !seen.has(t)) {
+        seen.add(t);
+        out.push(t);
+      }
+      if (out.length >= max) break;
+      continue;
+    }
+
+    // 箇条書き
+    t = t.replace(/^[-・*]\s*/, "").trim();
+    if (!t) continue;
+
+    if (!seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+    if (out.length >= max) break;
+  }
+
+  return out.slice(0, max);
+}
+
+function stripLinesAndCatchphrase(text: string): string {
+  const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
+
+  const out = lines.filter((line) => {
+    const t = line.trimStart();
+    // Lines（🍚🧂）は出さない
+    if (t.startsWith("🍚") || t.startsWith("🧂")) return false;
+    // 合言葉CTAはデモでは邪魔
+    if (/攻め守りで|さじかげんよろ|さじかげんよろしく/.test(t)) return false;
+    return true;
+  });
+
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function toDemoAnswer(full: string): string {
+  let a = stripLinesAndCatchphrase(full);
+  if (!a) return "";
+
+  const sec = extractSection(a, "🥄");
+  const key = extractSection(a, "✅");
+  const warn = extractSection(a, "⚠️");
+
+  const out: string[] = [];
+
+  // 1) 結論（🥄があればそこ）
+  const conclLine =
+    (sec.find((l) => l.trim()) ? stripHeadLine(sec.find((l) => l.trim())!) : "") ||
+    (key.find((l) => l.trim()) ? stripHeadLine(key.find((l) => l.trim())!) : "") ||
+    "";
+
+  if (conclLine) out.push(conclLine);
+
+  // 2) 要点（最大2）
+  const keyBullets = pickBullets(key, 2);
+  if (keyBullets.length) {
+    out.push("");
+    for (const b of keyBullets) out.push(`- ${b}`);
+  }
+
+  // 3) 注意（最大1） ※ラベルは出さず “※” で柔らかく
+  const warnBullets = pickBullets(warn, 1);
+  if (warnBullets[0]) {
+    out.push("");
+    out.push(`※ ${warnBullets[0]}`);
+  }
+
+  // 4) デモは “追い質問” を置かない（末尾の疑問文は落とす）
+  while (out.length > 0 && /[?？]\s*$/.test(out[out.length - 1])) out.pop();
+
+  let s = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (!s) s = a.split("\n").slice(0, 6).join("\n").trim();
+
+  if (s.length > DEMO_MAX_OUTPUT) s = s.slice(0, DEMO_MAX_OUTPUT).trimEnd() + "…";
+  return s;
 }
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Body;
-    const message = (body?.message ?? "").trim();
+    const body = await req.json().catch(() => null);
+    const message = String(body?.message ?? "").trim();
 
     if (!message) {
+      return NextResponse.json({ ok: false, error: "message is required" } satisfies DemoRes, { status: 400 });
+    }
+    if (message.length > DEMO_MAX_INPUT) {
       return NextResponse.json(
-        { ok: false, error: "message is required" },
+        { ok: false, error: `デモは ${DEMO_MAX_INPUT} 文字までです。` } satisfies DemoRes,
         { status: 400 }
       );
     }
 
-    // 本番と同じガードレール
-    const guardrail = await judgeGuardrails(message);
-
-    if (guardrail.action === "block") {
-      return NextResponse.json({
-        ok: true,
-        answer:
-          "その内容はお手伝いできません。\n合法な範囲で整理する方向ならご相談ください。",
-      });
+    const gr = judgeGuardrails(message);
+    if (gr.action === "block") {
+      return NextResponse.json({ ok: true, answer: String(gr.userMessage ?? "").trim() } satisfies DemoRes);
     }
 
-    const { answer } = await generateAnswer({
+    // demo はログイン無しなので service role 推奨（RLSでknowledgeを読めない環境だとQA採用が死ぬ）
+    const url = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
+    const key =
+      process.env.SUPABASE_SERVICE_ROLE_KEY || mustEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+
+    const db = createClient(url, key, { auth: { persistSession: false } });
+
+    const topicMode: "regex" | "llm" =
+      (process.env.TOPIC_MODE || "regex") === "llm" ? "llm" : "regex";
+
+    // demoは単発扱い：conv/userはダミーでOK（persistDebug=falseなのでDBに残らない）
+    const convId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+
+    const core = await buildAnswerCore({
+      mode: "demo",
+      db,
+      userId,
+      convId,
       message,
-      promptParts: {
-        outputMode: "demo",
-        persona: [
-          "口調は標準語、参謀スタイル。",
-        ],
-      },
+      dialect: "standard",
+      stance: "sanbo",
+      gr,
+      topicMode,
+      persistDebug: false,
     });
 
-    const cleaned = stripLegacySections(answer);
+    const answer = toDemoAnswer(core.answer);
 
-    return NextResponse.json({ ok: true, answer: cleaned });
+    if (!answer) {
+      return NextResponse.json({ ok: false, error: "AI returned empty response" } satisfies DemoRes, { status: 502 });
+    }
+
+    return NextResponse.json({ ok: true, answer } satisfies DemoRes);
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: e?.message ?? "error" },
+      { ok: false, error: e?.message ?? String(e) } satisfies DemoRes,
       { status: 500 }
     );
   }

@@ -18,8 +18,7 @@ import {
   decideAxisSubject,
   inferLensWithContext,
   TOPIC_TAX_AUDIT,
-  AUDIT_OVERLAY_TOPICS,
-  type Lens,
+    type Lens,
 } from "../../lib2/topicDecision";
 
 // LLM topic decision
@@ -2059,7 +2058,7 @@ async function fetchPrevDebugForPrevUserMessage(
       .limit(25);
 
     const rows = Array.isArray(data) ? data : [];
-    const hit = rows.find((r) => {
+    const hit = rows.find((r: any) => {
       const meta = (r?.meta ?? {}) as any;
       const rawJson = String(meta.topic_raw_json ?? "");
       const raw = String(meta.topic_raw ?? "");
@@ -2091,12 +2090,43 @@ function followupFooter(axisTopic: string, dialect: Dialect, stance: Stance): st
   return "※ 税務調査は「形式より実態」「一貫性」を見られます。";
 }
 
-/** ===== POST ===== */
-export async function POST(req: Request) {
-  const topicMode: "regex" | "llm" =
-    (process.env.TOPIC_MODE || "regex") === "llm" ? "llm" : "regex";
+// ===== shared answer core（chat / demo 共通）=====
+// ※ demo は「同じ回答ロジックで生成 → 最後に toDemoAnswer で削る」方針なので、ここは原則いじらない。
+// ※ 例外：debug書き込みだけは demo で off にする（DB汚さないため）。
 
-  // LLM decision outputs
+export async function buildAnswerCore(params: {
+  mode: "chat" | "demo";
+  db: any;
+
+  // chat: 実ユーザー / demo: ダミーUUIDでOK（persistDebug=falseならDBに書かれない）
+  userId: string;
+  convId: string;
+
+  message: string;
+  dialect: "kansai" | "standard";
+  stance: "zubatto" | "sanbo";
+
+  gr: any; // judgeGuardrails の戻り（route.ts内で既に作って渡す）
+  topicMode: "regex" | "llm";
+
+  // demoは必ず false
+  persistDebug?: boolean;
+}): Promise<{ answer: string }> {
+  const {
+    mode,
+    db,
+    userId,
+    convId,
+    message,
+    dialect,
+    stance,
+    gr,
+    topicMode,
+  } = params;
+
+  const persistDebug = params.persistDebug ?? (mode === "chat");
+
+    // ===== LLM decision outputs (was in POST scope) =====
   let llmOk = false;
   let llmErr = "";
   let llmRaw = "";
@@ -2110,204 +2140,24 @@ export async function POST(req: Request) {
   let llmNudgeLines = false;
   let llmNudgeReason = "";
 
-  try {
-    const token = bearer(req);
-    if (!token)
-      return NextResponse.json(
-        { ok: false, error: "Missing bearer token" } satisfies ChatRes,
-        { status: 401 }
-      );
-
-    const body = await req.json().catch(() => null);
-
-    const MAX = 6000;
-  const msg = String(body?.message ?? "").trim();
-  if (!msg) {
-    return NextResponse.json({ ok: false, error: "空のメッセージです" }, { status: 400 });
-  }
-  if (msg.length > MAX) {
-    return NextResponse.json(
-      { ok: false, error: `相談内容が長すぎます（最大 ${MAX} 文字）` },
-      { status: 400 }
-    );
-  }
-
-    const message = safeStr(body?.message).trim();
-    const idempotencyKey = safeStr(body?.idempotencyKey).trim();
-    const conversationIdRaw = safeStr(body?.conversationId).trim();
-    const dialect = normalizeDialect(safeStr(body?.dialect).trim());
-    const stance = normalizeStance(safeStr(body?.stance).trim() as any);
-    const conversationId = conversationIdRaw ? conversationIdRaw : null;
-
-    if (!message)
-      return NextResponse.json(
-        { ok: false, error: "message is required" } satisfies ChatRes,
-        { status: 400 }
-      );
-    if (!idempotencyKey)
-      return NextResponse.json(
-        { ok: false, error: "idempotencyKey is required" } satisfies ChatRes,
-        { status: 400 }
-      );
-    if (!isUuid(idempotencyKey))
-      return NextResponse.json(
-        { ok: false, error: "idempotencyKey must be uuid" } satisfies ChatRes,
-        { status: 400 }
-      );
-
-    const url = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
-    const anon = mustEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-
-    const authClient = createClient(url, anon, { auth: { persistSession: false } });
-    const { data: userRes, error: userErr } = await authClient.auth.getUser(token);
-    if (userErr || !userRes?.user)
-      return NextResponse.json(
-        { ok: false, error: "Invalid session" } satisfies ChatRes,
-        { status: 401 }
-      );
-    const user = userRes.user;
-
-    const db = createClient(url, anon, {
-      auth: { persistSession: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
-    const { data: urow } = await db.from("users").select("plan").eq("id", user.id).maybeSingle();
-    const plan = (urow?.plan as string) ?? "free";
-    const limit = limitFromPlan(plan);
-
-    if (limit <= 0) {
-      return NextResponse.json(
-        { ok: false, error: "Plan does not allow chat", used_talks: 0, limit_talks: 0 } satisfies ChatRes,
-        { status: 403 }
-      );
-    }
-
-    const gr = judgeGuardrails(message);
-
-    
-
-if (gr.action === "block") {
-  const nowIso = new Date().toISOString();
-
-  // 既存 conversationId が来てれば使う（body の名前はあなたの route.ts に合わせて）
-  let convId: string | null =
-    typeof (body as any)?.conversationId === "string" ? String((body as any).conversationId) : null;
-
-  try {
-    // ① conversation を確保
-    if (!convId) {
-      const { data: conv, error: convErr } = await db
-        .from("conversations")
-        .insert({
-          user_id: user.id,
-          title: "（無題）",
-          summary: "",
-          summary_updated_at: nowIso,
-        })
-        .select("id")
-        .single();
-
-      if (convErr) throw convErr;
-      convId = conv?.id ? String(conv.id) : null;
-    }
-
-    // ② messages に user / assistant を保存（loadMessagesで消えない）
-    if (convId) {
-      const rows = [
-        {
-          user_id: user.id,
-          conversation_id: convId,
-          role: "user",
-          content: message,
-          created_at: nowIso,
-        },
-        {
-          user_id: user.id,
-          conversation_id: convId,
-          role: "assistant",
-          content: gr.userMessage,
-          created_at: nowIso,
-        },
-      ];
-
-      const { error: mErr } = await db.from("messages").insert(rows);
-      if (mErr) throw mErr;
-    }
-
-    // ③ chat_debug_events（共通関数経由で書く：形式を統一＆失敗理由をログで見える化）
-await writeDebugEvent({
-  db,
-  trace: {
-    userId: user.id,
-    convId: convId || "", // ★DebugTraceはstringなので空文字で寄せる
-    messageHead: message.slice(0, 80),
-
-    topicsNow: [],
-    inferredTopic: "",
-    lens: "system",
-
-    followup: false,
-    shifted: false,
-
-    usedKnowledge: false,
-    usedLinesPick: false,
-
-    followupPhase: false,
-    followupExplicit: false,
-    lineRequest: false,
-    forceNormalAnswer: false,
-
-    path: "guardrail:block",
-    meta: {
-      guardrail_action: "block",
-      guardrail_reason: String((gr as any)?.reason ?? ""),
-      suppress_branding: true,
-      suppress_branding_reason: `rule:block:${String((gr as any)?.reason ?? "")}`,
-      dialect,
-      stance,
-    },
-  },
-});
-
-
-  } catch (e) {
-    // DB側でコケても “ユーザーには回答返す”
-    // （ここで throw すると again thinking 地獄になる）
-  }
-
-  // ④ レスポンス（フロントが判別できるフラグ付き）
-  return NextResponse.json(
-    {
-      ok: true,
-      plan,
-      used_talks: null,
-      limit_talks: null,
-      conversation_id: convId,
-      message: gr.userMessage,
-      guardrail_block: true,
-      guardrail_action: "block",
-    } as any,
-    { status: 200 }
-  );
-}
-
-// ===== suppressBranding（LLM判定で確定）=====
+  // ===== ここから下に、今POST内の answer生成 try { ... } の “中身” を移植 =====
+  // ルール：
+  // - いまPOST内にある `let answer = ""; try { ... }` の try本体を、そのままここへ。
+  // - `return NextResponse.json(...)` はこの関数では使えないので、catchは呼び出し側（POST）でやる。
+  // - 末尾の `emitDebug(trace); await writeDebugEvent(...)` は persistDebug でガードする（下の指示参照）
+  //
+  // 置換が必要なのは基本この2つだけ：
+  // 1) trace.userId: user.id → userId
+  // 2) debug書き込み：persistDebug=false なら実行しない
+// ===== carried state (was in POST scope) =====
 let suppressBranding = false;
 let suppressBrandingReason = "unset";
 
+  let answer = "";
 
-    const convId = await ensureConversationId({
-      db,
-      userId: user.id,
-      conversationId,
-      firstUserMessage: message,
-    });
-
-    let answer = "";
-
-    try {
-      // prev user raw（直近のユーザー発話そのまま：weakスキップしない）
+  // --- BEGIN MOVED BLOCK (from POST try body) ---
+  // ★このコメントの間に「POSTの try の中身」を移植する（丸ごと）
+  // prev user raw（直近のユーザー発話そのまま：weakスキップしない）
       const prevUserMessageRaw = await (async () => {
         const { data: rows } = await db
           .from("messages")
@@ -2319,7 +2169,9 @@ let suppressBrandingReason = "unset";
           .limit(2);
         if (!rows || rows.length === 0) return null;
         const current = message.trim();
-        const cands = rows.map((r) => (r.content ?? "").trim()).filter((c) => c && c !== current);
+        const cands = (rows ?? [])
+   .map((r: any) => String(r?.content ?? "").trim())
+   .filter((c: string) => c && c !== current);
         return cands[0] ?? null;
       })();
 
@@ -2336,9 +2188,9 @@ let suppressBrandingReason = "unset";
 
         if (!rows || rows.length === 0) return null;
         const current = message.trim();
-        const candidates = rows
-          .map((r) => (r.content ?? "").trim())
-          .filter((c) => c && c !== current);
+        const candidates = (rows ?? [])
+  .map((r: any) => String(r?.content ?? "").trim())
+  .filter((c: string) => c && c !== current);
         for (const c of candidates) if (!isWeakUtterance(c)) return c;
         return candidates[0] ?? null;
       })();
@@ -2441,7 +2293,7 @@ const recentUserMsgs = await (async () => {
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(6);
-  return (rows ?? []).map((r) => String(r.content ?? ""));
+  return (rows ?? []).map((r: any) => String(r?.content ?? ""));
 })();
 
 // ===== 1) decide topic (axis/subject) =====
@@ -3075,10 +2927,7 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
         topicKbItemsForPrompt.length === 0 &&
         (followupOnly || weakUtterance);
 
-      // ★ topicClarifyInquiry は固定の選択肢羅列をやめる（LLMに自然誘導させる）
-      const topicClarifyInquiry = "";
-
-      const pickedQa = pickBestQaPreferSubject({
+            const pickedQa = pickBestQaPreferSubject({
         items: topicKbItemsForPrompt,
         message,
         subjectTopic,
@@ -3409,7 +3258,7 @@ meta.answer_head = dbgHead(answer, 200);
 
       const trace: DebugTrace = {
         convId,
-        userId: user.id,
+        userId: userId,
         messageHead: dbgHead(message, 120),
         topicsNow,
         inferredTopic: axisTopic || "",
@@ -3426,14 +3275,232 @@ meta.answer_head = dbgHead(answer, 200);
         meta,
       };
 
-      emitDebug(trace);
-      await writeDebugEvent({ db, trace });
-    } catch (e: any) {
+      if (persistDebug) {
+  emitDebug(trace);
+  await writeDebugEvent({ db, trace });
+}
+  // --- END MOVED BLOCK ---
+
+  return { answer };
+}
+
+
+/** ===== POST ===== */
+export async function POST(req: Request) {
+  const topicMode: "regex" | "llm" =
+    (process.env.TOPIC_MODE || "regex") === "llm" ? "llm" : "regex";
+
+    try {
+    const token = bearer(req);
+    if (!token)
       return NextResponse.json(
-        { ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes,
-        { status: 502 }
+        { ok: false, error: "Missing bearer token" } satisfies ChatRes,
+        { status: 401 }
+      );
+
+    const body = await req.json().catch(() => null);
+
+    const MAX = 6000;
+  const msg = String(body?.message ?? "").trim();
+  if (!msg) {
+    return NextResponse.json({ ok: false, error: "空のメッセージです" }, { status: 400 });
+  }
+  if (msg.length > MAX) {
+    return NextResponse.json(
+      { ok: false, error: `相談内容が長すぎます（最大 ${MAX} 文字）` },
+      { status: 400 }
+    );
+  }
+
+    const message = safeStr(body?.message).trim();
+    const idempotencyKey = safeStr(body?.idempotencyKey).trim();
+    const conversationIdRaw = safeStr(body?.conversationId).trim();
+    const dialect = normalizeDialect(safeStr(body?.dialect).trim());
+    const stance = normalizeStance(safeStr(body?.stance).trim() as any);
+    const conversationId = conversationIdRaw ? conversationIdRaw : null;
+
+    if (!message)
+      return NextResponse.json(
+        { ok: false, error: "message is required" } satisfies ChatRes,
+        { status: 400 }
+      );
+    if (!idempotencyKey)
+      return NextResponse.json(
+        { ok: false, error: "idempotencyKey is required" } satisfies ChatRes,
+        { status: 400 }
+      );
+    if (!isUuid(idempotencyKey))
+      return NextResponse.json(
+        { ok: false, error: "idempotencyKey must be uuid" } satisfies ChatRes,
+        { status: 400 }
+      );
+
+    const url = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
+    const anon = mustEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+
+    const authClient = createClient(url, anon, { auth: { persistSession: false } });
+    const { data: userRes, error: userErr } = await authClient.auth.getUser(token);
+    if (userErr || !userRes?.user)
+      return NextResponse.json(
+        { ok: false, error: "Invalid session" } satisfies ChatRes,
+        { status: 401 }
+      );
+    const user = userRes.user;
+
+    const db = createClient(url, anon, {
+      auth: { persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    const { data: urow } = await db.from("users").select("plan").eq("id", user.id).maybeSingle();
+    const plan = (urow?.plan as string) ?? "free";
+    const limit = limitFromPlan(plan);
+
+    if (limit <= 0) {
+      return NextResponse.json(
+        { ok: false, error: "Plan does not allow chat", used_talks: 0, limit_talks: 0 } satisfies ChatRes,
+        { status: 403 }
       );
     }
+
+    const gr = judgeGuardrails(message);
+
+    
+
+if (gr.action === "block") {
+  const nowIso = new Date().toISOString();
+
+  // 既存 conversationId が来てれば使う（body の名前はあなたの route.ts に合わせて）
+  let convId: string | null =
+    typeof (body as any)?.conversationId === "string" ? String((body as any).conversationId) : null;
+
+  try {
+    // ① conversation を確保
+    if (!convId) {
+      const { data: conv, error: convErr } = await db
+        .from("conversations")
+        .insert({
+          user_id: user.id,
+          title: "（無題）",
+          summary: "",
+          summary_updated_at: nowIso,
+        })
+        .select("id")
+        .single();
+
+      if (convErr) throw convErr;
+      convId = conv?.id ? String(conv.id) : null;
+    }
+
+    // ② messages に user / assistant を保存（loadMessagesで消えない）
+    if (convId) {
+      const rows = [
+        {
+          user_id: user.id,
+          conversation_id: convId,
+          role: "user",
+          content: message,
+          created_at: nowIso,
+        },
+        {
+          user_id: user.id,
+          conversation_id: convId,
+          role: "assistant",
+          content: gr.userMessage,
+          created_at: nowIso,
+        },
+      ];
+
+      const { error: mErr } = await db.from("messages").insert(rows);
+      if (mErr) throw mErr;
+    }
+
+    // ③ chat_debug_events（共通関数経由で書く：形式を統一＆失敗理由をログで見える化）
+await writeDebugEvent({
+  db,
+  trace: {
+    userId: user.id,
+    convId: convId || "", // ★DebugTraceはstringなので空文字で寄せる
+    messageHead: message.slice(0, 80),
+
+    topicsNow: [],
+    inferredTopic: "",
+    lens: "system",
+
+    followup: false,
+    shifted: false,
+
+    usedKnowledge: false,
+    usedLinesPick: false,
+
+    followupPhase: false,
+    followupExplicit: false,
+    lineRequest: false,
+    forceNormalAnswer: false,
+
+    path: "guardrail:block",
+    meta: {
+      guardrail_action: "block",
+      guardrail_reason: String((gr as any)?.reason ?? ""),
+      suppress_branding: true,
+      suppress_branding_reason: `rule:block:${String((gr as any)?.reason ?? "")}`,
+      dialect,
+      stance,
+    },
+  },
+});
+
+
+  } catch (e) {
+    // DB側でコケても “ユーザーには回答返す”
+    // （ここで throw すると again thinking 地獄になる）
+  }
+
+  // ④ レスポンス（フロントが判別できるフラグ付き）
+  return NextResponse.json(
+    {
+      ok: true,
+      plan,
+      used_talks: null,
+      limit_talks: null,
+      conversation_id: convId,
+      message: gr.userMessage,
+      guardrail_block: true,
+      guardrail_action: "block",
+    } as any,
+    { status: 200 }
+  );
+}
+
+    const convId = await ensureConversationId({
+      db,
+      userId: user.id,
+      conversationId,
+      firstUserMessage: message,
+    });
+
+    let answer = "";
+
+try {
+  const core = await buildAnswerCore({
+    mode: "chat",
+    db,
+    userId: user.id,
+    convId,
+    message,
+    dialect,
+    stance,
+    gr,
+    topicMode,
+    persistDebug: true,
+  });
+  answer = core.answer;
+} catch (e: any) {
+  return NextResponse.json(
+    { ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes,
+    { status: 502 }
+  );
+}
 
     const { data, error } = await db.rpc("consume_talk_v2", {
       p_user_id: user.id,
