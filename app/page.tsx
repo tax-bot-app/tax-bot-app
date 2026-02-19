@@ -13,9 +13,27 @@ const PLANS: Array<{
   quotaLabel: string;
   note?: string;
 }> = [
-  { key: "lite", title: "Lite", priceLabel: "3,300円/月", quotaLabel: "月5回まで", note: "まず整理だけしたい方向け" },
-  { key: "standard", title: "Standard", priceLabel: "16,500円/月", quotaLabel: "月30回まで", note: "一番おすすめ" },
-  { key: "enterprise", title: "Enterprise", priceLabel: "33,000円/月", quotaLabel: "月100回まで", note: "複数担当・運用前提" },
+  { 
+  key: "lite", 
+  title: "Lite", 
+  priceLabel: "月額3,300円（税込）", 
+  quotaLabel: "月5回まで", 
+  note: "まずは様子見で始めたい方へ。単発確認や不安の切り分けに。※足りなくなったらいつでもアップグレード可能。" 
+},
+{ 
+  key: "standard", 
+  title: "Standard", 
+  priceLabel: "月額16,500円（税込）", 
+  quotaLabel: "月30回まで", 
+  note: "一番選ばれているプラン。実務で日常的に使うならこちら。" 
+},
+{ 
+  key: "enterprise", 
+  title: "Enterprise", 
+  priceLabel: "月額33,000円（税込）", 
+  quotaLabel: "月100回まで", 
+  note: "複数担当・継続運用向け。社内共有や定例相談の補助に。" 
+},
 ];
 
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
@@ -420,13 +438,14 @@ export default function Home() {
     },
     planTop: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" },
     badge: {
-      fontSize: 12,
-      padding: "4px 8px",
-      borderRadius: 999,
-      border: "1px solid rgba(30,94,255,0.25)",
-      color: "rgba(30,94,255,0.95)",
-      background: "rgba(30,94,255,0.06)",
-    },
+  fontSize: 12,
+  padding: "4px 10px",
+  borderRadius: 999,
+  border: "1px solid rgba(201,162,39,0.35)",
+  color: "#8A6D1F",
+  background: "linear-gradient(180deg, #F8E9B0, #E9C96A)",
+  fontWeight: 900,
+},
 
     footer: { marginTop: 40, color: "rgba(11,18,32,0.62)", fontSize: 12, lineHeight: 1.7 },
     footerTitle: { fontWeight: 900, color: "rgba(11,18,32,0.92)" },
@@ -474,7 +493,7 @@ export default function Home() {
                   onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(30,94,255,0.06)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
-                  プライバシー
+                  プライバシーボリシー
                 </Link>
                 <Link
                   href="/terms"
@@ -535,7 +554,7 @@ export default function Home() {
 
             {/* ✅ 税務調査経験（場所はここで固定／ブロック無し） */}
             <p style={{ ...styles.small, marginTop: 10 }}>
-              税務調査対応の経験を踏まえて、現実的な“揉めどころ”から整理します。
+              豊富な税務調査対応の経験を踏まえて、現実的な“揉めどころ”から整理します。
             </p>
 
             
@@ -576,7 +595,7 @@ export default function Home() {
               {demoError && <div style={styles.warn}>{demoError}</div>}
 
               <div style={styles.small}>
-                出力はデモ用に短めです（要点2・注意1）。有料プランでは金額レンジの具体化や条件分岐まで整理します。
+                出力はデモ用に短めです。有料プランでは金額レンジの具体化や『線引き』まで整理します。
               </div>
             </div>
 
