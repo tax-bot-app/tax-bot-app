@@ -20,12 +20,10 @@ const PLANS: Array<{
 
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
 
-type DemoRes =
-  | { ok: true; answer: string }
-  | { ok: false; error: string };
+type DemoRes = { ok: true; answer: string } | { ok: false; error: string };
 
 const DEMO_COOKIE_KEY = "sajikagen_demo_done";
-const DEMO_MAX_LEN = 400; // デモは短めで
+const DEMO_MAX_LEN = 400;
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -44,14 +42,17 @@ export default function Home() {
 
   const [fatal, setFatal] = useState<string | null>(null);
 
-  // --- demo state ---
+  // menu
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // demo
   const [demoInput, setDemoInput] = useState("");
   const [demoBusy, setDemoBusy] = useState(false);
   const [demoDone, setDemoDone] = useState(false);
   const [demoAnswer, setDemoAnswer] = useState<string | null>(null);
   const [demoError, setDemoError] = useState<string | null>(null);
 
-  // --- plans state ---
+  // plans
   const [agreed, setAgreed] = useState(false);
   const [plansOpen, setPlansOpen] = useState(false);
   const [busyPlan, setBusyPlan] = useState<Plan | null>(null);
@@ -68,7 +69,7 @@ export default function Home() {
     }
   }, []);
 
-  // 初期：cookie でデモ済み判定
+  // init: cookie
   useEffect(() => {
     const done = getCookie(DEMO_COOKIE_KEY) === "1";
     if (done) {
@@ -77,25 +78,41 @@ export default function Home() {
     }
   }, []);
 
+  // close menu on outside click / esc
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest?.("[data-menu-root]")) return;
+      setMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("click", onClick);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("click", onClick);
+    };
+  }, []);
+
   const scrollTo = (el: HTMLElement | null) => {
     if (!el) return;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const onClickFreeTry = () => {
-    scrollTo(demoRef.current);
-  };
+  const onClickFreeTry = () => scrollTo(demoRef.current);
 
   const onClickShowPlans = () => {
     setPlansOpen(true);
-    // details open が反映されてからスクロール
     setTimeout(() => scrollTo(plansRef.current), 50);
   };
 
   const submitDemo = async () => {
     setDemoError(null);
-
     if (demoDone) return;
+
     const q = (demoInput ?? "").trim();
     if (!q) {
       setDemoError("相談内容を1行でいいので入れてください。空欄は税務署より厳しい。");
@@ -108,16 +125,10 @@ export default function Home() {
 
     setDemoBusy(true);
     try {
-      // ✅ ここは次工程で「本番生成ロジック」に接続する
-      // 例：app/api/demo-chat/route.ts を作って、内部で generateAnswer を呼ぶ
       const res = await fetch("/api/demo-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: q,
-          // デモ制御：要点2、注意1、短め、柔らかめ…などはサーバ側で寄せる
-          demo: true,
-        }),
+        body: JSON.stringify({ message: q, demo: true }),
       });
 
       const json = (await res.json().catch(() => null)) as DemoRes | null;
@@ -128,7 +139,6 @@ export default function Home() {
       setDemoDone(true);
       setCookie(DEMO_COOKIE_KEY, "1", 365);
 
-      // ✅ デモ後：入力消す／固定表示／プラン自動展開＆強調
       setPlansOpen(true);
       setTimeout(() => scrollTo(plansRef.current), 80);
     } catch (e: any) {
@@ -144,7 +154,7 @@ export default function Home() {
       return;
     }
     if (!agreed) {
-      alert("利用規約への同意が必要です。ここは税務より融通きかん。");
+      alert("利用規約への同意が必要です。");
       return;
     }
 
@@ -181,6 +191,7 @@ export default function Home() {
   const styles: Record<string, React.CSSProperties> = {
     wrap: { minHeight: "100vh", background: "#0b0b0c", color: "#fff" },
     container: { maxWidth: 980, margin: "0 auto", padding: "22px 16px 70px" },
+
     header: {
       display: "flex",
       alignItems: "center",
@@ -195,18 +206,9 @@ export default function Home() {
       borderBottom: "1px solid rgba(255,255,255,0.08)",
     },
     brand: { display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "#fff" },
-    logo: {
-      width: 34,
-      height: 34,
-      borderRadius: 12,
-      background: "linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))",
-      border: "1px solid rgba(255,255,255,0.12)",
-      display: "grid",
-      placeItems: "center",
-      fontWeight: 900,
-      letterSpacing: "0.08em",
-    },
-    nav: { display: "flex", alignItems: "center", gap: 10 },
+    brandLogo: { height: 26, width: "auto", display: "block" },
+
+    nav: { display: "flex", alignItems: "center", gap: 10, position: "relative" },
     btnGhost: {
       border: "1px solid rgba(255,255,255,0.16)",
       background: "transparent",
@@ -214,7 +216,8 @@ export default function Home() {
       borderRadius: 12,
       padding: "10px 12px",
       cursor: "pointer",
-      fontWeight: 700,
+      fontWeight: 800,
+      lineHeight: 1,
     },
     btnPrimary: {
       border: "1px solid rgba(255,255,255,0.12)",
@@ -224,12 +227,37 @@ export default function Home() {
       padding: "12px 14px",
       cursor: "pointer",
       fontWeight: 900,
+      lineHeight: 1,
     },
+    menu: {
+      position: "absolute",
+      top: 46,
+      right: 0,
+      background: "rgba(14,14,15,0.98)",
+      border: "1px solid rgba(255,255,255,0.14)",
+      borderRadius: 14,
+      padding: 10,
+      display: "grid",
+      gap: 6,
+      minWidth: 170,
+      zIndex: 30,
+      boxShadow: "0 18px 40px rgba(0,0,0,0.55)",
+    },
+    menuItem: {
+      padding: "10px 10px",
+      borderRadius: 10,
+      textDecoration: "none",
+      color: "rgba(255,255,255,0.92)",
+      border: "1px solid rgba(255,255,255,0.00)",
+      fontWeight: 800,
+      fontSize: 13,
+    },
+
     hero: {
       display: "grid",
       gridTemplateColumns: "1.1fr 0.9fr",
       gap: 18,
-      alignItems: "center",
+      alignItems: "stretch",
       padding: "22px 0 10px",
     },
     heroCard: {
@@ -238,29 +266,35 @@ export default function Home() {
       padding: 18,
       background: "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))",
       boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "center",
     },
     h1: { fontSize: 34, lineHeight: 1.15, margin: 0, letterSpacing: "-0.02em" },
     sub: { color: "rgba(255,255,255,0.72)", marginTop: 10, marginBottom: 0, lineHeight: 1.7 },
     heroActions: { display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" },
+
     heroImgBox: {
       border: "1px solid rgba(255,255,255,0.10)",
       borderRadius: 18,
-      background: "rgba(255,255,255,0.03)",
-      minHeight: 260,
-      display: "grid",
-      placeItems: "center",
       overflow: "hidden",
+      background: "rgba(255,255,255,0.03)",
+      minHeight: 280,
     },
-    heroImgNote: { color: "rgba(255,255,255,0.6)", fontSize: 12, padding: 14, textAlign: "center" },
+    heroImg: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
 
     section: { marginTop: 22 },
     sectionTitle: { fontSize: 18, margin: "0 0 10px", letterSpacing: "0.02em" },
-    sectionCard: {
-      border: "1px solid rgba(255,255,255,0.10)",
+
+    authority: {
+      marginTop: 14,
       borderRadius: 18,
+      border: "1px solid rgba(255,255,255,0.10)",
       background: "rgba(255,255,255,0.03)",
-      padding: 16,
+      padding: 14,
     },
+    authorityTitle: { fontWeight: 950, fontSize: 14, margin: 0 },
+    authoritySub: { color: "rgba(255,255,255,0.72)", marginTop: 6, marginBottom: 0, lineHeight: 1.7, fontSize: 13 },
 
     chatShell: {
       borderRadius: 18,
@@ -279,16 +313,6 @@ export default function Home() {
     chatTopLeft: { display: "flex", alignItems: "center", gap: 10 },
     dot: { width: 9, height: 9, borderRadius: 99, background: "rgba(255,255,255,0.55)" },
     chatBody: { padding: 14, display: "grid", gap: 10 },
-    bubbleUser: {
-      justifySelf: "end",
-      maxWidth: "85%",
-      padding: "10px 12px",
-      borderRadius: 16,
-      background: "rgba(255,255,255,0.12)",
-      border: "1px solid rgba(255,255,255,0.10)",
-      whiteSpace: "pre-wrap",
-      lineHeight: 1.6,
-    },
     bubbleBot: {
       justifySelf: "start",
       maxWidth: "90%",
@@ -299,6 +323,16 @@ export default function Home() {
       whiteSpace: "pre-wrap",
       lineHeight: 1.7,
       color: "rgba(255,255,255,0.92)",
+    },
+    bubbleUser: {
+      justifySelf: "end",
+      maxWidth: "85%",
+      padding: "10px 12px",
+      borderRadius: 16,
+      background: "rgba(255,255,255,0.12)",
+      border: "1px solid rgba(255,255,255,0.10)",
+      whiteSpace: "pre-wrap",
+      lineHeight: 1.6,
     },
     inputRow: {
       padding: 12,
@@ -332,6 +366,17 @@ export default function Home() {
       color: "rgba(255,220,220,0.95)",
       whiteSpace: "pre-wrap",
     },
+
+    prePlanMessage: {
+      marginTop: 26,
+      textAlign: "center",
+      borderRadius: 18,
+      border: "1px solid rgba(255,255,255,0.10)",
+      background: "rgba(255,255,255,0.03)",
+      padding: "16px 14px",
+    },
+    prePlanTitle: { fontSize: 20, fontWeight: 950, margin: 0 },
+    prePlanSub: { color: "rgba(255,255,255,0.72)", marginTop: 8, marginBottom: 0, lineHeight: 1.7 },
 
     details: {
       border: "1px solid rgba(255,255,255,0.10)",
@@ -370,6 +415,9 @@ export default function Home() {
       border: "1px solid rgba(255,255,255,0.18)",
       color: "rgba(255,255,255,0.85)",
     },
+
+    footer: { marginTop: 40, color: "rgba(255,255,255,0.6)", fontSize: 12, lineHeight: 1.7 },
+    footerTitle: { fontWeight: 900, color: "rgba(255,255,255,0.82)" },
   };
 
   return (
@@ -378,25 +426,66 @@ export default function Home() {
         {/* Header */}
         <header style={styles.header}>
           <Link href="/" style={styles.brand} aria-label="さじかげん">
-            <div style={styles.logo}>さ</div>
-            <div style={{ fontWeight: 900, letterSpacing: "0.08em" }}>さじかげん</div>
+            <img src="/sa-logo-header.png" alt="さじかげん" style={styles.brandLogo} />
           </Link>
 
-          <nav style={styles.nav}>
+          <nav style={styles.nav} data-menu-root>
             <Link href="/login" style={{ ...styles.btnGhost, textDecoration: "none", display: "inline-block" }}>
               ログイン
             </Link>
             <button style={styles.btnGhost} onClick={onClickFreeTry} aria-label="無料体験へ">
               無料体験
             </button>
-            <button style={styles.btnGhost} onClick={onClickShowPlans} aria-label="プランへ">
+
+            <button
+              style={styles.btnGhost}
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-label="メニュー"
+              aria-expanded={menuOpen}
+            >
               ☰
             </button>
+
+            {menuOpen && (
+              <div style={styles.menu} role="menu" aria-label="メニュー">
+                <Link
+                  href="/faq"
+                  style={styles.menuItem}
+                  onClick={() => setMenuOpen(false)}
+                  onMouseEnter={(e) => ((e.currentTarget.style.background = "rgba(255,255,255,0.06)"))}
+                  onMouseLeave={(e) => ((e.currentTarget.style.background = "transparent"))}
+                >
+                  FAQ
+                </Link>
+                <Link
+                  href="/privacy"
+                  style={styles.menuItem}
+                  onClick={() => setMenuOpen(false)}
+                  onMouseEnter={(e) => ((e.currentTarget.style.background = "rgba(255,255,255,0.06)"))}
+                  onMouseLeave={(e) => ((e.currentTarget.style.background = "transparent"))}
+                >
+                  プライバシー
+                </Link>
+                <Link
+                  href="/terms"
+                  style={styles.menuItem}
+                  onClick={() => setMenuOpen(false)}
+                  onMouseEnter={(e) => ((e.currentTarget.style.background = "rgba(255,255,255,0.06)"))}
+                  onMouseLeave={(e) => ((e.currentTarget.style.background = "transparent"))}
+                >
+                  利用規約
+                </Link>
+              </div>
+            )}
           </nav>
         </header>
 
         {/* Hero */}
         <section style={styles.hero}>
+          <div style={styles.heroImgBox}>
+            <img src="/ai-noguchi-hero.PNG" alt="AI野口 ヒーロー" style={styles.heroImg} />
+          </div>
+
           <div style={styles.heroCard}>
             <h1 style={styles.h1}>税理士はそのまま。相談だけ、もう一段。</h1>
             <p style={styles.sub}>
@@ -420,16 +509,16 @@ export default function Home() {
 
             {fatal && <div style={styles.warn}>{fatal}</div>}
           </div>
+        </section>
 
-          <div style={styles.heroImgBox}>
-            {/* ここは後でAI野口画像を置く： public/hero.png など */}
-            {/* <img src="/hero.png" alt="AI野口" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> */}
-            <div style={styles.heroImgNote}>
-              ヒーロー画像（AI野口）をここに。
-              <br />
-              いまはプレースホルダーでOK。
-            </div>
-          </div>
+        {/* Authority block (SPでも強く見せる) */}
+        <section style={styles.authority}>
+          <p style={styles.authorityTitle}>
+            大手ドラッグストアチェーン顧問で豊富な税務調査対応経験のある代表税理士 野口のAI
+          </p>
+          <p style={styles.authoritySub}>
+            机上の理屈だけで終わらせず、現場の“揉めどころ”を踏まえて整理します。
+          </p>
         </section>
 
         {/* Demo */}
@@ -448,14 +537,10 @@ export default function Home() {
                 <div style={styles.dot} />
                 <div style={{ fontWeight: 900 }}>さじかげん（デモ）</div>
               </div>
-              <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12 }}>
-                {demoDone ? "送信済み" : "未送信"}
-              </div>
+              <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12 }}>{demoDone ? "送信済み" : "未送信"}</div>
             </div>
 
             <div style={styles.chatBody}>
-              {demoInput.trim() && <div style={styles.bubbleUser}>{demoInput.trim()}</div>}
-              {demoAnswer && <div style={styles.bubbleBot}>{demoAnswer}</div>}
               {!demoAnswer && (
                 <div style={styles.bubbleBot}>
                   相談内容をフリーワードでどうぞ。
@@ -464,6 +549,9 @@ export default function Home() {
                 </div>
               )}
 
+              {demoInput.trim() && <div style={styles.bubbleUser}>{demoInput.trim()}</div>}
+              {demoAnswer && <div style={styles.bubbleBot}>{demoAnswer}</div>}
+
               {demoError && <div style={styles.warn}>{demoError}</div>}
 
               <div style={styles.small}>
@@ -471,7 +559,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* 入力欄：デモ完了後は消す（確定仕様） */}
             {!demoDone && (
               <div style={styles.inputRow}>
                 <textarea
@@ -498,9 +585,8 @@ export default function Home() {
             )}
           </div>
 
-          {/* デモ後の固定表示ブロック（確定仕様） */}
           {demoDone && (
-            <div style={{ ...styles.sectionCard, marginTop: 14 }}>
+            <div style={{ ...styles.authority, marginTop: 14 }}>
               <div style={{ fontWeight: 900, marginBottom: 8 }}>※ 本サービスでは</div>
               <ul style={{ margin: "0 0 10px 18px", color: "rgba(255,255,255,0.82)", lineHeight: 1.7 }}>
                 <li>金額レンジの具体化</li>
@@ -523,6 +609,12 @@ export default function Home() {
           )}
         </section>
 
+        {/* Pre-plan message (moved: just above Plans) */}
+        <section style={styles.prePlanMessage}>
+          <h3 style={styles.prePlanTitle}>可能性を、言葉ひとつで閉じない。</h3>
+          <p style={styles.prePlanSub}>“とりあえず守る”で止めないための整理を。</p>
+        </section>
+
         {/* Plans */}
         <section
           ref={(el) => {
@@ -540,9 +632,7 @@ export default function Home() {
           >
             <summary style={styles.summary}>
               <span>プラン</span>
-              <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>
-                {demoDone ? "デモ後はここが本番" : "いつでも開けます"}
-              </span>
+              <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>{demoDone ? "デモ後はここが本番" : "いつでも開けます"}</span>
             </summary>
 
             <div style={styles.plansBody}>
@@ -554,17 +644,10 @@ export default function Home() {
                     onChange={(e) => setAgreed(e.target.checked)}
                     style={{ width: 18, height: 18 }}
                   />
-                  <span style={{ color: "rgba(255,255,255,0.86)" }}>
-                    <Link href="/terms" style={{ color: "#fff", textDecoration: "underline" }}>
-                      利用規約
-                    </Link>
-                    に同意する
-                  </span>
+                  <span style={{ color: "rgba(255,255,255,0.86)" }}>利用規約に同意する</span>
                 </label>
 
-                <span style={{ ...styles.small, marginTop: 0 }}>
-                  ※ 未ログインならログインへ → その後Stripe決済
-                </span>
+                <span style={{ ...styles.small, marginTop: 0 }}>※ 未ログインならログインへ → その後Stripe決済</span>
               </div>
 
               <div style={styles.planGrid}>
@@ -617,30 +700,23 @@ export default function Home() {
           </details>
         </section>
 
-        {/* Footer */}
-        <footer style={{ marginTop: 22, color: "rgba(255,255,255,0.55)", fontSize: 12, lineHeight: 1.7 }}>
-          <div>可能性を、言葉ひとつで閉じない。</div>
-          <div style={{ marginTop: 8 }}>
-            <Link href="/privacy" style={{ color: "rgba(255,255,255,0.75)", textDecoration: "underline" }}>
-              プライバシー
-            </Link>
-            {" / "}
-            <Link href="/terms" style={{ color: "rgba(255,255,255,0.75)", textDecoration: "underline" }}>
-              利用規約
-            </Link>
-          </div>
+        {/* Footer (company profile only) */}
+        <footer style={styles.footer}>
+          <div style={styles.footerTitle}>税理士法人GLADZ</div>
+          <div>大阪府大阪市北区梅田1-3-1</div>
+          <div>大阪駅前第１ビル10階</div>
+          <div>代表税理士　野口　集平</div>
         </footer>
 
-        {/* SP対応：カラム崩し */}
+        {/* Responsive */}
         <style jsx>{`
-          @media (max-width: 860px) {
-            section {
-              scroll-margin-top: 78px;
-            }
+          section {
+            scroll-margin-top: 78px;
           }
           @media (max-width: 860px) {
-            .hero {
-              grid-template-columns: 1fr !important;
+            /* SP：上から画像 → コピー（heroの左右を縦に） */
+            .heroFix {
+              display: block;
             }
           }
         `}</style>
