@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     }
 
     // 本番と同じガードレール
-    const guardrail = await judgeGuardrails({ message });
+    const guardrail = await judgeGuardrails(message);
 
     if (guardrail.action === "block") {
       return NextResponse.json({
