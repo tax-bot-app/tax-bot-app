@@ -19,7 +19,6 @@ const PLANS: Array<{
 ];
 
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
-
 type DemoRes = { ok: true; answer: string } | { ok: false; error: string };
 
 const DEMO_COOKIE_KEY = "sajikagen_demo_done";
@@ -115,7 +114,7 @@ export default function Home() {
 
     const q = (demoInput ?? "").trim();
     if (!q) {
-      setDemoError("相談内容を1行でいいので入れてください。空欄は税務署より厳しい。");
+      setDemoError("相談内容を1行でいいので入れてください。");
       return;
     }
     if (q.length > DEMO_MAX_LEN) {
@@ -189,30 +188,30 @@ export default function Home() {
   };
 
   const styles: Record<string, React.CSSProperties> = {
-    wrap: { minHeight: "100vh", background: "#0b0b0c", color: "#fff" },
-    container: { maxWidth: 980, margin: "0 auto", padding: "22px 16px 70px" },
+    wrap: { minHeight: "100vh", background: "#F6F7FB", color: "#0B1220" },
+    container: { maxWidth: 980, margin: "0 auto", padding: "18px 16px 70px" },
 
     header: {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
       gap: 12,
-      padding: "10px 0 18px",
+      padding: "10px 0 14px",
       position: "sticky",
       top: 0,
-      background: "rgba(11,11,12,0.85)",
+      background: "rgba(246,247,251,0.92)",
       backdropFilter: "blur(10px)",
       zIndex: 10,
-      borderBottom: "1px solid rgba(255,255,255,0.08)",
+      borderBottom: "1px solid #E6EAF2",
     },
-    brand: { display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "#fff" },
+    brand: { display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "#0B1220" },
     brandLogo: { height: 26, width: "auto", display: "block" },
 
     nav: { display: "flex", alignItems: "center", gap: 10, position: "relative" },
     btnGhost: {
-      border: "1px solid rgba(255,255,255,0.16)",
-      background: "transparent",
-      color: "#fff",
+      border: "1px solid #D7DEEA",
+      background: "#fff",
+      color: "#0B1220",
       borderRadius: 12,
       padding: "10px 12px",
       cursor: "pointer",
@@ -220,128 +219,134 @@ export default function Home() {
       lineHeight: 1,
     },
     btnPrimary: {
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "#fff",
-      color: "#111",
+      border: "1px solid rgba(0,0,0,0.06)",
+      background: "#1E5EFF",
+      color: "#fff",
       borderRadius: 14,
       padding: "12px 14px",
       cursor: "pointer",
       fontWeight: 900,
       lineHeight: 1,
     },
+
     menu: {
       position: "absolute",
       top: 46,
       right: 0,
-      background: "rgba(14,14,15,0.98)",
-      border: "1px solid rgba(255,255,255,0.14)",
+      background: "#fff",
+      border: "1px solid #E6EAF2",
       borderRadius: 14,
       padding: 10,
       display: "grid",
       gap: 6,
       minWidth: 170,
       zIndex: 30,
-      boxShadow: "0 18px 40px rgba(0,0,0,0.55)",
+      boxShadow: "0 18px 40px rgba(15, 23, 42, 0.10)",
     },
     menuItem: {
       padding: "10px 10px",
       borderRadius: 10,
       textDecoration: "none",
-      color: "rgba(255,255,255,0.92)",
-      border: "1px solid rgba(255,255,255,0.00)",
+      color: "#0B1220",
       fontWeight: 800,
       fontSize: 13,
     },
 
     hero: {
       display: "grid",
-      gridTemplateColumns: "1.1fr 0.9fr",
+      gridTemplateColumns: "1.05fr 0.95fr",
       gap: 18,
       alignItems: "stretch",
-      padding: "22px 0 10px",
+      padding: "16px 0 6px",
+      gridTemplateAreas: `"img copy"`,
     },
     heroCard: {
-      border: "1px solid rgba(255,255,255,0.10)",
-      borderRadius: 18,
-      padding: 18,
-      background: "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))",
-      boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+      padding: 6,
+      background: "transparent",
+      boxShadow: "none",
       display: "flex",
       flexDirection: "column",
       justifyContent: "center",
     },
-    h1: { fontSize: 34, lineHeight: 1.15, margin: 0, letterSpacing: "-0.02em" },
-    sub: { color: "rgba(255,255,255,0.72)", marginTop: 10, marginBottom: 0, lineHeight: 1.7 },
+    h1: { fontSize: 34, lineHeight: 1.15, margin: 0, letterSpacing: "-0.02em", color: "#0B1220" },
+    sub: { color: "rgba(11,18,32,0.72)", marginTop: 10, marginBottom: 0, lineHeight: 1.7 },
+
     heroActions: { display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" },
 
     heroImgBox: {
-      border: "1px solid rgba(255,255,255,0.10)",
+      border: "1px solid #E6EAF2",
       borderRadius: 18,
       overflow: "hidden",
-      background: "rgba(255,255,255,0.03)",
-      minHeight: 280,
+      background: "#fff",
+      minHeight: 300,
+      boxShadow: "0 18px 40px rgba(15, 23, 42, 0.08)",
     },
-    heroImg: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+    heroImg: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "top center", display: "block" },
 
     section: { marginTop: 22 },
-    sectionTitle: { fontSize: 18, margin: "0 0 10px", letterSpacing: "0.02em" },
+    sectionTitle: { fontSize: 18, margin: "0 0 10px", letterSpacing: "0.02em", color: "#0B1220" },
 
     authority: {
-      marginTop: 14,
-      borderRadius: 18,
-      border: "1px solid rgba(255,255,255,0.10)",
-      background: "rgba(255,255,255,0.03)",
+      marginTop: 16,
+      borderRadius: 16,
+      border: "1px solid rgba(30,94,255,0.18)",
+      background: "rgba(30,94,255,0.06)",
       padding: 14,
     },
-    authorityTitle: { fontWeight: 950, fontSize: 14, margin: 0 },
-    authoritySub: { color: "rgba(255,255,255,0.72)", marginTop: 6, marginBottom: 0, lineHeight: 1.7, fontSize: 13 },
+    authorityTitle: { fontWeight: 950, fontSize: 14, margin: 0, color: "#0B1220" },
+    authoritySub: { color: "rgba(11,18,32,0.72)", marginTop: 6, marginBottom: 0, lineHeight: 1.7, fontSize: 13 },
 
     chatShell: {
       borderRadius: 18,
-      border: "1px solid rgba(255,255,255,0.10)",
-      background: "rgba(0,0,0,0.20)",
+      border: "1px solid #E6EAF2",
+      background: "#fff",
       overflow: "hidden",
+      boxShadow: "0 18px 40px rgba(15, 23, 42, 0.08)",
     },
     chatTop: {
       padding: "12px 14px",
-      borderBottom: "1px solid rgba(255,255,255,0.08)",
+      borderBottom: "1px solid #E6EAF2",
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
       gap: 10,
+      background: "#fff",
     },
     chatTopLeft: { display: "flex", alignItems: "center", gap: 10 },
-    dot: { width: 9, height: 9, borderRadius: 99, background: "rgba(255,255,255,0.55)" },
+    dot: { width: 9, height: 9, borderRadius: 99, background: "rgba(30,94,255,0.55)" },
     chatBody: { padding: 14, display: "grid", gap: 10 },
+
     bubbleBot: {
       justifySelf: "start",
-      maxWidth: "90%",
+      maxWidth: "95%",
       padding: "10px 12px",
       borderRadius: 16,
-      background: "rgba(255,255,255,0.06)",
-      border: "1px solid rgba(255,255,255,0.10)",
+      background: "#F6F7FB",
+      border: "1px solid #E6EAF2",
       whiteSpace: "pre-wrap",
       lineHeight: 1.7,
-      color: "rgba(255,255,255,0.92)",
+      color: "rgba(11,18,32,0.92)",
     },
     bubbleUser: {
       justifySelf: "end",
-      maxWidth: "85%",
+      maxWidth: "90%",
       padding: "10px 12px",
       borderRadius: 16,
-      background: "rgba(255,255,255,0.12)",
-      border: "1px solid rgba(255,255,255,0.10)",
+      background: "rgba(30,94,255,0.10)",
+      border: "1px solid rgba(30,94,255,0.18)",
       whiteSpace: "pre-wrap",
       lineHeight: 1.6,
+      color: "#0B1220",
     },
+
     inputRow: {
       padding: 12,
-      borderTop: "1px solid rgba(255,255,255,0.08)",
+      borderTop: "1px solid #E6EAF2",
       display: "grid",
       gridTemplateColumns: "1fr auto",
       gap: 10,
       alignItems: "center",
-      background: "rgba(0,0,0,0.18)",
+      background: "#fff",
     },
     textarea: {
       width: "100%",
@@ -350,20 +355,22 @@ export default function Home() {
       resize: "vertical",
       padding: "10px 12px",
       borderRadius: 14,
-      border: "1px solid rgba(255,255,255,0.14)",
+      border: "1px solid #D7DEEA",
       outline: "none",
-      background: "rgba(255,255,255,0.06)",
-      color: "#fff",
+      background: "#fff",
+      color: "#0B1220",
       lineHeight: 1.6,
     },
-    small: { color: "rgba(255,255,255,0.62)", fontSize: 12, lineHeight: 1.6, marginTop: 10 },
+
+    small: { color: "rgba(11,18,32,0.62)", fontSize: 12, lineHeight: 1.6, marginTop: 10 },
+
     warn: {
       marginTop: 10,
       padding: 10,
       borderRadius: 14,
-      background: "rgba(255,100,100,0.12)",
-      border: "1px solid rgba(255,100,100,0.30)",
-      color: "rgba(255,220,220,0.95)",
+      background: "rgba(220, 38, 38, 0.06)",
+      border: "1px solid rgba(220, 38, 38, 0.18)",
+      color: "rgba(127, 29, 29, 0.92)",
       whiteSpace: "pre-wrap",
     },
 
@@ -371,18 +378,20 @@ export default function Home() {
       marginTop: 26,
       textAlign: "center",
       borderRadius: 18,
-      border: "1px solid rgba(255,255,255,0.10)",
-      background: "rgba(255,255,255,0.03)",
+      border: "1px solid #E6EAF2",
+      background: "#fff",
       padding: "16px 14px",
+      boxShadow: "0 18px 40px rgba(15, 23, 42, 0.06)",
     },
-    prePlanTitle: { fontSize: 20, fontWeight: 950, margin: 0 },
-    prePlanSub: { color: "rgba(255,255,255,0.72)", marginTop: 8, marginBottom: 0, lineHeight: 1.7 },
+    prePlanTitle: { fontSize: 20, fontWeight: 950, margin: 0, color: "#0B1220" },
+    prePlanSub: { color: "rgba(11,18,32,0.72)", marginTop: 8, marginBottom: 0, lineHeight: 1.7 },
 
     details: {
-      border: "1px solid rgba(255,255,255,0.10)",
+      border: "1px solid #E6EAF2",
       borderRadius: 18,
-      background: "rgba(255,255,255,0.03)",
+      background: "#fff",
       overflow: "hidden",
+      boxShadow: "0 18px 40px rgba(15, 23, 42, 0.08)",
     },
     summary: {
       cursor: "pointer",
@@ -393,6 +402,8 @@ export default function Home() {
       alignItems: "center",
       justifyContent: "space-between",
       gap: 10,
+      background: "#fff",
+      color: "#0B1220",
     },
     plansBody: { padding: "0 16px 16px" },
     agreeRow: { display: "flex", alignItems: "center", gap: 10, marginTop: 12, marginBottom: 10, flexWrap: "wrap" },
@@ -402,9 +413,9 @@ export default function Home() {
       textAlign: "left",
       padding: 14,
       borderRadius: 16,
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "rgba(255,255,255,0.06)",
-      color: "#fff",
+      border: "1px solid #E6EAF2",
+      background: "#fff",
+      color: "#0B1220",
       cursor: "pointer",
     },
     planTop: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" },
@@ -412,12 +423,13 @@ export default function Home() {
       fontSize: 12,
       padding: "4px 8px",
       borderRadius: 999,
-      border: "1px solid rgba(255,255,255,0.18)",
-      color: "rgba(255,255,255,0.85)",
+      border: "1px solid rgba(30,94,255,0.25)",
+      color: "rgba(30,94,255,0.95)",
+      background: "rgba(30,94,255,0.06)",
     },
 
-    footer: { marginTop: 40, color: "rgba(255,255,255,0.6)", fontSize: 12, lineHeight: 1.7 },
-    footerTitle: { fontWeight: 900, color: "rgba(255,255,255,0.82)" },
+    footer: { marginTop: 40, color: "rgba(11,18,32,0.62)", fontSize: 12, lineHeight: 1.7 },
+    footerTitle: { fontWeight: 900, color: "rgba(11,18,32,0.92)" },
   };
 
   return (
@@ -427,15 +439,14 @@ export default function Home() {
         <header style={styles.header}>
           <Link href="/" style={styles.brand} aria-label="さじかげん">
             <img src="/sa-logo-header.png" alt="さじかげん" style={styles.brandLogo} />
+            <span style={{ fontWeight: 900, letterSpacing: "0.06em" }}>さじかげん</span>
           </Link>
 
           <nav style={styles.nav} data-menu-root>
+            {/* ✅ SP想定：ヘッダーはログインだけ残す */}
             <Link href="/login" style={{ ...styles.btnGhost, textDecoration: "none", display: "inline-block" }}>
               ログイン
             </Link>
-            <button style={styles.btnGhost} onClick={onClickFreeTry} aria-label="無料体験へ">
-              無料体験
-            </button>
 
             <button
               style={styles.btnGhost}
@@ -452,8 +463,8 @@ export default function Home() {
                   href="/faq"
                   style={styles.menuItem}
                   onClick={() => setMenuOpen(false)}
-                  onMouseEnter={(e) => ((e.currentTarget.style.background = "rgba(255,255,255,0.06)"))}
-                  onMouseLeave={(e) => ((e.currentTarget.style.background = "transparent"))}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(30,94,255,0.06)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   FAQ
                 </Link>
@@ -461,8 +472,8 @@ export default function Home() {
                   href="/privacy"
                   style={styles.menuItem}
                   onClick={() => setMenuOpen(false)}
-                  onMouseEnter={(e) => ((e.currentTarget.style.background = "rgba(255,255,255,0.06)"))}
-                  onMouseLeave={(e) => ((e.currentTarget.style.background = "transparent"))}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(30,94,255,0.06)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   プライバシー
                 </Link>
@@ -470,8 +481,8 @@ export default function Home() {
                   href="/terms"
                   style={styles.menuItem}
                   onClick={() => setMenuOpen(false)}
-                  onMouseEnter={(e) => ((e.currentTarget.style.background = "rgba(255,255,255,0.06)"))}
-                  onMouseLeave={(e) => ((e.currentTarget.style.background = "transparent"))}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(30,94,255,0.06)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   利用規約
                 </Link>
@@ -481,12 +492,12 @@ export default function Home() {
         </header>
 
         {/* Hero */}
-        <section style={styles.hero}>
-          <div style={styles.heroImgBox}>
+        <section id="hero" style={styles.hero}>
+          <div style={{ ...styles.heroImgBox, gridArea: "img" }}>
             <img src="/ai-noguchi-hero.PNG" alt="AI野口 ヒーロー" style={styles.heroImg} />
           </div>
 
-          <div style={styles.heroCard}>
+          <div style={{ ...styles.heroCard, gridArea: "copy" }}>
             <h1 style={styles.h1}>税理士はそのまま。相談だけ、もう一段。</h1>
             <p style={styles.sub}>
               「ダメ」で止めずに、税務調査の現実を踏まえて整理する。
@@ -511,14 +522,10 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Authority block (SPでも強く見せる) */}
+        {/* Authority block */}
         <section style={styles.authority}>
-          <p style={styles.authorityTitle}>
-            大手ドラッグストアチェーン顧問で豊富な税務調査対応経験のある代表税理士 野口のAI
-          </p>
-          <p style={styles.authoritySub}>
-            机上の理屈だけで終わらせず、現場の“揉めどころ”を踏まえて整理します。
-          </p>
+          <p style={styles.authorityTitle}>大手ドラッグストアチェーン顧問で、税務調査対応の経験が豊富。</p>
+          <p style={styles.authoritySub}>代表税理士 野口のAIが、現場の“揉めどころ”を踏まえて整理します。</p>
         </section>
 
         {/* Demo */}
@@ -537,15 +544,15 @@ export default function Home() {
                 <div style={styles.dot} />
                 <div style={{ fontWeight: 900 }}>さじかげん（デモ）</div>
               </div>
-              <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12 }}>{demoDone ? "送信済み" : "未送信"}</div>
+              <div style={{ color: "rgba(11,18,32,0.55)", fontSize: 12 }}>{demoDone ? "送信済み" : "未送信"}</div>
             </div>
 
             <div style={styles.chatBody}>
               {!demoAnswer && (
                 <div style={styles.bubbleBot}>
-                  相談内容をフリーワードでどうぞ。
+                  ここに回答が表示されます。
                   <br />
-                  例：出張手当／交際費／家族給与／紹介料…あたり。
+                  相談内容をフリーワードでどうぞ（例：出張手当／交際費／家族給与／紹介料）。
                 </div>
               )}
 
@@ -588,13 +595,13 @@ export default function Home() {
           {demoDone && (
             <div style={{ ...styles.authority, marginTop: 14 }}>
               <div style={{ fontWeight: 900, marginBottom: 8 }}>※ 本サービスでは</div>
-              <ul style={{ margin: "0 0 10px 18px", color: "rgba(255,255,255,0.82)", lineHeight: 1.7 }}>
+              <ul style={{ margin: "0 0 10px 18px", color: "rgba(11,18,32,0.82)", lineHeight: 1.7 }}>
                 <li>金額レンジの具体化</li>
                 <li>条件分岐ごとの実務整理</li>
                 <li>税務調査目線での想定問答</li>
               </ul>
 
-              <div style={{ color: "rgba(255,255,255,0.82)", lineHeight: 1.7 }}>
+              <div style={{ color: "rgba(11,18,32,0.82)", lineHeight: 1.7 }}>
                 このテーマ、放置すると “なんとなく不安” が残ります。
                 <br />
                 いま整理しますか？
@@ -609,7 +616,7 @@ export default function Home() {
           )}
         </section>
 
-        {/* Pre-plan message (moved: just above Plans) */}
+        {/* Pre-plan message */}
         <section style={styles.prePlanMessage}>
           <h3 style={styles.prePlanTitle}>可能性を、言葉ひとつで閉じない。</h3>
           <p style={styles.prePlanSub}>“とりあえず守る”で止めないための整理を。</p>
@@ -626,13 +633,13 @@ export default function Home() {
             open={plansOpen}
             style={{
               ...styles.details,
-              outline: demoDone ? "2px solid rgba(255,255,255,0.22)" : "none",
+              outline: demoDone ? "2px solid rgba(30,94,255,0.22)" : "none",
             }}
             onToggle={(e) => setPlansOpen((e.target as HTMLDetailsElement).open)}
           >
             <summary style={styles.summary}>
               <span>プラン</span>
-              <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>{demoDone ? "デモ後はここが本番" : "いつでも開けます"}</span>
+              <span style={{ color: "rgba(11,18,32,0.60)", fontSize: 12 }}>{demoDone ? "デモ後はここが本番" : "いつでも開けます"}</span>
             </summary>
 
             <div style={styles.plansBody}>
@@ -644,7 +651,7 @@ export default function Home() {
                     onChange={(e) => setAgreed(e.target.checked)}
                     style={{ width: 18, height: 18 }}
                   />
-                  <span style={{ color: "rgba(255,255,255,0.86)" }}>利用規約に同意する</span>
+                  <span style={{ color: "rgba(11,18,32,0.86)" }}>利用規約に同意する</span>
                 </label>
 
                 <span style={{ ...styles.small, marginTop: 0 }}>※ 未ログインならログインへ → その後Stripe決済</span>
@@ -664,8 +671,10 @@ export default function Home() {
                         cursor: disabled ? "not-allowed" : "pointer",
                         background:
                           p.key === "standard"
-                            ? "linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.05))"
-                            : "rgba(255,255,255,0.06)",
+                            ? "linear-gradient(180deg, rgba(30,94,255,0.10), rgba(30,94,255,0.04))"
+                            : "#fff",
+                        border:
+                          p.key === "standard" ? "1px solid rgba(30,94,255,0.22)" : "1px solid #E6EAF2",
                       }}
                     >
                       <div style={styles.planTop}>
@@ -674,17 +683,17 @@ export default function Home() {
                             {p.title}{" "}
                             {p.key === "standard" && <span style={{ ...styles.badge, marginLeft: 8 }}>おすすめ</span>}
                           </div>
-                          <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 13, marginTop: 2 }}>
+                          <div style={{ color: "rgba(11,18,32,0.78)", fontSize: 13, marginTop: 2 }}>
                             {p.quotaLabel} {p.note ? `・${p.note}` : ""}
                           </div>
                         </div>
-                        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.92)", fontWeight: 900 }}>
+                        <div style={{ fontSize: 14, color: "rgba(11,18,32,0.92)", fontWeight: 900 }}>
                           {p.priceLabel}
                         </div>
                       </div>
 
                       {busyPlan === p.key && (
-                        <div style={{ marginTop: 10, color: "rgba(255,255,255,0.75)" }}>決済ページを開いています…</div>
+                        <div style={{ marginTop: 10, color: "rgba(11,18,32,0.75)" }}>決済ページを開いています…</div>
                       )}
                     </button>
                   );
@@ -708,15 +717,21 @@ export default function Home() {
           <div>代表税理士　野口　集平</div>
         </footer>
 
-        {/* Responsive */}
         <style jsx>{`
           section {
             scroll-margin-top: 78px;
           }
+
+          /* ✅ SP：Heroは確実に縦（画像→コピー） */
           @media (max-width: 860px) {
-            /* SP：上から画像 → コピー（heroの左右を縦に） */
-            .heroFix {
-              display: block;
+            #hero {
+              grid-template-columns: 1fr !important;
+              grid-template-areas:
+                "img"
+                "copy" !important;
+            }
+            #hero > div:first-child {
+              min-height: 240px !important;
             }
           }
         `}</style>
