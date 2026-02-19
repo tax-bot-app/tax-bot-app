@@ -3176,6 +3176,7 @@ const noApportionmentBias: string[] = [
 
 
         const promptPartsBase: PromptParts = {
+          outputMode: mode === "demo" ? "demo" : "prod",
           context: contextLines,
           injectedRules: [
             ...demoAnswerRules,
