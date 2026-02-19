@@ -273,28 +273,23 @@ export default function Home() {
 
     heroActions: { display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" },
 
+    // ✅ 角丸なし/影なし（貼り付け感を消すのは “SPフルブリード” で解決）
     heroImgBox: {
-      border: "1px solid #E6EAF2",
-      borderRadius: 18,
+      border: 0,
+      borderRadius: 0,
       overflow: "hidden",
       background: "#fff",
       minHeight: 300,
-      boxShadow: "0 18px 40px rgba(15, 23, 42, 0.08)",
+      boxShadow: "none",
     },
     heroImg: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "top center", display: "block" },
 
+    aiCaptionWrap: { marginTop: 10 },
+    aiCaptionTitle: { fontWeight: 950, fontSize: 14, margin: 0, color: "#0B1220" },
+    aiCaptionSub: { color: "rgba(11,18,32,0.72)", marginTop: 6, marginBottom: 0, lineHeight: 1.6, fontSize: 13 },
+
     section: { marginTop: 22 },
     sectionTitle: { fontSize: 18, margin: "0 0 10px", letterSpacing: "0.02em", color: "#0B1220" },
-
-    authority: {
-      marginTop: 16,
-      borderRadius: 16,
-      border: "1px solid rgba(30,94,255,0.18)",
-      background: "rgba(30,94,255,0.06)",
-      padding: 14,
-    },
-    authorityTitle: { fontWeight: 950, fontSize: 14, margin: 0, color: "#0B1220" },
-    authoritySub: { color: "rgba(11,18,32,0.72)", marginTop: 6, marginBottom: 0, lineHeight: 1.7, fontSize: 13 },
 
     chatShell: {
       borderRadius: 18,
@@ -437,13 +432,12 @@ export default function Home() {
       <div style={styles.container}>
         {/* Header */}
         <header style={styles.header}>
-          <Link href="/" style={styles.brand} aria-label="さじかげん">
-            <img src="/sa-logo-header.png" alt="さじかげん" style={styles.brandLogo} />
-            <span style={{ fontWeight: 900, letterSpacing: "0.06em" }}>さじかげん</span>
+          <Link href="/" style={styles.brand} aria-label="じかげん">
+            <img src="/sa-logo-header.png" alt="じかげん" style={styles.brandLogo} />
+            <span style={{ fontWeight: 900, letterSpacing: "0.06em" }}>じかげん</span>
           </Link>
 
           <nav style={styles.nav} data-menu-root>
-            {/* ✅ SP想定：ヘッダーはログインだけ残す */}
             <Link href="/login" style={{ ...styles.btnGhost, textDecoration: "none", display: "inline-block" }}>
               ログイン
             </Link>
@@ -493,8 +487,14 @@ export default function Home() {
 
         {/* Hero */}
         <section id="hero" style={styles.hero}>
-          <div style={{ ...styles.heroImgBox, gridArea: "img" }}>
+          <div className="heroImgFullBleed" style={{ ...styles.heroImgBox, gridArea: "img" }}>
             <img src="/ai-noguchi-hero.PNG" alt="AI野口 ヒーロー" style={styles.heroImg} />
+          </div>
+
+          {/* ✅ 画像の直下：AI野口の説明（ブロック無し） */}
+          <div style={{ gridArea: "img", ...styles.aiCaptionWrap }}>
+            <p style={styles.aiCaptionTitle}>大手ドラッグストアチェーン顧問</p>
+            <p style={styles.aiCaptionSub}>税理士野口のAI</p>
           </div>
 
           <div style={{ ...styles.heroCard, gridArea: "copy" }}>
@@ -514,18 +514,17 @@ export default function Home() {
               </button>
             </div>
 
-            <p style={{ ...styles.small, marginTop: 12 }}>
+            {/* ✅ 税務調査経験（場所はここで固定／ブロック無し） */}
+            <p style={{ ...styles.small, marginTop: 10 }}>
+              税務調査対応の経験を踏まえて、現実的な“揉めどころ”から整理します。
+            </p>
+
+            <p style={{ ...styles.small, marginTop: 10 }}>
               ※ デモは登録不要・1回だけ（Cookie制限）。数字や深掘りは控えめに出ます。
             </p>
 
             {fatal && <div style={styles.warn}>{fatal}</div>}
           </div>
-        </section>
-
-        {/* Authority block */}
-        <section style={styles.authority}>
-          <p style={styles.authorityTitle}>大手ドラッグストアチェーン顧問で、税務調査対応の経験が豊富。</p>
-          <p style={styles.authoritySub}>代表税理士 野口のAIが、現場の“揉めどころ”を踏まえて整理します。</p>
         </section>
 
         {/* Demo */}
@@ -542,7 +541,7 @@ export default function Home() {
             <div style={styles.chatTop}>
               <div style={styles.chatTopLeft}>
                 <div style={styles.dot} />
-                <div style={{ fontWeight: 900 }}>さじかげん（デモ）</div>
+                <div style={{ fontWeight: 900 }}>じかげん（デモ）</div>
               </div>
               <div style={{ color: "rgba(11,18,32,0.55)", fontSize: 12 }}>{demoDone ? "送信済み" : "未送信"}</div>
             </div>
@@ -593,7 +592,7 @@ export default function Home() {
           </div>
 
           {demoDone && (
-            <div style={{ ...styles.authority, marginTop: 14 }}>
+            <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #E6EAF2", background: "#fff", padding: 14 }}>
               <div style={{ fontWeight: 900, marginBottom: 8 }}>※ 本サービスでは</div>
               <ul style={{ margin: "0 0 10px 18px", color: "rgba(11,18,32,0.82)", lineHeight: 1.7 }}>
                 <li>金額レンジの具体化</li>
@@ -709,7 +708,7 @@ export default function Home() {
           </details>
         </section>
 
-        {/* Footer (company profile only) */}
+        {/* Footer */}
         <footer style={styles.footer}>
           <div style={styles.footerTitle}>税理士法人GLADZ</div>
           <div>大阪府大阪市北区梅田1-3-1</div>
@@ -722,15 +721,23 @@ export default function Home() {
             scroll-margin-top: 78px;
           }
 
-          /* ✅ SP：Heroは確実に縦（画像→コピー） */
           @media (max-width: 860px) {
+            /* ✅ SP：Heroは確実に縦（画像→コピー） */
             #hero {
               grid-template-columns: 1fr !important;
               grid-template-areas:
                 "img"
                 "copy" !important;
             }
-            #hero > div:first-child {
+
+            /* ✅ SP：ヒーロー画像を左右フルブリード */
+            #hero .heroImgFullBleed {
+              margin-left: -16px;
+              margin-right: -16px;
+            }
+
+            /* ✅ SP：画像高さを少し浅く */
+            #hero .heroImgFullBleed {
               min-height: 240px !important;
             }
           }
