@@ -253,13 +253,18 @@ export default function Home() {
     },
 
     hero: {
-      display: "grid",
-      gridTemplateColumns: "1.05fr 0.95fr",
-      gap: 18,
-      alignItems: "stretch",
-      padding: "16px 0 6px",
-      gridTemplateAreas: `"img copy"`,
-    },
+  display: "grid",
+  gridTemplateColumns: "1.05fr 0.95fr",
+  columnGap: 18,
+  rowGap: 10,
+  alignItems: "start",
+  padding: "16px 0 6px",
+  gridTemplateAreas: `
+    "img  copy"
+    "cap  copy"
+  `,
+},
+
     heroCard: {
       padding: 6,
       background: "transparent",
@@ -492,17 +497,18 @@ export default function Home() {
           </div>
 
           {/* ✅ 画像の直下：AI野口の説明（ブロック無し） */}
-          <div style={{ gridArea: "img", ...styles.aiCaptionWrap }}>
-            <p style={styles.aiCaptionTitle}>大手ドラッグストアチェーン顧問</p>
-            <p style={styles.aiCaptionSub}>税理士野口のAI</p>
-          </div>
+         <div style={{ gridArea: "cap", ...styles.aiCaptionWrap }}>
+  <p style={styles.aiCaptionTitle}>大手ドラッグストアチェーン顧問</p>
+  <p style={styles.aiCaptionSub}>税理士野口のAI</p>
+</div>
+
 
           <div style={{ ...styles.heroCard, gridArea: "copy" }}>
             <h1 style={styles.h1}>税理士はそのまま。相談だけ、もう一段。</h1>
             <p style={styles.sub}>
-              「ダメ」で止めずに、税務調査の現実を踏まえて整理する。
+              ・「ダメ」で止めずに、税務調査の現実を踏まえて整理する。
               <br />
-              自社に合う可能性を、ちゃんと見極める。
+              ・自社に合う可能性を、ちゃんと見極める。
             </p>
 
             <div style={styles.heroActions}>
@@ -519,10 +525,7 @@ export default function Home() {
               税務調査対応の経験を踏まえて、現実的な“揉めどころ”から整理します。
             </p>
 
-            <p style={{ ...styles.small, marginTop: 10 }}>
-              ※ デモは登録不要・1回だけ（Cookie制限）。数字や深掘りは控えめに出ます。
-            </p>
-
+            
             {fatal && <div style={styles.warn}>{fatal}</div>}
           </div>
         </section>
@@ -541,7 +544,7 @@ export default function Home() {
             <div style={styles.chatTop}>
               <div style={styles.chatTopLeft}>
                 <div style={styles.dot} />
-                <div style={{ fontWeight: 900 }}>じかげん（デモ）</div>
+                <div style={{ fontWeight: 900 }}>さじかげん（デモ）</div>
               </div>
               <div style={{ color: "rgba(11,18,32,0.55)", fontSize: 12 }}>{demoDone ? "送信済み" : "未送信"}</div>
             </div>
@@ -549,10 +552,9 @@ export default function Home() {
             <div style={styles.chatBody}>
               {!demoAnswer && (
                 <div style={styles.bubbleBot}>
-                  ここに回答が表示されます。
+                  ここに回答が表示されます。※ デモは登録不要・1回だけ（Cookie制限）。数字や深掘りは控えめに出ます。
                   <br />
-                  相談内容をフリーワードでどうぞ（例：出張手当／交際費／家族給与／紹介料）。
-                </div>
+                                  </div>
               )}
 
               {demoInput.trim() && <div style={styles.bubbleUser}>{demoInput.trim()}</div>}
@@ -561,7 +563,7 @@ export default function Home() {
               {demoError && <div style={styles.warn}>{demoError}</div>}
 
               <div style={styles.small}>
-                出力はデモ用に短めです（要点2・注意1）。本サービスでは金額レンジの具体化や条件分岐まで整理します。
+                出力はデモ用に短めです（要点2・注意1）。有料プランでは金額レンジの具体化や条件分岐まで整理します。
               </div>
             </div>
 
@@ -570,7 +572,7 @@ export default function Home() {
                 <textarea
                   value={demoInput}
                   onChange={(e) => setDemoInput(e.target.value)}
-                  placeholder="相談内容を入力（例：打合せの会食、1人9,000〜11,000円の運用どうする？）"
+                  placeholder="相談内容を入力してください"
                   style={styles.textarea}
                   maxLength={DEMO_MAX_LEN + 20}
                   disabled={demoBusy}
@@ -593,7 +595,7 @@ export default function Home() {
 
           {demoDone && (
             <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #E6EAF2", background: "#fff", padding: 14 }}>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>※ 本サービスでは</div>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>※ 有料サービスでは</div>
               <ul style={{ margin: "0 0 10px 18px", color: "rgba(11,18,32,0.82)", lineHeight: 1.7 }}>
                 <li>金額レンジの具体化</li>
                 <li>条件分岐ごとの実務整理</li>
