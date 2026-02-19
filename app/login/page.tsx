@@ -22,7 +22,7 @@ function LoginInner() {
 
   useEffect(() => {
     const reason = sp.get("reason");
-    if (reason === "expired") setMsg("セッション切れてる。ログインし直してな。");
+    if (reason === "expired") setMsg("セッションが切れています。ログインし直してください。");
   }, [sp]);
 
   useEffect(() => {
@@ -67,7 +67,7 @@ function LoginInner() {
         setMsg(error.message);
         return;
       }
-      setMsg("登録OK。メール確認が必要なら確認してからログインしてな。");
+      setMsg("登録OK。メール確認が必要なら確認してからログインしてください。");
     } finally {
       setBusy(false);
     }
@@ -78,7 +78,7 @@ function LoginInner() {
     setBusy(true);
     try {
       if (!email) {
-        setMsg("メールアドレス入れてから押して。");
+        setMsg("メールアドレス入れてから押してください。");
         return;
       }
       const redirectTo = `${window.location.origin}/reset-password`;
@@ -87,7 +87,7 @@ function LoginInner() {
         setMsg(error.message);
         return;
       }
-      setMsg("再設定メール送った。受信箱（迷惑メールも）見て。");
+      setMsg("再設定メールを送りました。受信箱（迷惑メールも）ご確認ください。");
     } finally {
       setBusy(false);
     }
@@ -139,7 +139,7 @@ function LoginInner() {
           disabled={busy}
           className="w-full mt-3 bg-white text-black px-4 py-2 rounded-md border"
         >
-          パスワードを忘れた（再設定メール送信）
+          パスワードを忘れた場合はこちら（再設定メール送信）
         </button>
       </div>
     </main>

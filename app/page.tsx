@@ -18,14 +18,14 @@ const PLANS: Array<{
   title: "Lite", 
   priceLabel: "月額3,300円（税込）", 
   quotaLabel: "月5回まで", 
-  note: "まずは様子見で始めたい方へ。単発確認や不安の切り分けに。※いつでもアップグレード可能。" 
+  note: "まずは様子見で始めたい方へ。確認や不安の切り分けに。※いつでもアップグレード可能。" 
 },
 { 
   key: "standard", 
   title: "Standard", 
   priceLabel: "月額16,500円（税込）", 
   quotaLabel: "月30回まで", 
-  note: "一番選ばれているプラン。実務で日常的に使うならこちら。" 
+  note:  "一番選ばれているプラン。自社向けの具体的な線引きまで整理したい方へ。"
 },
 { 
   key: "enterprise", 
