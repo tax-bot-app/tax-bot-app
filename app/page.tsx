@@ -497,10 +497,11 @@ export default function Home() {
           </div>
 
           {/* ✅ 画像の直下：AI野口の説明（ブロック無し） */}
-         <div style={{ gridArea: "cap", ...styles.aiCaptionWrap }}>
+         <div className="heroCapFullBleed" style={{ gridArea: "cap", ...styles.aiCaptionWrap }}>
   <p style={styles.aiCaptionTitle}>大手ドラッグストアチェーン顧問</p>
   <p style={styles.aiCaptionSub}>税理士野口のAI</p>
 </div>
+
 
 
           <div style={{ ...styles.heroCard, gridArea: "copy" }}>
@@ -719,31 +720,35 @@ export default function Home() {
         </footer>
 
         <style jsx>{`
-          section {
-            scroll-margin-top: 78px;
-          }
+  section {
+    scroll-margin-top: 78px;
+  }
 
-          @media (max-width: 860px) {
-            /* ✅ SP：Heroは確実に縦（画像→コピー） */
-            #hero {
-              grid-template-columns: 1fr !important;
-              grid-template-areas:
-                "img"
-                "copy" !important;
-            }
+  @media (max-width: 860px) {
+    #hero {
+      grid-template-columns: 1fr !important;
+      grid-template-areas:
+        "img"
+        "cap"
+        "copy" !important;
+    }
 
-            /* ✅ SP：ヒーロー画像を左右フルブリード */
-            #hero .heroImgFullBleed {
-              margin-left: -16px;
-              margin-right: -16px;
-            }
+    /* ✅ SP：ヒーロー画像を左右フルブリード */
+    #hero .heroImgFullBleed {
+      margin-left: -16px;
+      margin-right: -16px;
+      min-height: 240px !important;
+    }
 
-            /* ✅ SP：画像高さを少し浅く */
-            #hero .heroImgFullBleed {
-              min-height: 240px !important;
-            }
-          }
-        `}</style>
+    /* ✅ SP：説明も画像と同じ幅に（“画像の直下”感が出る） */
+    #hero .heroCapFullBleed {
+      margin-left: -16px;
+      margin-right: -16px;
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+  }
+`}</style>
       </div>
     </main>
   );
