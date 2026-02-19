@@ -500,12 +500,12 @@ export default function Home() {
   className="heroCapFullBleed"
   style={{ gridArea: "cap", ...styles.aiCaptionWrap, textAlign: "center" }}
 >
-  <p style={{ ...styles.aiCaptionTitle, marginBottom: 2 }}>
-    大手ドラッグストアチェーン顧問
-  </p>
-  <p style={{ ...styles.aiCaptionSub, fontWeight: 800 }}>
-    税理士 野口のAI
-  </p>
+  <p style={{ ...styles.aiCaptionTitle, fontSize: 16, marginBottom: 4 }}>
+  大手ドラッグストアチェーン顧問
+</p>
+<p style={{ ...styles.aiCaptionSub, fontSize: 17, fontWeight: 900 }}>
+  税理士 野口のAI
+</p>
 </div>
 
 
