@@ -2247,7 +2247,11 @@ let suppressBrandingReason = "unset";
       const followup = followupExplicit || followupOnly || lineRequest || (followupPhase && !shiftedRaw);
 
       // ===== suppressBranding（順番重要：prevDebug と continuationLike が確定してから）=====
-      {
+      // ★demo は UI も出力整形も「🥄/✅/⚠️」が前提なので、抑制で落とすと死ぬ。ここは強制OFF。
+      if (mode === "demo") {
+        suppressBranding = false;
+        suppressBrandingReason = "demo:force_off";
+      } else {
         // 前回危険（inject/block/suppress）で、今回が“続きっぽい”なら抑制を持ち越す
         const prevRisk =
           Boolean((prevDebug as any)?.suppressBranding) ||
@@ -3157,9 +3161,24 @@ const noApportionmentBias: string[] = [
               ].join("\n")
             : null;
 
+
+        // ===== demo 追加ルール（本番ロジックは同じ／出力の“最低保証”だけ足す）=====
+        const demoAnswerRules: string[] =
+          mode === "demo"
+            ? [
+                "【デモ】✅要点は必ず2つ書く（1つで終えない）。",
+                "【デモ】⚠️注意は最大1つでよい（ゼロでもよいが、可能なら1つ入れる）。",
+                "【デモ】必ず『具体例』を1つ入れる（出金伝票メモの書き方など、短く）。",
+                "【デモ】最後に質問で終えない（追い質問・分岐質問は禁止）。",
+                "【デモ】長文禁止。結論→要点→注意→具体例の順で短くまとめる。",
+              ]
+            : [];
+
+
         const promptPartsBase: PromptParts = {
           context: contextLines,
           injectedRules: [
+            ...demoAnswerRules,
             ...outputRules,
             ...clarifyBias,
             ...(borrowAssumeTaxRule ? [borrowAssumeTaxRule] : []),

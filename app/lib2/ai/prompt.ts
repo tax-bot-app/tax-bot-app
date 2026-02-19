@@ -31,9 +31,8 @@ const DEFAULT_PERSONA: string[] = [
 // ✅ 見出しラベルを route.ts と完全一致させる
 const HARD_OUTPUT_RULES: string[] = [
   "【最優先：出力フォーマット】Markdownの見出し（##、###など）は使わない。",
-  "【最優先：見出しラベル固定】見出しラベルは固定：『🥄ちょうど良いライン』『✅要点』『⚠️注意』『🔎確認』。別の絵文字（👉など）に置換しない。",
-  "【最優先：回答の順番】🥄ちょうど良いライン → ✅要点 → ⚠️注意（必要なら） → 🔎確認（原則1つ、最大1つ）。",
-  "【最優先：🔎の設計】🔎確認は『返事いらんメモ』で書く。質問調にしない。Yes/No要求や分岐入力を要求しない。",
+  "【最優先：見出しラベル固定】見出しラベルは固定：『🥄先に言うと』『✅要点』『⚠️注意』。別の絵文字（👉など）に置換しない。",
+  "【最優先：回答の順番】🥄先に言うと → ✅要点 → ⚠️注意（必要なら）。",
   "文章は短め。箇条書き優先。冗長な前置きはしない。",
 ];
 
@@ -75,14 +74,13 @@ export function buildInstructions(parts?: PromptParts): string {
 
   // ✅ “上にあるほど強い”
   const lines = uniq([
+    // ★重要：route.ts から注入するルール（outputRules/KB/QAなど）を最優先にする
+    ...(parts?.injectedRules ?? []),
+
     ...outputRules,
     ...persona,
-
     ...(parts?.guardrails ?? []),
-
     ...(parts?.context ?? []),
-
-    ...(parts?.injectedRules ?? []),
 
     ...(parts?.hardRules?.length ? parts.hardRules : DEFAULT_HARD_RULES),
   ]);

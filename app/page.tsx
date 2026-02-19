@@ -629,13 +629,13 @@ export default function Home() {
             <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #E6EAF2", background: "#fff", padding: 14 }}>
               <div style={{ fontWeight: 900, marginBottom: 8 }}>※ 有料サービスでは</div>
               <ul style={{ margin: "0 0 10px 18px", color: "rgba(11,18,32,0.82)", lineHeight: 1.7 }}>
-                <li>金額レンジの具体化</li>
-                <li>条件分岐ごとの実務整理</li>
-                <li>税務調査目線での想定問答</li>
+                <li>✅金額レンジの具体化</li>
+                <li>✅条件分岐ごとの実務整理</li>
+                <li>✅税務調査目線での想定問答</li>
               </ul>
 
               <div style={{ color: "rgba(11,18,32,0.82)", lineHeight: 1.7 }}>
-                このテーマ、放置すると “なんとなく不安” が残ります。
+                ☞このテーマ、放置すると “なんとなく不安” が残ります。
                 <br />
                 いま整理しますか？
               </div>
