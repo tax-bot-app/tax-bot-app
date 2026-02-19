@@ -498,8 +498,7 @@ export default function Home() {
 
           {/* ✅ 画像の直下：AI野口の説明（ブロック無し） */}
          <div className="heroCapFullBleed" style={{ gridArea: "cap", ...styles.aiCaptionWrap }}>
-  <p style={styles.aiCaptionTitle}>大手ドラッグストアチェーン顧問</p>
-  <p style={styles.aiCaptionSub}>税理士野口のAI</p>
+  <p style={styles.aiCaptionTitle}>大手ドラッグストアチェーン顧問税理士野口のAI</p>
 </div>
 
 
