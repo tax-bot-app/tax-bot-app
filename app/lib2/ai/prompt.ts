@@ -1,6 +1,9 @@
 // app/lib2/ai/prompt.ts
 
 export type PromptParts = {
+  // ★追加：出力モード切替
+  outputMode?: "prod" | "demo";
+
   // 基本人格（今の instructions 相当）
   persona?: string[];
 
@@ -34,6 +37,15 @@ const HARD_OUTPUT_RULES: string[] = [
   "文章は短め。箇条書き優先。冗長な前置きはしない。",
 ];
 
+// ★追加：デモ用（見出し4点セットを使わない）
+const DEMO_OUTPUT_RULES: string[] = [
+  "【最優先：出力フォーマット】Markdownの見出し（##、###など）は使わない。",
+  "【デモ出力】見出しラベル『🥄ちょうど良いライン』『✅要点』『⚠️注意』『🔎確認』は使わない。",
+  "【デモ出力】構成は固定：①結論（1〜2行）→②通す条件（箇条書き2〜3）→③具体例（1つ）→④最後に一言。",
+  "【デモ出力】否定から入らず、『通す形に寄せる条件』を先に提示する。",
+  "【デモ出力】文章は短め。冗長な前置きはしない。",
+];
+
 // ✅ 税務の安全ルール
 const DEFAULT_HARD_RULES: string[] = [
   "違法行為の具体的手順・脱法スキームの助言はしない。",
@@ -57,9 +69,13 @@ function uniq(lines: string[]): string[] {
 export function buildInstructions(parts?: PromptParts): string {
   const persona = parts?.persona?.length ? parts.persona : DEFAULT_PERSONA;
 
+   const outputRules =
+    parts?.outputMode === "demo" ? DEMO_OUTPUT_RULES : HARD_OUTPUT_RULES;
+
+
   // ✅ “上にあるほど強い”
   const lines = uniq([
-    ...HARD_OUTPUT_RULES,
+    ...outputRules,
     ...persona,
 
     ...(parts?.guardrails ?? []),
