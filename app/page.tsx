@@ -496,15 +496,28 @@ export default function Home() {
             <img src="/ai-noguchi-hero.PNG" alt="AI野口 ヒーロー" style={styles.heroImg} />
           </div>
 
-          {/* ✅ 画像の直下：AI野口の説明（ブロック無し） */}
-         <div className="heroCapFullBleed" style={{ gridArea: "cap", ...styles.aiCaptionWrap }}>
-  <p style={styles.aiCaptionTitle}>大手ドラッグストアチェーン顧問税理士野口のAI</p>
+          <div
+  className="heroCapFullBleed"
+  style={{ gridArea: "cap", ...styles.aiCaptionWrap, textAlign: "center" }}
+>
+  <p style={{ ...styles.aiCaptionTitle, marginBottom: 2 }}>
+    大手ドラッグストアチェーン顧問
+  </p>
+  <p style={{ ...styles.aiCaptionSub, fontWeight: 800 }}>
+    税理士 野口のAI
+  </p>
 </div>
 
 
 
+
           <div style={{ ...styles.heroCard, gridArea: "copy" }}>
-            <h1 style={styles.h1}>税理士はそのまま。相談だけ、もう一段。</h1>
+            <h1 style={styles.h1}>
+  税理士はそのまま。
+  <br />
+  相談だけ、もう一段。
+</h1>
+
             <p style={styles.sub}>
               ・「ダメ」で止めずに、税務調査の現実を踏まえて整理する。
               <br />
