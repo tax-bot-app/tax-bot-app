@@ -652,7 +652,7 @@ export default function Home() {
         {/* Pre-plan message */}
         <section style={styles.prePlanMessage}>
           <h3 style={styles.prePlanTitle}>可能性を、言葉ひとつで閉じない。</h3>
-          <p style={styles.prePlanSub}>“とりあえず守る”で止めないための整理を。</p>
+          <p style={styles.prePlanSub}>“ダメです”で諦めないための整理を。</p>
         </section>
 
         {/* Plans */}
