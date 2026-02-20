@@ -1246,12 +1246,7 @@ const openUrlNewTab = (url: string) => {
         onChange={(e) => setInput(cut(e.target.value))}
         onCompositionEnd={(e) => setInput(cut((e.target as HTMLInputElement).value))}
         maxLength={MAX_INPUT_LENGTH}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            if (canSend) sendMessage();
-          }
-        }}
+        // Enter送信は無効（誤爆防止）。送信はボタンのみ。
         placeholder={loading ? "回答中…" : "相談内容を入力"}
         className="chatInput"
         disabled={!canSend}

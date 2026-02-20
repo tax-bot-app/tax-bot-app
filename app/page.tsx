@@ -610,7 +610,7 @@ export default function Home() {
               {demoError && <div style={styles.warn}>{demoError}</div>}
 
               <div style={styles.small}>
-                出力はデモ用に短めです。有料プランでは金額レンジの具体化や『線引き』まで整理します。
+                無料体験の回答は短めです。有料プランでは金額レンジの具体化や『線引き』までさらに踏み込んで整理します。
               </div>
             </div>
 

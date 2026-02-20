@@ -1389,6 +1389,8 @@ function splitWarmClose(answer: string): { body: string; close: string } {
       .replace(/^（〆）\s*/, "")
       .replace(/^\(〆\)\s*/, "")
       .replace(/^〆\s*/, "")
+      // 〆を剥がした後に「）」が残る事故を吸収（LLMのゆれ対策）
+     .replace(/^[\)）]\s*/, "")
       .trim();
 
   const idx = lines.findIndex((l) => isMark(l));
@@ -1477,6 +1479,54 @@ function buildWarmCloseFallback(params: {
   return ["一般論で整理したいか、税務の落としどころまで見るか、どちらでしょうか。", "どちら寄りか分かれば次の一手まで出します。"].join("\n");
 }
 
+function clampKeyBullets(answer: string, maxBullets = 3): string {
+  const a = String(answer ?? "").replace(/\r\n/g, "\n");
+  const lines = a.split("\n");
+
+  const isMarker = (t: string) =>
+    ["🥄", "✅", "⚠️", "🍚", "🧂"].some((m) => t.trimStart().startsWith(m));
+
+  const out: string[] = [];
+  let inKey = false;
+  let kept = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const t = raw.trimStart();
+
+    if (t.startsWith("✅")) {
+      inKey = true;
+      kept = 0;
+      out.push(raw);
+      continue;
+    }
+    if (inKey && isMarker(t)) {
+      inKey = false;
+      out.push(raw);
+      continue;
+    }
+
+    if (!inKey) {
+      out.push(raw);
+      continue;
+    }
+
+    // ✅要点の中：箇条書き（・/-/*）だけ数える
+    if (/^[-・*]\s*/.test(t)) {
+      if (kept < maxBullets) {
+        out.push(raw);
+        kept++;
+      }
+      continue; // 超えた分は捨てる
+    }
+
+    // 箇条書き以外の行はそのまま（見出し直後の補足とか）
+    out.push(raw);
+  }
+
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 
 function postProcessAnswer(
   raw: string,
@@ -1520,6 +1570,8 @@ function postProcessAnswer(
   }
 
   a = enforceTemplate(a);
+  // ✅要点の箇条書きが暴れた時の上限（本番品質保証）
+  a = clampKeyBullets(a, 3);
 
   // allowAttackDefenseDetail=false の時は 🍚🧂を強制で落とす（偽Lines根絶）
   if (!allowAttackDefenseDetail) {
