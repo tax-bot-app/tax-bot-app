@@ -119,15 +119,41 @@ function toDemoAnswer(full: string): string {
   const markers = ["🥄", "✅", "⚠️", "🍚", "🧂", "👉", "🔎"];
   const isMarker = (l: string) => markers.some((m) => l.trimStart().startsWith(m));
 
+  // 本文（🥄/✅/⚠️）に既に出ている行は、締めとして拾わない（重複防止）
+  const norm = (s: string) =>
+    String(s ?? "")
+      .trim()
+      .replace(/\*\*/g, "")          // 太字を無視して比較
+      .replace(/^[🥄✅⚠️]\s*/u, "")  // 先頭マーカー無視
+      .replace(/^[-・*]\s*/u, "")    // 箇条書き無視
+      .trim();
+
+  const seenCore = new Set<string>();
+  for (const l of [...sec, ...key, ...warn]) {
+    const k = norm(l);
+    if (k) seenCore.add(k);
+  }
+
   const tailLines: string[] = [];
   for (let i = linesAll.length - 1; i >= 0 && tailLines.length < 3; i--) {
-    const t = (linesAll[i] ?? "").trim();
+    const raw = linesAll[i] ?? "";
+    const t = raw.trim();
     if (!t) continue;
     if (isMarker(t)) continue;
-    // ✅要点/⚠️注意の本文（箇条書き・※）は締めに混ぜない
     if (t.startsWith("-") || t.startsWith("・") || t.startsWith("※")) continue;
-    tailLines.unshift(linesAll[i].trimEnd());
+
+    // 本文と同じ行（結論の再掲など）は落とす
+   const k = norm(t);
+    if (k && seenCore.has(k)) continue;
+
+    tailLines.unshift(raw.trimEnd());
   }
+
+  // 質問行が取れてるなら、「例 …」はノイズになりやすいので落とす（任意だが今回の崩れ防止に効く）
+  const hasQuestion = tailLines.some((l) => /[?？]\s*$/.test(l.trim()));
+  const tailLinesFinal = hasQuestion
+    ? tailLines.filter((l) => !/^例\b|^例[：:]/.test(l.trim()))
+    : tailLines;
 
   // ✅要点：箇条書きだけを最大2
   const keyBullets = pickBullets(key, 2);
@@ -149,7 +175,7 @@ function toDemoAnswer(full: string): string {
   }
 
   // 締め：本番の締めがあれば最大3行だけ残す。無ければ保険を1行。
-  const tailPicked = tailLines.slice(0, 3);
+  const tailPicked = tailLinesFinal.slice(0, 3);
   if (tailPicked.length) {
     out.push("", ...tailPicked);
   } else {
