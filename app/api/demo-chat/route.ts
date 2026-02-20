@@ -116,6 +116,41 @@ function toDemoAnswer(full: string): string {
 
   const out: string[] = [];
 
+  const looksPoliteEnd = (s: string) => /(です|ます|だ|でしょう|します|できます|OK|大丈夫)\s*[。！!]?$/u.test((s ?? "").trim());
+  const ensurePeriod = (s: string) => {
+    const t = (s ?? "").trim();
+    if (!t) return "";
+    if (/[。.!！]$/.test(t)) return t;
+    return `${t}。`;
+  };
+
+  // 結論を“会話っぽく”整える（名詞列→「まずは〜が基本です」）
+  const softenConcl = (s: string) => {
+    let t = (s ?? "").trim();
+    if (!t) return "";
+    // すでに会話文っぽいなら触らない
+    if (looksPoliteEnd(t) || /^(まず|結論|要は|ポイントは)/u.test(t)) return ensurePeriod(t);
+    // 名詞列（スラッシュ・列挙）っぽい時は「まずは〜が基本です」に寄せる
+    if (/[／/・]/u.test(t) || /日付|相手先|金額|目的|業務/u.test(t)) {
+      t = `まずは、${t}を残すのが基本です`;
+      return ensurePeriod(t);
+    }
+    // それ以外は「まずは〜が無難です」
+    t = `まずは、${t}が無難です`;
+    return ensurePeriod(t);
+  };
+
+  // “最後の質問”を抽出（LLMが書いてたらそれを採用）
+  const findLastQuestion = (text: string) => {
+    const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
+    const tail = lines.slice(Math.max(0, lines.length - 12));
+    for (let i = tail.length - 1; i >= 0; i--) {
+      const raw = tail[i]?.trim();
+      if (!raw) continue;
+      if (/[?？]$/.test(raw)) return raw;
+    }
+    return "";
+  };
   // 1) 結論
   const conclRaw =
     (sec.find((l) => l.trim()) ? stripHeadLine(sec.find((l) => l.trim())!) : "") ||
@@ -123,11 +158,11 @@ function toDemoAnswer(full: string): string {
     "";
   const concl = conclRaw || (pickBullets(key, 1)[0] ?? "");
   if (concl) {
-    out.push("結論：");
-    out.push(concl);
+    out.push("☞ 結論：");
+    out.push(softenConcl(concl));
   }
 
-  // 2) 通す条件（要点 1）
+  // 2) 通す条件（要点 3）
   let keyBullets = pickBullets(key, 3).filter((b) => b && b !== concl);
 
   // ✅ 最低保証：通す条件は原則2つ（長くしない）
@@ -154,14 +189,14 @@ function toDemoAnswer(full: string): string {
 
   // 表示（最大2つまでで短く固定）
   if (keyBullets.length) {
-    out.push("", "通す条件：");
+    out.push("", "☞ 通す条件：");
     for (const b of keyBullets.slice(0, 2)) out.push(`- ${b}`);
   }
 
   // 3) 注意（最大1）
   const warnBullets = pickBullets(warn, 1);
   if (warnBullets[0]) {
-    out.push("", "注意：");
+    out.push("", "☞ 注意：");
     out.push(`※ ${warnBullets[0]}`);
   }
 
@@ -171,13 +206,20 @@ function toDemoAnswer(full: string): string {
   const allLines = a.split("\n").map((x) => x.trim()).filter(Boolean);
   const ex = allLines.find((l) => /(例えば|たとえば|例：|例:)/.test(l));
   if (ex) {
-    out.push("", "具体例：");
+    out.push("", "☞ 具体例：");
     out.push(ex.replace(/^(?:例えば|たとえば)\s*[：:]\s*/,"").trim());
   }
 
-  // 5) 最後に一言（追い質問は1つまでOK。二択や詰問はLLM側ルールで抑える）
-  // ここでは “落とさない”。（以前は末尾の疑問文を消していた）
-  // 代わりに、空行過多だけ整える。
+  // 5) 末尾の質問（ラベル無しで1行だけ）
+  const lastQ = findLastQuestion(a);
+  const hasQAlready = out.some((l) => /[?？]\s*$/.test(String(l ?? "").trim()));
+  if (!hasQAlready) {
+    out.push("");
+    out.push(
+      lastQ ||
+        "もう一段、運用まで掘り下げますか？"
+    );
+  }
 
   let s = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   if (!s) s = a.split("\n").slice(0, 6).join("\n").trim();
