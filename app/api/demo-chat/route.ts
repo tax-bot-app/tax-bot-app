@@ -114,29 +114,20 @@ function toDemoAnswer(full: string): string {
   const key = extractSection(a, "✅");  // ✅要点（最大2に削る）
   const warn = extractSection(a, "⚠️"); // ⚠️注意（最大1に削る）
 
-  // ✅ セクション抽出後、次の見出しが来るまでが取り出せてる前提。
-  // 「締め」は ⚠️注意の後に残っている“見出しなしの文”を拾う。
+  // 「締め」はセクション境界で切れないので、末尾から拾う（作文しない／拾うだけ）
   const linesAll = String(a ?? "").replace(/\r\n/g, "\n").split("\n");
   const markers = ["🥄", "✅", "⚠️", "🍚", "🧂", "👉", "🔎"];
   const isMarker = (l: string) => markers.some((m) => l.trimStart().startsWith(m));
 
-  // ⚠️注意ブロックの終端位置を探す（無ければ ✅要点終端、無ければ 🥄終端）
-  const findEndIndexOfBlock = (head: "🥄" | "✅" | "⚠️") => {
-    const idx = linesAll.findIndex((l) => l.trimStart().startsWith(head));
-    if (idx < 0) return -1;
-    let j = idx + 1;
-    while (j < linesAll.length && !isMarker(linesAll[j])) j++;
-    return j; // 次のマーカー行の手前（=終端）
-  };
-  const endWarn = findEndIndexOfBlock("⚠️");
-  const endKey = findEndIndexOfBlock("✅");
-  const endSec = findEndIndexOfBlock("🥄");
-  const tailStart = endWarn >= 0 ? endWarn : endKey >= 0 ? endKey : endSec >= 0 ? endSec : 0;
-
-  const tailLines = linesAll
-    .slice(Math.max(0, tailStart))
-    .map((l) => l.trimEnd())
-    .filter((l) => l.trim() && !isMarker(l)); // 見出しは除外
+  const tailLines: string[] = [];
+  for (let i = linesAll.length - 1; i >= 0 && tailLines.length < 3; i--) {
+    const t = (linesAll[i] ?? "").trim();
+    if (!t) continue;
+    if (isMarker(t)) continue;
+    // ✅要点/⚠️注意の本文（箇条書き・※）は締めに混ぜない
+    if (t.startsWith("-") || t.startsWith("・") || t.startsWith("※")) continue;
+    tailLines.unshift(linesAll[i].trimEnd());
+  }
 
   // ✅要点：箇条書きだけを最大2
   const keyBullets = pickBullets(key, 2);
