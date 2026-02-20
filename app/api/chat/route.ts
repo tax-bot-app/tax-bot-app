@@ -3161,22 +3161,12 @@ const noApportionmentBias: string[] = [
               ].join("\n")
             : null;
 
-
-        // ===== demo 追加ルール（本番ロジックは同じ／出力の“最低保証”だけ足す）=====
-        const demoAnswerRules: string[] =
-          mode === "demo"
-            ? [
-                "【デモ】短く。1ブロックは2〜3行まで。冗長な前置き禁止。",
-        "【デモ】通す条件は1〜2個でよい（最大2個）。",
-        "【デモ】注意は最大1つ。断罪口調（〜するな/絶対禁止）は避け、リスク表現に丸める。",
-        "【デモ】具体例は1つ。必ず `具体例：...` の1行で書く（短く）。",
-        "【デモ】最後に質問を1つだけ必ず置く。二択はOKだが短く（分岐の長文は禁止）。",
-              ]
-            : [];
+// ✅ 方針確定：生成は本番と同じ。デモは最後に toDemoAnswer で削るだけ。
+        const demoAnswerRules: string[] = [];
+        
 
 
         const promptPartsBase: PromptParts = {
-          outputMode: mode === "demo" ? "demo" : "prod",
           context: contextLines,
           injectedRules: [
             ...demoAnswerRules,

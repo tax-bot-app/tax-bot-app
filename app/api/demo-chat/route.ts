@@ -107,110 +107,65 @@ function stripLinesAndCatchphrase(text: string): string {
 }
 
 function toDemoAnswer(full: string): string {
-  let a = stripLinesAndCatchphrase(full);
+  const a = stripLinesAndCatchphrase(full);
   if (!a) return "";
 
-  const sec = extractSection(a, "🥄");
-  const key = extractSection(a, "✅");
-  const warn = extractSection(a, "⚠️");
+  const sec = extractSection(a, "🥄");  // 🥄先に言うと（本番のまま）
+  const key = extractSection(a, "✅");  // ✅要点（最大2に削る）
+  const warn = extractSection(a, "⚠️"); // ⚠️注意（最大1に削る）
+
+  // ✅ セクション抽出後、次の見出しが来るまでが取り出せてる前提。
+  // 「締め」は ⚠️注意の後に残っている“見出しなしの文”を拾う。
+  const linesAll = String(a ?? "").replace(/\r\n/g, "\n").split("\n");
+  const markers = ["🥄", "✅", "⚠️", "🍚", "🧂", "👉", "🔎"];
+  const isMarker = (l: string) => markers.some((m) => l.trimStart().startsWith(m));
+
+  // ⚠️注意ブロックの終端位置を探す（無ければ ✅要点終端、無ければ 🥄終端）
+  const findEndIndexOfBlock = (head: "🥄" | "✅" | "⚠️") => {
+    const idx = linesAll.findIndex((l) => l.trimStart().startsWith(head));
+    if (idx < 0) return -1;
+    let j = idx + 1;
+    while (j < linesAll.length && !isMarker(linesAll[j])) j++;
+    return j; // 次のマーカー行の手前（=終端）
+  };
+  const endWarn = findEndIndexOfBlock("⚠️");
+  const endKey = findEndIndexOfBlock("✅");
+  const endSec = findEndIndexOfBlock("🥄");
+  const tailStart = endWarn >= 0 ? endWarn : endKey >= 0 ? endKey : endSec >= 0 ? endSec : 0;
+
+  const tailLines = linesAll
+    .slice(Math.max(0, tailStart))
+    .map((l) => l.trimEnd())
+    .filter((l) => l.trim() && !isMarker(l)); // 見出しは除外
+
+  // ✅要点：箇条書きだけを最大2
+  const keyBullets = pickBullets(key, 2);
+  // ⚠️注意：箇条書き/本文を最大1（※は残す）
+  const warnBullets = pickBullets(warn, 1);
 
   const out: string[] = [];
-
-  const looksPoliteEnd = (s: string) => /(です|ます|だ|でしょう|します|できます|OK|大丈夫)\s*[。！!]?$/u.test((s ?? "").trim());
-  const ensurePeriod = (s: string) => {
-    const t = (s ?? "").trim();
-    if (!t) return "";
-    if (/[。.!！]$/.test(t)) return t;
-    return `${t}。`;
-  };
-
-  // 結論文は加工しない（自然さ優先）
-  const normalizeConcl = (s: string) => ensurePeriod((s ?? "").trim());
-
-  // “最後の質問”を抽出（LLMが書いてたらそれを採用）
-  const findLastQuestion = (text: string) => {
-    const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
-    const tail = lines.slice(Math.max(0, lines.length - 12));
-    for (let i = tail.length - 1; i >= 0; i--) {
-      const raw = tail[i]?.trim();
-      if (!raw) continue;
-      if (/[?？]$/.test(raw)) return raw;
-    }
-    return "";
-  };
-  // 1) 結論
-  const conclRaw =
-    (sec.find((l) => l.trim()) ? stripHeadLine(sec.find((l) => l.trim())!) : "") ||
-    (key.find((l) => l.trim()) ? stripHeadLine(key.find((l) => l.trim())!) : "") ||
-    "";
-  const concl = conclRaw || (pickBullets(key, 1)[0] ?? "");
-  if (concl) {
-    out.push("☞ 結論：");
-    out.push(normalizeConcl(concl));
+  if (sec.length) out.push(...sec.map((l) => l.trimEnd()));
+  if (key.length) {
+    // ✅見出し行だけ残し、本文は bullet2に再構成
+    out.push("", key[0].trimEnd());
+    for (const b of keyBullets) out.push(`- ${b}`);
   }
-
-  // 2) 通す条件（要点 3）
-  let keyBullets = pickBullets(key, 3).filter((b) => b && b !== concl);
-
-  // ✅ 最低保証：通す条件は原則2つ（長くしない）
-  // ✅要点が薄い時は、結論文を分割して補う
-  if (keyBullets.length < 2 && concl) {
-    const parts = concl
-      .split(/[、。・\/]/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .filter((s) => s.length >= 8)
-      .slice(0, 3);
-    for (const p of parts) {
-      if (keyBullets.length >= 2) break;
-      if (!keyBullets.includes(p) && p !== concl) keyBullets.push(p);
-    }
-  }
-
-  // それでも足りない場合だけ、注意から“条件っぽい”ものを1つだけ拾う（説教/違法断りは除外）
-  if (keyBullets.length < 2) {
-    const w = pickBullets(warn, 2)
-      .filter((x) => x && !/(絶対|やらないで|違法|脱税|払っていない|売上抜き)/.test(x));
-    if (w[0] && !keyBullets.includes(w[0])) keyBullets.push(w[0]);
-  }
-
-  // 表示（最大2つまでで短く固定）
-  if (keyBullets.length) {
-    out.push("", "☞ 通す条件：");
-    for (const b of keyBullets.slice(0, 2)) out.push(`- ${b}`);
-  }
-
-  // 3) 注意（最大1）
-  const warnBullets = pickBullets(warn, 1);
   if (warnBullets[0]) {
-    out.push("", "☞ 注意：");
-    out.push(`※ ${warnBullets[0]}`);
+    // ⚠️見出し行は残す（あれば）
+    const warnHead = warn.find((l) => l.trimStart().startsWith("⚠️")) ?? "⚠️注意";
+    out.push("", warnHead.trimEnd());
+    out.push(String(warnBullets[0]).trimStart().startsWith("※") ? warnBullets[0] : `※ ${warnBullets[0]}`);
   }
 
-  // 4) 具体例（できれば1つ）
-  // いまはLLM側に「具体例を1つ」要求してるので、ここは “拾う” だけにする。
-  // 例っぽい行（「例えば」「例：」「たとえば」）がどこかにあれば1行拾う。
-  const allLines = a.split("\n").map((x) => x.trim()).filter(Boolean);
-  const ex = allLines.find((l) => /(例えば|たとえば|例：|例:)/.test(l));
-  if (ex) {
-    out.push("", "☞ 具体例：");
-    out.push(ex.replace(/^(?:例えば|たとえば)\s*[：:]\s*/,"").trim());
-  }
-
-  // 5) 末尾の質問（ラベル無しで1行だけ）
-  // 末尾の質問：本番と同じく自然文（出し忘れだけ保険）
-  const lastQ = findLastQuestion(a);
-  // すでに out の末尾が質問なら追加しない（重複防止）
-  const tail = String(out[out.length - 1] ?? "").trim();
-  const tailIsQ = /[?？]\s*$/.test(tail);
-  if (!tailIsQ) {
-    out.push("");
-    out.push(lastQ || "もう一段、運用まで掘り下げますか？");
+  // 締め：本番の締めがあれば最大3行だけ残す。無ければ保険を1行。
+  const tailPicked = tailLines.slice(0, 3);
+  if (tailPicked.length) {
+    out.push("", ...tailPicked);
+  } else {
+    out.push("", "もう一段、運用まで掘り下げますか？");
   }
 
   let s = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-  if (!s) s = a.split("\n").slice(0, 6).join("\n").trim();
-
   if (s.length > DEMO_MAX_OUTPUT) s = s.slice(0, DEMO_MAX_OUTPUT).trimEnd() + "…";
   return s;
 }
