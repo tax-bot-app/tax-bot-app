@@ -128,12 +128,34 @@ function toDemoAnswer(full: string): string {
   }
 
   // 2) 通す条件（要点 1）
-  let keyBullets = pickBullets(key, 1);
-  // 結論と同文が先頭に来がちなので、重複を落とす
-  keyBullets = keyBullets.filter((b) => b && b !== concl);
+  let keyBullets = pickBullets(key, 3).filter((b) => b && b !== concl);
+
+  // ✅ 最低保証：通す条件は原則2つ（長くしない）
+  // ✅要点が薄い時は、結論文を分割して補う
+  if (keyBullets.length < 2 && concl) {
+    const parts = concl
+      .split(/[、。・\/]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .filter((s) => s.length >= 8)
+      .slice(0, 3);
+    for (const p of parts) {
+      if (keyBullets.length >= 2) break;
+      if (!keyBullets.includes(p) && p !== concl) keyBullets.push(p);
+    }
+  }
+
+  // それでも足りない場合だけ、注意から“条件っぽい”ものを1つだけ拾う（説教/違法断りは除外）
+  if (keyBullets.length < 2) {
+    const w = pickBullets(warn, 2)
+      .filter((x) => x && !/(絶対|やらないで|違法|脱税|払っていない|売上抜き)/.test(x));
+    if (w[0] && !keyBullets.includes(w[0])) keyBullets.push(w[0]);
+  }
+
+  // 表示（最大2つまでで短く固定）
   if (keyBullets.length) {
     out.push("", "通す条件：");
-    for (const b of keyBullets.slice(0, 3)) out.push(`- ${b}`);
+    for (const b of keyBullets.slice(0, 2)) out.push(`- ${b}`);
   }
 
   // 3) 注意（最大1）
