@@ -116,32 +116,46 @@ function toDemoAnswer(full: string): string {
 
   const out: string[] = [];
 
-  // 1) 結論（🥄があればそこ）
-  const conclLine =
+  // 1) 結論
+  const conclRaw =
     (sec.find((l) => l.trim()) ? stripHeadLine(sec.find((l) => l.trim())!) : "") ||
     (key.find((l) => l.trim()) ? stripHeadLine(key.find((l) => l.trim())!) : "") ||
     "";
-
-  // conclLine が空（=見出しだけ等）なら、要点の最初の実文を結論に繰り上げる
-  const fallbackConcl = conclLine || (pickBullets(key, 1)[0] ?? "");
-  if (fallbackConcl) out.push(fallbackConcl);
-
-  // 2) 要点（最大2）
-  const keyBullets = pickBullets(key, 2);
-  if (keyBullets.length) {
-    out.push("");
-    for (const b of keyBullets) out.push(`- ${b}`);
+  const concl = conclRaw || (pickBullets(key, 1)[0] ?? "");
+  if (concl) {
+    out.push("結論：");
+    out.push(concl);
   }
 
-  // 3) 注意（最大1） ※ラベルは出さず “※” で柔らかく
+  // 2) 通す条件（要点 1）
+  let keyBullets = pickBullets(key, 1);
+  // 結論と同文が先頭に来がちなので、重複を落とす
+  keyBullets = keyBullets.filter((b) => b && b !== concl);
+  if (keyBullets.length) {
+    out.push("", "通す条件：");
+    for (const b of keyBullets.slice(0, 3)) out.push(`- ${b}`);
+  }
+
+  // 3) 注意（最大1）
   const warnBullets = pickBullets(warn, 1);
   if (warnBullets[0]) {
-    out.push("");
+    out.push("", "注意：");
     out.push(`※ ${warnBullets[0]}`);
   }
 
-  // 4) デモは “追い質問” を置かない（末尾の疑問文は落とす）
-  while (out.length > 0 && /[?？]\s*$/.test(out[out.length - 1])) out.pop();
+  // 4) 具体例（できれば1つ）
+  // いまはLLM側に「具体例を1つ」要求してるので、ここは “拾う” だけにする。
+  // 例っぽい行（「例えば」「例：」「たとえば」）がどこかにあれば1行拾う。
+  const allLines = a.split("\n").map((x) => x.trim()).filter(Boolean);
+  const ex = allLines.find((l) => /(例えば|たとえば|例：|例:)/.test(l));
+  if (ex) {
+    out.push("", "具体例：");
+    out.push(ex.replace(/^(?:例えば|たとえば)\s*[：:]\s*/,"").trim());
+  }
+
+  // 5) 最後に一言（追い質問は1つまでOK。二択や詰問はLLM側ルールで抑える）
+  // ここでは “落とさない”。（以前は末尾の疑問文を消していた）
+  // 代わりに、空行過多だけ整える。
 
   let s = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   if (!s) s = a.split("\n").slice(0, 6).join("\n").trim();
