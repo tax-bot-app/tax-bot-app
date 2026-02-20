@@ -124,21 +124,8 @@ function toDemoAnswer(full: string): string {
     return `${t}。`;
   };
 
-  // 結論を“会話っぽく”整える（名詞列→「まずは〜が基本です」）
-  const softenConcl = (s: string) => {
-    let t = (s ?? "").trim();
-    if (!t) return "";
-    // すでに会話文っぽいなら触らない
-    if (looksPoliteEnd(t) || /^(まず|結論|要は|ポイントは)/u.test(t)) return ensurePeriod(t);
-    // 名詞列（スラッシュ・列挙）っぽい時は「まずは〜が基本です」に寄せる
-    if (/[／/・]/u.test(t) || /日付|相手先|金額|目的|業務/u.test(t)) {
-      t = `まずは、${t}を残すのが基本です`;
-      return ensurePeriod(t);
-    }
-    // それ以外は「まずは〜が無難です」
-    t = `まずは、${t}が無難です`;
-    return ensurePeriod(t);
-  };
+  // 結論文は加工しない（自然さ優先）
+  const normalizeConcl = (s: string) => ensurePeriod((s ?? "").trim());
 
   // “最後の質問”を抽出（LLMが書いてたらそれを採用）
   const findLastQuestion = (text: string) => {
@@ -159,7 +146,7 @@ function toDemoAnswer(full: string): string {
   const concl = conclRaw || (pickBullets(key, 1)[0] ?? "");
   if (concl) {
     out.push("☞ 結論：");
-    out.push(softenConcl(concl));
+    out.push(normalizeConcl(concl));
   }
 
   // 2) 通す条件（要点 3）
@@ -211,14 +198,14 @@ function toDemoAnswer(full: string): string {
   }
 
   // 5) 末尾の質問（ラベル無しで1行だけ）
+  // 末尾の質問：本番と同じく自然文（出し忘れだけ保険）
   const lastQ = findLastQuestion(a);
-  const hasQAlready = out.some((l) => /[?？]\s*$/.test(String(l ?? "").trim()));
-  if (!hasQAlready) {
+  // すでに out の末尾が質問なら追加しない（重複防止）
+  const tail = String(out[out.length - 1] ?? "").trim();
+  const tailIsQ = /[?？]\s*$/.test(tail);
+  if (!tailIsQ) {
     out.push("");
-    out.push(
-      lastQ ||
-        "もう一段、運用まで掘り下げますか？"
-    );
+    out.push(lastQ || "もう一段、運用まで掘り下げますか？");
   }
 
   let s = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
