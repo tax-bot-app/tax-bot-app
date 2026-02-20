@@ -65,6 +65,7 @@ export default function Home() {
   // demo
   const [demoInput, setDemoInput] = useState("");
   const [demoBusy, setDemoBusy] = useState(false);
+  const [demoDots, setDemoDots] = useState("");
   const [demoDone, setDemoDone] = useState(false);
   const [demoAnswer, setDemoAnswer] = useState<string | null>(null);
   const [demoError, setDemoError] = useState<string | null>(null);
@@ -114,6 +115,20 @@ export default function Home() {
     };
   }, []);
 
+  // ✅ 送信中の「…」をムービング（止まってない感）
+  useEffect(() => {
+    if (!demoBusy) {
+      setDemoDots("");
+      return;
+    }
+    let i = 0;
+    const id = window.setInterval(() => {
+      i = (i + 1) % 4; // "", ".", "..", "..."
+      setDemoDots(".".repeat(i));
+    }, 350);
+    return () => window.clearInterval(id);
+  }, [demoBusy]);
+
   const scrollTo = (el: HTMLElement | null) => {
     if (!el) return;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -156,8 +171,8 @@ export default function Home() {
       setDemoDone(true);
       setCookie(DEMO_COOKIE_KEY, "1", 365);
 
-      setPlansOpen(true);
-      setTimeout(() => scrollTo(plansRef.current), 80);
+      // ✅ デモ回答表示後は、ユーザーの視線を回答に固定（自動スクロールしない）
+      setPlansOpen(true); // プランは開くだけ（スクロールはしない）
     } catch (e: any) {
       setDemoError(`送信に失敗しました：${e?.message ?? String(e)}`);
     } finally {
@@ -619,7 +634,9 @@ export default function Home() {
                   onClick={submitDemo}
                   disabled={demoBusy}
                 >
-                  {demoBusy ? "送信中…" : "送信"}
+                  <span style={{ opacity: demoBusy ? 0.9 : 1 }}>
+                    {demoBusy ? `送信中${demoDots}` : "送信"}
+                  </span>
                 </button>
               </div>
             )}
