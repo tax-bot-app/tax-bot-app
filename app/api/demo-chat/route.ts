@@ -44,12 +44,16 @@ function extractSection(answer: string, head: "🥄" | "✅" | "⚠️"): string
 function stripHeadLine(line: string): string {
   let t = (line ?? "").trim();
 
-  // 先頭の絵文字を落とす
-  t = t.replace(/^[🥄✅⚠️]\s*/, "");
+   // 先頭の絵文字を落とす（壊れサロゲートも吸収）
+  // 🥄 = \uD83E\uDD44 だが、\uDD44 だけ残る事故があるので両方落とす
+  t = t.replace(/^(?:🥄|✅|⚠️|\uD83E|\uDD44)\s*/u, "");
 
   // 「先に言うと：」「要点：」「注意：」みたいなラベルがあれば落とす
   const m = t.match(/^.{0,18}[：:]\s*(.+)$/);
   if (m?.[1]) t = m[1].trim();
+
+  // ラベル単体は“中身なし”扱い（demoで見せる価値ゼロ）
+  t = t.replace(/^(先に言うと|要点|注意)\s*$/u, "").trim();
 
   return t.trim();
 }
@@ -118,7 +122,9 @@ function toDemoAnswer(full: string): string {
     (key.find((l) => l.trim()) ? stripHeadLine(key.find((l) => l.trim())!) : "") ||
     "";
 
-  if (conclLine) out.push(conclLine);
+  // conclLine が空（=見出しだけ等）なら、要点の最初の実文を結論に繰り上げる
+  const fallbackConcl = conclLine || (pickBullets(key, 1)[0] ?? "");
+  if (fallbackConcl) out.push(fallbackConcl);
 
   // 2) 要点（最大2）
   const keyBullets = pickBullets(key, 2);

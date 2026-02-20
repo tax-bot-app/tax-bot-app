@@ -599,7 +599,7 @@ export default function Home() {
             <div style={styles.chatBody}>
               {!demoAnswer && (
                 <div style={styles.bubbleBot}>
-                  ここに回答が表示されます。※ デモは登録不要・1回だけ（Cookie制限）。数字や深掘りは控えめに出ます。
+                  ここに回答が表示されます。
                   <br />
                                   </div>
               )}
