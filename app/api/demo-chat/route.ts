@@ -129,8 +129,18 @@ function toDemoAnswer(full: string): string {
       .trim();
 
   const seenCore = new Set<string>();
-  for (const l of [...sec, ...key, ...warn]) {
+  // 🥄と✅はそのままコア扱い
+  for (const l of [...sec, ...key]) {
     const k = norm(l);
+    if (k) seenCore.add(k);
+  }
+  // ⚠️は末尾の締め文まで吸い込みやすいので、
+  // 「⚠️見出し / ※行 / 箇条書き」だけコア扱いにする
+  for (const l of warn) {
+    const t = String(l ?? "").trimStart();
+    const isWarnBody = t.startsWith("⚠️") || t.startsWith("※") || /^[-・*]\s*/.test(t);
+    if (!isWarnBody) continue;
+    const k = norm(t);
     if (k) seenCore.add(k);
   }
 
@@ -150,9 +160,12 @@ function toDemoAnswer(full: string): string {
   }
 
   // 質問行が取れてるなら、「例 …」はノイズになりやすいので落とす（任意だが今回の崩れ防止に効く）
-  const hasQuestion = tailLines.some((l) => /[?？]\s*$/.test(l.trim()));
+  const hasQuestion = tailLines.some((l) => {
+    const s = l.trim();
+    return /[?？]\s*$/.test(s) || /(?:ですか|ますか|でしょうか)\s*[。．.]?\s*$/.test(s);
+  });
   const tailLinesFinal = hasQuestion
-    ? tailLines.filter((l) => !/^例\b|^例[：:]/.test(l.trim()))
+    ? tailLines.filter((l) => !/^例(?:\s|[：:])/u.test(l.trim()))
     : tailLines;
 
   // ✅要点：箇条書きだけを最大2
