@@ -139,7 +139,6 @@ function dedupeConsecutiveBlocks(text: string): string {
 function toDemoAnswer(full: string): string {
   const a = stripLinesAndCatchphrase(full);
   const a2 = dedupeConsecutiveBlocks(a);
-  if (!a) return "";
   if (!a2) return "";
 
   const sec = extractSection(a2, "🥄");  // 🥄先に言うと（本番のまま）
@@ -166,32 +165,63 @@ function toDemoAnswer(full: string): string {
     const k = norm(l);
     if (k) seenCore.add(k);
   }
-   // ⚠️は重複しやすいので “warn全文” をコア扱いにして締め抽出から除外する
+  // ⚠️は末尾の締めまで吸い込みやすいので、
+  // 「⚠️見出し / ※行 / 箇条書き」だけコア扱いにする（締め文を弾きすぎない）
   for (const l of warn) {
-    const k = norm(l);
+    const t0 = String(l ?? "").trimStart();
+    const isWarnBody = t0.startsWith("⚠️") || t0.startsWith("※") || /^[-・*]\s*/.test(t0);
+    if (!isWarnBody) continue;
+    const k = norm(t0);
     if (k) seenCore.add(k);
   }
 
+  // 締めっぽい行（質問・次アクション）を優先で拾う
+  const looksLikeClose = (t: string) => {
+    const s = t.trim();
+    if (!s) return false;
+    if (/[?？]\s*$/.test(s)) return true;
+    if (/(ですか|ますか|でしょうか)\s*[。．.]?\s*$/.test(s)) return true;
+    if (/(教えて|言うて|どっち|どちら|追加|前提|掘り下げ|もう一段|もう少し|続き|つづき|気になる)/.test(s)) return true;
+    return false;
+  };
+
   const tailLines: string[] = [];
+
+  // ① まず「締めっぽい行」を最大3行拾う（※や箇条書きでもOK）
   for (let i = linesAll.length - 1; i >= 0 && tailLines.length < 3; i--) {
     const raw = linesAll[i] ?? "";
-    const t = raw.trim();
-    if (!t) continue;
-    if (isMarker(t)) continue;
-    if (t.startsWith("-") || t.startsWith("・") || t.startsWith("※")) continue;
+    const t0 = raw.trim();
+    if (!t0) continue;
+    if (isMarker(t0)) continue;
 
-    // 本文と同じ行（結論の再掲など）は落とす
-   const k = norm(t);
+    // ※ / 箇条書きは剥がして判定（ただし表示は剥がした後を使う）
+    const t = t0.replace(/^[-・*]\s*/u, "").replace(/^※\s*/u, "").trim();
+
+    const k = norm(t);
     if (k && seenCore.has(k)) continue;
 
-    tailLines.unshift(raw.trimEnd());
+    if (looksLikeClose(t)) tailLines.unshift(t);
   }
 
-  // 質問行が取れてるなら、「例 …」はノイズになりやすいので落とす（任意だが今回の崩れ防止に効く）
-  const hasQuestion = tailLines.some((l) => {
-    const s = l.trim();
-    return /[?？]\s*$/.test(s) || /(?:ですか|ますか|でしょうか)\s*[。．.]?\s*$/.test(s);
-  });
+  // ② 取れなければ、末尾の普通文を最大2行拾う（保険）
+  if (tailLines.length === 0) {
+    for (let i = linesAll.length - 1; i >= 0 && tailLines.length < 2; i--) {
+      const raw = linesAll[i] ?? "";
+      const t0 = raw.trim();
+      if (!t0) continue;
+      if (isMarker(t0)) continue;
+      if (t0.startsWith("※")) continue;
+      if (t0.startsWith("-") || t0.startsWith("・")) continue;
+
+      const k = norm(t0);
+      if (k && seenCore.has(k)) continue;
+
+      tailLines.unshift(t0);
+    }
+  }
+
+  // ③ 質問行が取れてるなら「例…」は落とす
+  const hasQuestion = tailLines.some((l) => /[?？]\s*$/.test(l.trim()));
   const tailLinesFinal = hasQuestion
     ? tailLines.filter((l) => !/^例(?:\s|[：:])/u.test(l.trim()))
     : tailLines;
