@@ -3430,52 +3430,38 @@ export async function POST(req: Request) {
     
 
 if (gr.action === "block") {
-  const nowIso = new Date().toISOString();
-
-  // 既存 conversationId が来てれば使う（body の名前はあなたの route.ts に合わせて）
-  let convId: string | null =
-    typeof (body as any)?.conversationId === "string" ? String((body as any).conversationId) : null;
+  const now = new Date();
+  const t0 = now.toISOString();
+  const t1 = new Date(now.getTime() + 1).toISOString();
+  let convId: string | null = null;
 
   try {
-    // ① conversation を確保
-    if (!convId) {
-      const { data: conv, error: convErr } = await db
-        .from("conversations")
-        .insert({
-          user_id: user.id,
-          title: "（無題）",
-          summary: "",
-          summary_updated_at: nowIso,
-        })
-        .select("id")
-        .single();
+    // ✅ conversation を「検証込み」で確保（既存IDはuser所有チェック、無ければ新規作成）
+    convId = await ensureConversationId({
+      db,
+      userId: user.id,
+      conversationId,
+      firstUserMessage: message,
+    });
 
-      if (convErr) throw convErr;
-      convId = conv?.id ? String(conv.id) : null;
-    }
+    // ✅ messages は2回insert（created_atをズラして順序崩壊を防ぐ）
+    const { error: m1 } = await db.from("messages").insert({
+      user_id: user.id,
+      conversation_id: convId,
+      role: "user",
+      content: message,
+      created_at: t0,
+    });
+    if (m1) throw m1;
 
-    // ② messages に user / assistant を保存（loadMessagesで消えない）
-    if (convId) {
-      const rows = [
-        {
-          user_id: user.id,
-          conversation_id: convId,
-          role: "user",
-          content: message,
-          created_at: nowIso,
-        },
-        {
-          user_id: user.id,
-          conversation_id: convId,
-          role: "assistant",
-          content: gr.userMessage,
-          created_at: nowIso,
-        },
-      ];
-
-      const { error: mErr } = await db.from("messages").insert(rows);
-      if (mErr) throw mErr;
-    }
+    const { error: m2 } = await db.from("messages").insert({
+      user_id: user.id,
+      conversation_id: convId,
+      role: "assistant",
+      content: gr.userMessage,
+      created_at: t1,
+    });
+    if (m2) throw m2;
 
     // ③ chat_debug_events（共通関数経由で書く：形式を統一＆失敗理由をログで見える化）
 await writeDebugEvent({
@@ -3514,8 +3500,7 @@ await writeDebugEvent({
 
 
   } catch (e) {
-    // DB側でコケても “ユーザーには回答返す”
-    // （ここで throw すると again thinking 地獄になる）
+    console.error("[guardrail:block persist failed]", e);
   }
 
   // ④ レスポンス（フロントが判別できるフラグ付き）
@@ -3596,11 +3581,34 @@ try {
     }
 
     try {
-      await db.from("messages").insert([
-        { conversation_id: convId, user_id: user.id, role: "user", content: message },
-        { conversation_id: convId, user_id: user.id, role: "assistant", content: answer },
-      ]);
-    } catch {}
+      // ✅ 同じ idempotencyKey の再送（already_counted）なら二重保存しない
+      if (!usage.already_counted) {
+        const now = new Date();
+        const t0 = now.toISOString();
+        const t1 = new Date(now.getTime() + 1).toISOString();
+
+        const { error: m1 } = await db.from("messages").insert({
+          conversation_id: convId,
+          user_id: user.id,
+          role: "user",
+          content: message,
+          created_at: t0,
+        });
+        if (m1) throw m1;
+
+        const { error: m2 } = await db.from("messages").insert({
+          conversation_id: convId,
+          user_id: user.id,
+          role: "assistant",
+          content: answer,
+          created_at: t1,
+        });
+        if (m2) throw m2;
+      }
+    } catch (e) {
+      console.error("[messages-insert-failed]", e);
+    }
+
 
     return NextResponse.json(
       {

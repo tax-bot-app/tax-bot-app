@@ -265,6 +265,7 @@ export default function ChatClient() {
   // toast
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<any>(null);
+  const sendingRef = useRef(false);
 
   const msgsRef = useRef<HTMLDivElement | null>(null);
   const redirectingRef = useRef(false);
@@ -723,9 +724,16 @@ const openUrlNewTab = (url: string) => {
     const text = String(overrideText ?? input).trim();
     if (!text) return;
     if (text.length > MAX_INPUT_LENGTH) {
-      showToast(`長すぎるで（最大 ${MAX_INPUT_LENGTH} 文字）`);
+      showToast(`文字数オーバーです（最大 ${MAX_INPUT_LENGTH} 文字）`);
       return;
     }
+
+    // ✅ 二重送信ガード（Enter誤爆/連打/外部イベントの保険）
+    if (sendingRef.current) {
+      showToast("送信中…");
+      return;
+    }
+    sendingRef.current = true;
 
     setErrMsg(null);
     setLoading(true);
@@ -813,6 +821,7 @@ const openUrlNewTab = (url: string) => {
       if (await handleAuthishError(e)) return;
       setErrMsg(String(e?.message || "send failed"));
     } finally {
+      sendingRef.current = false;
       setLoading(false);
       setThinking(false);
     }
@@ -1245,6 +1254,15 @@ const openUrlNewTab = (url: string) => {
         value={input}
         onChange={(e) => setInput(cut(e.target.value))}
         onCompositionEnd={(e) => setInput(cut((e.target as HTMLInputElement).value))}
+         onKeyDown={(e) => {
+          // ✅ Enterのデフォルトsubmitを潰す（外部form / onSubmitの誤爆対策）
+          if (e.key !== "Enter") return;
+          const ne: any = e.nativeEvent;
+          // IME確定中（変換確定Enter）は邪魔しない
+          if ((e as any).isComposing || ne?.isComposing || ne?.keyCode === 229) return;
+          e.preventDefault();
+          e.stopPropagation();
+        }}
         maxLength={MAX_INPUT_LENGTH}
         // Enter送信は無効（誤爆防止）。送信はボタンのみ。
         placeholder={loading ? "回答中…" : "相談内容を入力"}
@@ -1603,6 +1621,13 @@ const openUrlNewTab = (url: string) => {
   value={composerText}
    onChange={(e) => setComposerText(cut(e.target.value))}
   onCompositionEnd={(e) => setComposerText(cut((e.target as HTMLTextAreaElement).value))}
+  onKeyDown={(e) => {
+    if (e.key !== "Enter") return;
+    const ne: any = e.nativeEvent;
+    if ((e as any).isComposing || ne?.isComposing || ne?.keyCode === 229) return;
+    // 改行は許可しつつ、外部のEnter送信ハンドラだけ殺す
+    e.stopPropagation();
+  }}
  maxLength={MAX_INPUT_LENGTH}
   placeholder="相談内容を入力してください"
   className="composerTextarea"
@@ -1764,6 +1789,12 @@ const openUrlNewTab = (url: string) => {
   value={inputSheetText}
   onChange={(e) => setInputSheetText(cut(e.target.value))}
   onCompositionEnd={(e) => setInputSheetText(cut((e.target as HTMLTextAreaElement).value))}
+  onKeyDown={(e) => {
+    if (e.key !== "Enter") return;
+    const ne: any = e.nativeEvent;
+    if ((e as any).isComposing || ne?.isComposing || ne?.keyCode === 229) return;
+    e.stopPropagation();
+  }}
  maxLength={MAX_INPUT_LENGTH}
   placeholder="相談内容を入力"
   className="sheetTextarea"
