@@ -438,10 +438,10 @@ function extractClarifyTerm(message: string): string | null {
   if (!s) return null;
 
   const m1 = s.match(
-    /^(.+?)(?:って|て|とは)\s*(?:何|なに|どういう意味|どういうこと|どゆこと|どゆ意味|意味)$/
+    /^(.+?)(?:って|とは)\s*(?:何|なに|どういう意味|どういうこと|どゆこと|どゆ意味|意味)$/
   );
   if (m1?.[1]) return m1[1].trim();
-  const m2 = s.match(/^(.+?)(?:って|て|とは)\s*$/);
+  const m2 = s.match(/^(.+?)(?:って|とは)\s*$/);
   if (m2?.[1]) return m2[1].trim();
 
   const solo = s.trim();
@@ -720,7 +720,7 @@ function isAmountAsk(message: string): boolean {
   const m = (message ?? "").trim();
   if (!m) return false;
   if (hasMoneyLike(m)) return true;
-  return /(いくら|なんぼ|金額|上限|限界|レンジ|幅|いくつまで|どこまで|ギリ|安全|セーフ|アウト|グレー)/.test(
+   return /(いくら|なんぼ|金額|上限|限界|レンジ|幅|いくつまで|どこまで|ギリ|安全|セーフ|アウト|グレー|何枚|枚数|件数|何件|回数|何回|頻度)/.test(
     m
   );
 }
@@ -1744,7 +1744,7 @@ function scoreQaShallow(qa: KnowledgeItem, message: string): number {
   for (const t of tokens) if (t && hay.includes(t.toLowerCase())) s += 1;
 
   // 2文字のドメイン語（売上/現金など）は tokens3 で落ちるので、ここで拾う
-  const dom2 = ["売上", "現金", "外注", "交際費", "給与", "日当", "入金", "請求", "納品", "検収","検収","領収書","レシート"];
+  const dom2 = ["売上","現金","外注","交際費","給与","日当","入金","請求","納品","検収","領収書","レシート","出金伝票","伝票","精算","立替","立て替え"];
   for (const w of dom2) {
     if (m.includes(w) && hay.includes(w)) s += 2; // 強めに
   }
@@ -2505,6 +2505,10 @@ if (topicsNow.length === 0 && subjectTopic) {
 
       if (implicitShiftUnstick) {
         auditAxis = false;
+        // ✅ 軸を外したなら topicsNow から税務調査も落とす（整合）
+      if (!auditAxis) {
+        topicsNow = (topicsNow ?? []).filter((t) => t !== TOPIC_TAX_AUDIT);
+      }
       }
 
       // axisTopic
