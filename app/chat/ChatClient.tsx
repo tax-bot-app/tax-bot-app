@@ -58,17 +58,7 @@ function clamp(s: string, n: number) {
   const t = (s ?? "").replace(/\s+/g, " ").trim();
   return t.length <= n ? t : t.slice(0, n) + "…";
 }
-function toJstLabel(iso: string) {
-  try {
-    const d = new Date(iso);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}/${m}/${day}`;
-  } catch {
-    return "";
-  }
-}
+
 function toHm(iso: string) {
   try {
     const d = new Date(iso);
@@ -628,12 +618,6 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
   window.location.href = url;
 };
 
-const openUrlNewTab = (url: string) => {
-  if (url.startsWith("http")) window.open(url, "_blank", "noreferrer");
-  else window.location.href = url;
-};
-
-
   const doLogout = async () => {
     await supabase.auth.signOut().catch(() => null);
     clearChatUiState();
@@ -945,40 +929,7 @@ const openUrlNewTab = (url: string) => {
     };
   }, [menuOpen, threadsOverlayOpen, aiProfileOpen, threadMenuOpen, composerOpen, inputSheetOpen]);
 
-  /** ===== swipe left to open threads overlay ===== */
-  const swipeRef = useRef<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false });
-  const onTouchStart = (e: React.TouchEvent) => {
-    if (threadsOverlayOpen || menuOpen || composerOpen || aiProfileOpen || threadMenuOpen) return;
-    const t = e.touches[0];
-    swipeRef.current = { x: t.clientX, y: t.clientY, active: true };
-  };
-
-  const onTouchEnd = (e: React.TouchEvent) => {
-  const st = swipeRef.current;
-  if (!st.active) return;
-  swipeRef.current.active = false;
-
-  const t = e.changedTouches[0];
-  const dx = t.clientX - st.x;
-  const dy = t.clientY - st.y;
-
-  // 縦スクロール優先
-  if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
-
-  // ✅ overlay開いてる時は “右→左” で閉じるだけ
-  if (threadsOverlayOpen) {
-    if (dx < -70) setThreadsOverlayOpen(false);
-    return;
-  }
-
-  // ✅ 左端スタート限定で “左→右” で開く
-  const fromLeftEdge = st.x < 60; // 60くらいがiOSの戻るジェスチャと喧嘩しにくい
-  if (fromLeftEdge && dx > 70) {
-    setThreadsOverlayOpen(true);
-    return;
-  }
-};
-
+  
   /** ===== helpers ===== */
   const openAiProfileFromAnswer = (text: string) => {
     setAiTargetText(text);

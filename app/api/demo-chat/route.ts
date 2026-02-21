@@ -106,16 +106,48 @@ function stripLinesAndCatchphrase(text: string): string {
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function dedupeConsecutiveBlocks(text: string): string {
+  const s = String(text ?? "").replace(/\r\n/g, "\n").trim();
+  if (!s) return s;
+
+  const blocks = s
+    .split(/\n{2,}/g)
+    .map((b) => b.trim())
+    .filter(Boolean);
+
+  const norm = (b: string) =>
+    b
+      .replace(/\*\*/g, "")
+      .replace(/[ 　\t]+/g, " ")
+      .replace(/\n+/g, "\n")
+      .trim();
+
+  const out: string[] = [];
+  let prev = "";
+  for (const b of blocks) {
+    const k = norm(b);
+    if (!k) continue;
+    if (k === prev) continue; // 連続重複だけ落とす（離れた重複は残す）
+    out.push(b);
+    prev = k;
+  }
+
+  return out.join("\n\n").trim();
+}
+
+
 function toDemoAnswer(full: string): string {
   const a = stripLinesAndCatchphrase(full);
+  const a2 = dedupeConsecutiveBlocks(a);
   if (!a) return "";
+  if (!a2) return "";
 
-  const sec = extractSection(a, "🥄");  // 🥄先に言うと（本番のまま）
-  const key = extractSection(a, "✅");  // ✅要点（最大2に削る）
-  const warn = extractSection(a, "⚠️"); // ⚠️注意（最大1に削る）
+  const sec = extractSection(a2, "🥄");  // 🥄先に言うと（本番のまま）
+  const key = extractSection(a2, "✅");  // ✅要点（最大2に削る）
+  const warn = extractSection(a2, "⚠️"); // ⚠️注意（最大1に削る）
 
   // 「締め」はセクション境界で切れないので、末尾から拾う（作文しない／拾うだけ）
-  const linesAll = String(a ?? "").replace(/\r\n/g, "\n").split("\n");
+  const linesAll = String(a2 ?? "").replace(/\r\n/g, "\n").split("\n");
   const markers = ["🥄", "✅", "⚠️", "🍚", "🧂", "👉", "🔎"];
   const isMarker = (l: string) => markers.some((m) => l.trimStart().startsWith(m));
 
@@ -134,13 +166,9 @@ function toDemoAnswer(full: string): string {
     const k = norm(l);
     if (k) seenCore.add(k);
   }
-  // ⚠️は末尾の締め文まで吸い込みやすいので、
-  // 「⚠️見出し / ※行 / 箇条書き」だけコア扱いにする
+   // ⚠️は重複しやすいので “warn全文” をコア扱いにして締め抽出から除外する
   for (const l of warn) {
-    const t = String(l ?? "").trimStart();
-    const isWarnBody = t.startsWith("⚠️") || t.startsWith("※") || /^[-・*]\s*/.test(t);
-    if (!isWarnBody) continue;
-    const k = norm(t);
+    const k = norm(l);
     if (k) seenCore.add(k);
   }
 
