@@ -630,8 +630,7 @@ export default function Home() {
               )}
 
               {demoInput.trim() && <div style={styles.bubbleUser}>{demoInput.trim()}</div>}
-              {demoAnswer && <div style={styles.bubbleBot}>{demoAnswer}</div>}
-
+              
               {demoError && <div style={styles.warn}>{demoError}</div>}
 
               <div style={styles.small}>
