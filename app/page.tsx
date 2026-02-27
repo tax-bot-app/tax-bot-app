@@ -160,7 +160,7 @@ export default function Home() {
     // ★追加：待機メッセージ（先に見せる）
   setDemoAnswer("いま内容を整理しています。30秒〜1分ほどお待ちください。");
   setDemoError(null);
-  
+
     try {
       const res = await fetch("/api/demo-chat", {
         method: "POST",
@@ -364,7 +364,21 @@ export default function Home() {
       whiteSpace: "pre-wrap",
       lineHeight: 1.7,
       color: "rgba(11,18,32,0.92)",
+      position: "relative",
+      overflow: "hidden",
     },
+
+    // demoBusy中だけ被せる“流れるハイライト”
+    bubbleShimmer: {
+      position: "absolute",
+      inset: 0,
+      background:
+        "linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.45) 50%, rgba(255,255,255,0) 100%)",
+      transform: "translateX(-120%)",
+      animation: "sjkShimmer 1.2s infinite",
+      pointerEvents: "none",
+    },
+
     bubbleUser: {
       justifySelf: "end",
       maxWidth: "90%",
@@ -473,6 +487,12 @@ export default function Home() {
 
   return (
     <main style={styles.wrap}>
+    <style>{`
+      @keyframes sjkShimmer {
+        0% { transform: translateX(-120%); }
+        100% { transform: translateX(120%); }
+      }
+    `}</style>
       <div style={styles.container}>
         {/* Header */}
         <header style={styles.header}>
@@ -602,11 +622,11 @@ export default function Home() {
             </div>
 
             <div style={styles.chatBody}>
-              {!demoAnswer && (
+                {demoAnswer && (
                 <div style={styles.bubbleBot}>
-                  ここに回答が表示されます。
-                  <br />
-                                  </div>
+                  {demoAnswer}
+                  {demoBusy && <div style={styles.bubbleShimmer} />}
+                </div>
               )}
 
               {demoInput.trim() && <div style={styles.bubbleUser}>{demoInput.trim()}</div>}

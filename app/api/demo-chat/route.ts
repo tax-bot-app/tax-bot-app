@@ -153,6 +153,16 @@ function dedupeConsecutiveBlocks(text: string): string {
   return out.join("\n\n").trim();
 }
 
+function sanitizeDemoFormatting(s: string): string {
+  let t = String(s ?? "");
+  // **太字** を落とす
+  t = t.replace(/\*\*(.+?)\*\*/g, "$1");
+  // 先頭の「※ 」を消す（注意文として残すなら記号だけ落とす）
+  t = t.replace(/(^|\n)\s*※\s+/g, "$1");
+  // 箇条書きの "- " を「・」に変える（残したいならここは消さなくてOK）
+  t = t.replace(/(^|\n)\s*-\s+/g, "$1・");
+  return t;
+}
 
 function toDemoAnswer(full: string): string {
   const a = stripLinesAndCatchphrase(full);
@@ -272,6 +282,7 @@ function toDemoAnswer(full: string): string {
   }
 
   let s = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  s = sanitizeDemoFormatting(s);
   if (s.length > DEMO_MAX_OUTPUT) s = s.slice(0, DEMO_MAX_OUTPUT).trimEnd() + "…";
   return s;
 }
