@@ -2785,6 +2785,7 @@ const anchorCandidates = pickedQaOnly.slice(0, 3).map((q) => ({
 const anchor = await decideAnchorQaByLLM({
  message: String(retrievalMessageForQa ?? ""),
   candidates: anchorCandidates,
+  signal: params.signal,
 });
 
 const anchorQaId = anchor.ok ? String(anchor.anchorQaId ?? "").trim() : "";

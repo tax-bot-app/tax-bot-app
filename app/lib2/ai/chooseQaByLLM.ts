@@ -27,6 +27,7 @@ export async function chooseQaByLLM(params: {
   candidates: QaCandidateThin[];
    pickN?: number;
   preferBucket?: "subject" | "audit" | "other";
+  signal?: AbortSignal;
 }): Promise<ChooseQaResult> {
   try {
     const openai = new OpenAI({
@@ -79,11 +80,10 @@ ${message}
 ${listText}
 `;
 
-    const ai = await openai.responses.create({
-      model,
-      instructions,
-      input: inputText,
-    });
+    const ai = await openai.responses.create(
+      { model, instructions, input: inputText },
+      params.signal ? { signal: params.signal } : undefined
+    );
 
     const raw = ai.output_text?.trim() || "";
 
