@@ -156,6 +156,11 @@ export default function Home() {
     }
 
     setDemoBusy(true);
+
+    // ★追加：待機メッセージ（先に見せる）
+  setDemoAnswer("いま内容を整理しています。30秒〜1分ほどお待ちください。");
+  setDemoError(null);
+  
     try {
       const res = await fetch("/api/demo-chat", {
         method: "POST",

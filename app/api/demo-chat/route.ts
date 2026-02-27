@@ -13,7 +13,7 @@ type DemoRes =
 const DEMO_MAX_INPUT = 400;
 const DEMO_MAX_OUTPUT = 750;
 const DEMO_COOKIE = "sjk_demo_done";
-const DEMO_TIMEOUT_MS = 30_000;
+const DEMO_TIMEOUT_MS = 60_000;
 
 function mustEnv(name: string): string {
   const v = process.env[name];
