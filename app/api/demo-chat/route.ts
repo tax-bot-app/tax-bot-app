@@ -356,6 +356,10 @@ export async function POST(req: Request) {
       e?.name === "AbortError" ||
       msg.includes("DEMO_TIMEOUT") ||
       String(e?.cause ?? "").includes("DEMO_TIMEOUT");
+
+      // ★追加：Abort以外の500原因をVercelログに出す
+    if (!aborted) console.error("[demo-chat]", e);
+    
     if (aborted) {
       return NextResponse.json(
         { ok: false, error: "混み合っています。少し時間をおいて、もう一度お試しください。" } satisfies DemoRes,
