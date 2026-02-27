@@ -2,14 +2,14 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 
 function LoginInner() {
   const router = useRouter();
   const sp = useSearchParams();
 
   const supabase = useMemo(() => {
-    return createClient(
+    return createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
@@ -30,11 +30,17 @@ function LoginInner() {
 
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
-      if (data.session) router.replace("/chat");
+      if (data.session) {
+         router.replace("/chat");
+         router.refresh();
+       }
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) router.replace("/chat");
+      if (session) {
+         router.replace("/chat");
+         router.refresh();
+       }
     });
 
     return () => {
@@ -53,6 +59,7 @@ function LoginInner() {
         return;
       }
       router.replace("/chat");
+      router.refresh();
     } finally {
       setBusy(false);
     }
