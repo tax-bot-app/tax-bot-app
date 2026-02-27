@@ -2250,9 +2250,13 @@ let suppressBrandingReason = "unset";
   let answer = "";
 
   // --- BEGIN MOVED BLOCK (from POST try body) ---
-  // ★このコメントの間に「POSTの try の中身」を移植する（丸ごと）
-  // prev user raw（直近のユーザー発話そのまま：weakスキップしない）
-      const prevUserMessageRaw = await (async () => {
+// ★このコメントの間に「POSTの try の中身」を移植する（丸ごと）
+
+// ===== prev/context fetch（demoは単発なのでDBを読まない）=====
+const prevUserMessageRaw =
+  mode === "demo"
+    ? null
+    : await (async () => {
         const { data: rows } = await db
           .from("messages")
           .select("content")
@@ -2264,13 +2268,16 @@ let suppressBrandingReason = "unset";
         if (!rows || rows.length === 0) return null;
         const current = message.trim();
         const cands = (rows ?? [])
-   .map((r: any) => String(r?.content ?? "").trim())
-   .filter((c: string) => c && c !== current);
+          .map((r: any) => String(r?.content ?? "").trim())
+          .filter((c: string) => c && c !== current);
         return cands[0] ?? null;
       })();
 
-      // prev user (weak を飛ばして拾う)
-      const prevUserMessage = await (async () => {
+// prev user (weak を飛ばして拾う)
+const prevUserMessage =
+  mode === "demo"
+    ? null
+    : await (async () => {
         const { data: rows } = await db
           .from("messages")
           .select("content")
@@ -2283,13 +2290,16 @@ let suppressBrandingReason = "unset";
         if (!rows || rows.length === 0) return null;
         const current = message.trim();
         const candidates = (rows ?? [])
-  .map((r: any) => String(r?.content ?? "").trim())
-  .filter((c: string) => c && c !== current);
+          .map((r: any) => String(r?.content ?? "").trim())
+          .filter((c: string) => c && c !== current);
         for (const c of candidates) if (!isWeakUtterance(c)) return c;
         return candidates[0] ?? null;
       })();
 
-      const prevAssistantMessage = await (async () => {
+const prevAssistantMessage =
+  mode === "demo"
+    ? null
+    : await (async () => {
         const { data: prevRows } = await db
           .from("messages")
           .select("content")
@@ -2301,10 +2311,15 @@ let suppressBrandingReason = "unset";
         return prevRows?.[0]?.content ?? null;
       })();
 
-      // 直前ユーザー発話に紐づくdebugを優先（混線防止）。無ければ従来の最新1件。
-      const prevDebug =
-        (await fetchPrevDebugForPrevUserMessage(db, convId, prevUserMessage)) ??
-        (await fetchPrevDebugLite(db, convId));
+// 直前ユーザー発話に紐づくdebugを優先（混線防止）。無ければ従来の最新1件。
+// demoはDBを汚さない＆単発なので prevDebug は不要（nullでOK）
+const prevDebug =
+  mode === "demo"
+    ? null
+    : (await fetchPrevDebugForPrevUserMessage(db, convId, prevUserMessage)) ??
+      (await fetchPrevDebugLite(db, convId));
+
+// --- END prev/context fetch ---
 
       const clarify = detectClarifyPrevAnswer(message, prevAssistantMessage);
       const lineRequest = isLineRequest(message);
@@ -3115,7 +3130,8 @@ llm_shift_cue_reason: String(llmShiftCueReason ?? ""),
 
         const ambiguityBoost = buildAmbiguityBoostRules(message);
         const styleRules = buildStyleRules(dialect, stance);
-        const contextLines = await buildConversationContext({ db, convId });
+        const contextLines =
+   mode === "demo" ? ["【ルール】会話と矛盾しない。確認は原則1つ。"] : await buildConversationContext({ db, convId });
 
         const doubleTopicRule: string[] =
           auditAxis && subjectTopic && subjectTopic !== TOPIC_TAX_AUDIT
