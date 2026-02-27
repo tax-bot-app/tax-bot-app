@@ -7,6 +7,7 @@ export async function middleware(req: NextRequest) {
   // ===== 0) allowlist（常に通す：ループ防止＆ログイン導線確保） =====
   const ALWAYS_ALLOW_PREFIXES = ["/maintenance", "/login", "/_next"];
   const AUTH_CALLBACK_PREFIXES = [
+    "/auth/v1",
     "/auth/callback",
     "/api/auth/callback",
     "/api/auth/confirm",
