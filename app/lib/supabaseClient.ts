@@ -1,4 +1,5 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 
 let _client: SupabaseClient | null = null;
 
@@ -11,6 +12,6 @@ export function getSupabaseClient(): SupabaseClient {
   if (!url || !url.trim()) throw new Error("NEXT_PUBLIC_SUPABASE_URL is missing");
   if (!anon || !anon.trim()) throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY is missing");
 
-  _client = createClient(url, anon);
+  _client = createBrowserClient(url, anon);
   return _client;
 }
