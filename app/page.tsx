@@ -40,6 +40,8 @@ type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
 type DemoRes = { ok: true; answer: string } | { ok: false; error: string };
 
 const DEMO_COOKIE_KEY = "sajikagen_demo_done";
+const DEMO_LS_KEY = "sajikagen_demo_done";
+const DEMO_BYPASS_LS = "sjk_demo_bypass";
 const DEMO_MAX_LEN = 400;
 
 function getCookie(name: string): string | null {
@@ -51,6 +53,29 @@ function setCookie(name: string, value: string, days = 365) {
   if (typeof document === "undefined") return;
   const expires = new Date(Date.now() + days * 86400 * 1000).toUTCString();
   document.cookie = `${name}=${encodeURIComponent(value)}; Expires=${expires}; Path=/; SameSite=Lax`;
+}
+
+function isDoneByCookieOrLS(): boolean {
+  const c = getCookie(DEMO_COOKIE_KEY) === "1";
+  let l = false;
+  try { l = localStorage.getItem(DEMO_LS_KEY) === "1"; } catch {}
+  return c || l;
+}
+
+function markDoneCookieAndLS() {
+  setCookie(DEMO_COOKIE_KEY, "1", 180);
+  try { localStorage.setItem(DEMO_LS_KEY, "1"); } catch {}
+}
+
+async function getDeviceId(): Promise<string | null> {
+  try {
+    const mod = await import("@fingerprintjs/fingerprintjs");
+    const fp = await mod.load();
+    const r = await fp.get();
+    return r?.visitorId ? String(r.visitorId) : null;
+  } catch {
+    return null;
+  }
 }
 
 export default function Home() {
@@ -89,7 +114,7 @@ export default function Home() {
 
   // init: cookie
   useEffect(() => {
-    const done = getCookie(DEMO_COOKIE_KEY) === "1";
+    const done = isDoneByCookieOrLS();
     if (done) {
       setDemoDone(true);
       setPlansOpen(true);
@@ -162,15 +187,34 @@ export default function Home() {
   setDemoError(null);
 
     try {
+const bypass = (() => {
+        try { return (localStorage.getItem(DEMO_BYPASS_LS) ?? "").trim(); } catch { return ""; }
+      })();
+
+      const deviceId = await getDeviceId(); // 取れなければ null（=弱い制限へ）
+
       const res = await fetch("/api/demo-chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: q, demo: true }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(bypass ? { "x-demo-bypass": bypass } : {}),
+        },
+        body: JSON.stringify({ message: q, demo: true, deviceId }),
       });
 
       const json = (await res.json().catch(() => null)) as DemoRes | null;
       if (!json) throw new Error("demo-chat: empty response");
-      if (!json.ok) throw new Error(json.error || "demo-chat failed");
+      if (!json.ok) {
+        // 409 は「送信済み」扱いに寄せる（入力欄消す＋プラン開く）
+        if (res.status === 409) {
+          setDemoDone(true);
+          setPlansOpen(true);
+          markDoneCookieAndLS();
+          setDemoAnswer("無料体験は1回のみです。続きはプランから整理できます。");
+          return;
+        }
+        throw new Error(json.error || "demo-chat failed");
+      }
 
       setDemoAnswer(json.answer);
       setDemoDone(true);

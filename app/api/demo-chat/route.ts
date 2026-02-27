@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { judgeGuardrails } from "../../lib2/guardrails";
 import { buildAnswerCore } from "../chat/route";
+import crypto from "crypto";
 
 export const runtime = "nodejs";
 
@@ -12,8 +13,39 @@ type DemoRes =
 
 const DEMO_MAX_INPUT = 400;
 const DEMO_MAX_OUTPUT = 750;
-const DEMO_COOKIE = "sjk_demo_done";
+const DEMO_COOKIE = "sajikagen_demo_done";
 const DEMO_TIMEOUT_MS = 60_000;
+const DEMO_DEVICE_TABLE = "demo_device_attempts";
+
+function envBool(name: string, def = false): boolean {
+  const v = (process.env[name] ?? "").toLowerCase().trim();
+  if (!v) return def;
+  return v === "1" || v === "true" || v === "on" || v === "yes";
+}
+
+function getBypassToken(req: Request): string | null {
+  const t = req.headers.get("x-demo-bypass");
+  return t ? String(t).trim() : null;
+}
+
+function isBypassed(req: Request): boolean {
+  const want = (process.env.DEMO_BYPASS_TOKEN ?? "").trim();
+  if (!want) return false;
+  const got = getBypassToken(req);
+  return Boolean(got && got === want);
+}
+
+function hmacDeviceKey(deviceId: string): string {
+  const secret = mustEnv("DEMO_DEVICE_HMAC_SECRET");
+  return crypto.createHmac("sha256", secret).update(deviceId, "utf8").digest("hex");
+}
+
+function isAdminDevice(deviceKey: string): boolean {
+  const raw = (process.env.DEMO_ADMIN_DEVICE_KEYS ?? "").trim();
+  if (!raw) return false;
+  const set = new Set(raw.split(",").map((x) => x.trim()).filter(Boolean));
+  return set.has(deviceKey);
+}
 
 function mustEnv(name: string): string {
   const v = process.env[name];
@@ -27,13 +59,13 @@ function hasDemoCookie(cookieHeader: string | null): boolean {
 }
 
 function setDemoCookie(res: NextResponse) {
-  // 30日。ここは好みで。
+  // 180日（「1回のみ」の記憶としてちょうど良い）
   res.cookies.set(DEMO_COOKIE, "1", {
-    httpOnly: true,
-    secure: true,
+    httpOnly: false, // ★フロントで読めるように
+    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: 60 * 60 * 24 * 30,
+    maxAge: 60 * 60 * 24 * 180,
   });
 }
 
@@ -289,15 +321,9 @@ function toDemoAnswer(full: string): string {
 
 export async function POST(req: Request) {
   try {
-    // ✅ サーバ側でも「デモ1回のみ」を保証（フロントのCookie制限だけだと抜ける）
-    if (hasDemoCookie(req.headers.get("cookie"))) {
-      return NextResponse.json(
-        { ok: false, error: "無料体験は1回のみです。プラン確認から続けられます。" } satisfies DemoRes,
-        { status: 409 }
-      );
-    }
     const body = await req.json().catch(() => null);
     const message = String(body?.message ?? "").trim();
+    const deviceId = String(body?.deviceId ?? "").trim();
 
     if (!message) {
       return NextResponse.json({ ok: false, error: "message is required" } satisfies DemoRes, { status: 400 });
@@ -309,13 +335,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const gr = judgeGuardrails(message);
-    if (gr.action === "block") {
-      // block でも「1回消費」扱いにする（抜け道防止）
-      const res = NextResponse.json({ ok: true, answer: String(gr.userMessage ?? "").trim() } satisfies DemoRes);
-      setDemoCookie(res);
-      return res;
-    }
+    
 
     // demo はログイン無しなので service role 推奨（RLSでknowledgeを読めない環境だとQA採用が死ぬ）
     const url = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
@@ -324,6 +344,47 @@ export async function POST(req: Request) {
 
     const db = createClient(url, key, { auth: { persistSession: false } });
 
+// ===== 0) bypass（自分用）=====
+    const bypass = isBypassed(req);
+
+    // ===== 1) device 制限（段階導入：ENFORCE=off の間は保存だけ）=====
+    if (!bypass && deviceId) {
+      const deviceKey = hmacDeviceKey(deviceId);
+      const adminDevice = isAdminDevice(deviceKey);
+      const enforce = envBool("DEMO_DEVICE_ENFORCE", false);
+
+      if (!adminDevice) {
+        const ua = req.headers.get("user-agent") ?? null;
+        const { error } = await db.from(DEMO_DEVICE_TABLE).insert({ device_key: deviceKey, ua });
+
+        // UNIQUE違反（=2回目以降）
+        const isUnique = String((error as any)?.code ?? "") === "23505";
+        if (enforce && isUnique) {
+          return NextResponse.json(
+            { ok: false, error: "無料体験は1回のみです。プラン確認から続けられます。" } satisfies DemoRes,
+            { status: 409 }
+          );
+        }
+      }
+    }
+
+    // ===== 2) Cookie 制限（保険A：同ブラウザの再訪でも潰す）=====
+    if (!bypass && hasDemoCookie(req.headers.get("cookie"))) {
+      return NextResponse.json(
+        { ok: false, error: "無料体験は1回のみです。プラン確認から続けられます。" } satisfies DemoRes,
+        { status: 409 }
+      );
+    }
+
+
+    const gr = judgeGuardrails(message);
+    if (gr.action === "block") {
+      // block でも「1回消費」扱いにする（抜け道防止）
+      const res = NextResponse.json({ ok: true, answer: String(gr.userMessage ?? "").trim() } satisfies DemoRes);
+      if (!bypass) setDemoCookie(res);
+      return res;
+    }
+    
     const topicMode: "regex" | "llm" =
       (process.env.TOPIC_MODE || "regex") === "llm" ? "llm" : "regex";
 
@@ -359,7 +420,7 @@ export async function POST(req: Request) {
     }
 
     const res = NextResponse.json({ ok: true, answer } satisfies DemoRes);
-    setDemoCookie(res);
+    if (!bypass) setDemoCookie(res);
     return res;
   } catch (e: any) {
     const msg = String(e?.message ?? "");
