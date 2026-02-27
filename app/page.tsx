@@ -622,15 +622,15 @@ export default function Home() {
             </div>
 
             <div style={styles.chatBody}>
+              {demoInput.trim() && <div style={styles.bubbleUser}>{demoInput.trim()}</div>}
+
                 {demoAnswer && (
                 <div style={styles.bubbleBot}>
                   {demoAnswer}
                   {demoBusy && <div style={styles.bubbleShimmer} />}
                 </div>
               )}
-
-              {demoInput.trim() && <div style={styles.bubbleUser}>{demoInput.trim()}</div>}
-              
+                            
               {demoError && <div style={styles.warn}>{demoError}</div>}
 
               <div style={styles.small}>
