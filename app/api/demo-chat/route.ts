@@ -12,6 +12,8 @@ type DemoRes =
 
 const DEMO_MAX_INPUT = 400;
 const DEMO_MAX_OUTPUT = 750;
+const DEMO_COOKIE = "sjk_demo_done";
+const DEMO_TIMEOUT_MS = 12_000;
 
 function mustEnv(name: string): string {
   const v = process.env[name];
@@ -19,11 +21,27 @@ function mustEnv(name: string): string {
   return v;
 }
 
+function hasDemoCookie(cookieHeader: string | null): boolean {
+  const c = cookieHeader ?? "";
+  return /(?:^|;\s*)sjk_demo_done=1(?:;|$)/.test(c);
+}
+
+function setDemoCookie(res: NextResponse) {
+  // 30日。ここは好みで。
+  res.cookies.set(DEMO_COOKIE, "1", {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+}
+
 function extractSection(answer: string, head: "🥄" | "✅" | "⚠️"): string[] {
   const lines = String(answer ?? "").replace(/\r\n/g, "\n").split("\n");
   const out: string[] = [];
   let inSec = false;
-  const markers = ["🥄", "✅", "⚠️", "🍚", "🧂", "👉", "🔎"];
+  const markers = ["🥄", "✅", "⚠️", "🍚", "🧂", "👉", "🔎", "（〆）", "(〆)", "〆"];
 
   for (const line of lines) {
     const t = line.trimStart();
@@ -260,6 +278,13 @@ function toDemoAnswer(full: string): string {
 
 export async function POST(req: Request) {
   try {
+    // ✅ サーバ側でも「デモ1回のみ」を保証（フロントのCookie制限だけだと抜ける）
+    if (hasDemoCookie(req.headers.get("cookie"))) {
+      return NextResponse.json(
+        { ok: false, error: "無料体験は1回のみです。プラン確認から続けられます。" } satisfies DemoRes,
+        { status: 409 }
+      );
+    }
     const body = await req.json().catch(() => null);
     const message = String(body?.message ?? "").trim();
 
@@ -275,7 +300,10 @@ export async function POST(req: Request) {
 
     const gr = judgeGuardrails(message);
     if (gr.action === "block") {
-      return NextResponse.json({ ok: true, answer: String(gr.userMessage ?? "").trim() } satisfies DemoRes);
+      // block でも「1回消費」扱いにする（抜け道防止）
+      const res = NextResponse.json({ ok: true, answer: String(gr.userMessage ?? "").trim() } satisfies DemoRes);
+      setDemoCookie(res);
+      return res;
     }
 
     // demo はログイン無しなので service role 推奨（RLSでknowledgeを読めない環境だとQA採用が死ぬ）
@@ -292,18 +320,26 @@ export async function POST(req: Request) {
     const convId = crypto.randomUUID();
     const userId = crypto.randomUUID();
 
-    const core = await buildAnswerCore({
-      mode: "demo",
-      db,
-      userId,
-      convId,
-      message,
-      dialect: "standard",
-      stance: "sanbo",
-      gr,
-      topicMode,
-      persistDebug: false,
-    });
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort("DEMO_TIMEOUT"), DEMO_TIMEOUT_MS);
+    let core;
+    try {
+      core = await buildAnswerCore({
+        mode: "demo",
+        db,
+        userId,
+        convId,
+        message,
+        dialect: "standard",
+        stance: "sanbo",
+        gr,
+        topicMode,
+        persistDebug: false,
+        signal: ac.signal, // ★追加
+      });
+    } finally {
+      clearTimeout(t);
+    }
 
     const answer = toDemoAnswer(core.answer);
 
@@ -311,10 +347,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "AI returned empty response" } satisfies DemoRes, { status: 502 });
     }
 
-    return NextResponse.json({ ok: true, answer } satisfies DemoRes);
+    const res = NextResponse.json({ ok: true, answer } satisfies DemoRes);
+    setDemoCookie(res);
+    return res;
   } catch (e: any) {
+    const msg = String(e?.message ?? "");
+    const aborted =
+      e?.name === "AbortError" ||
+      msg.includes("DEMO_TIMEOUT") ||
+      String(e?.cause ?? "").includes("DEMO_TIMEOUT");
+    if (aborted) {
+      return NextResponse.json(
+        { ok: false, error: "混み合っています。少し時間をおいて、もう一度お試しください。" } satisfies DemoRes,
+        { status: 504 }
+      );
+    }
+    // 生エラーは返さない（内部情報っぽく見えるしUXも悪い）
     return NextResponse.json(
-      { ok: false, error: e?.message ?? String(e) } satisfies DemoRes,
+      { ok: false, error: "エラーが発生しました。内容を少し変えて再送してください。" } satisfies DemoRes,
       { status: 500 }
     );
   }

@@ -1527,6 +1527,34 @@ function clampKeyBullets(answer: string, maxBullets = 3): string {
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function dedupeConsecutiveBlocks(text: string): string {
+  const blocks = String(text ?? "")
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/g)
+    .map((b) => b.trim())
+    .filter(Boolean);
+
+  const out: string[] = [];
+  let prev = "";
+
+  const norm = (s: string) =>
+    s
+      .replace(/[ 　\t]+/g, " ")
+      .replace(/[。．.]+/g, "。")
+      .replace(/[、，,]+/g, "、")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  for (const b of blocks) {
+    const n = norm(b);
+    if (n && n === prev) continue; // 直前ブロックと完全重複なら捨てる
+    out.push(b);
+    prev = n;
+  }
+
+  return out.join("\n\n").trim();
+}
+
 
 function postProcessAnswer(
   raw: string,
@@ -1569,7 +1597,14 @@ function postProcessAnswer(
     a = out.join("\n").trim();
   }
 
-  a = enforceTemplate(a);
+   a = enforceTemplate(a);
+
+  // ✅ 連続重複ブロックを除去（LLMの同文2連発を潰す）
+  a = dedupeConsecutiveBlocks(a);
+
+  // ✅要点の箇条書きが暴れた時の上限（本番品質保証）
+  a = clampKeyBullets(a, 3);
+
   // ✅要点の箇条書きが暴れた時の上限（本番品質保証）
   a = clampKeyBullets(a, 3);
 
@@ -1678,9 +1713,10 @@ async function generateAnswerStrict(params: {
   inquiryOverride?: string | null;
   llmIntent?: string | null;
   suppressBranding?: boolean;
-  // ★追加：warm close
   allowWarmClose?: boolean;
   warmCloseMode?: WarmCloseMode | null;
+  // ★追加：Abort（demo/chat どっちでも）
+  signal?: AbortSignal;
 }): Promise<string> {
   const { promptPartsBase, dialect, stance } = params;
   const forbidden = forbiddenFor(dialect, stance);
@@ -1702,7 +1738,11 @@ async function generateAnswerStrict(params: {
       injectedRules: [...(promptPartsBase.injectedRules ?? []), ...extra],
     };
 
-    const result = await generateAnswer({ message: params.message, promptParts });
+    const result = await generateAnswer({
+      message: params.message,
+      promptParts,
+      signal: params.signal,
+    });
 
     last = postProcessAnswer(result.answer, dialect, stance, {
       usedKnowledge: params.usedKnowledge,
@@ -1882,6 +1922,7 @@ function splitQaForHybrid(params: {
 async function pick50ByHybridLLM(params: {
   message: string;
   cand50: QaCand[];
+  signal?: AbortSignal;
 }): Promise<{
   selected50: KnowledgeItem[];
   llmOk: boolean;
@@ -1913,7 +1954,7 @@ async function pick50ByHybridLLM(params: {
     bucket: c._bucket,
   }));
 
-  const llm = await chooseQaByLLM({ message, candidates: thin });
+  const llm = await chooseQaByLLM({ message, candidates: thin, signal: params.signal });
 
   const idToCand = new Map(cand50.map((c) => [c.id, c]));
   const pickFromIds = (ids: string[]) =>
@@ -2163,6 +2204,7 @@ export async function buildAnswerCore(params: {
 
   // demoは必ず false
   persistDebug?: boolean;
+  signal?: AbortSignal; // ★追加
 }): Promise<{ answer: string }> {
   const {
     mode,
@@ -2680,6 +2722,7 @@ const topicQaAll = subjectTopic
         candidates: crossThin,
         pickN: HYBRID_CROSS_N,
         preferBucket: "other",
+        signal: params.signal,
       });
 
             // topic系 24 + cross系 6 → 合計30（重複は除外、足りなければtopic系で埋める）
@@ -2721,6 +2764,7 @@ const topicQaAll = subjectTopic
       const llmPick = await pick50ByHybridLLM({
         message: crossMessage,
         cand50: cand50Final,
+        signal: params.signal,
       });
 
 const pickedQaForPrompt: KnowledgeItem[] = [
@@ -3275,6 +3319,7 @@ const noApportionmentBias: string[] = [
           suppressBranding,
           allowWarmClose: Boolean(wantWarmClose),
           warmCloseMode: closeMode,
+          signal: params.signal
         });
 
         path = "normal_llm";

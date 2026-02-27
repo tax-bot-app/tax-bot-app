@@ -27,6 +27,7 @@ export type AnchorDecision = {
 export async function decideAnchorQaByLLM(params: {
   message: string;
   candidates: AnchorCandidate[]; // picked_qa 由来（最大3）
+  signal?: AbortSignal;
 }): Promise<AnchorDecision> {
   try {
     const { message, candidates } = params;
@@ -76,11 +77,14 @@ ${message}
 ${listText}
 `;
 
-    const ai = await openai.responses.create({
-      model,
-      instructions,
-      input,
-    });
+    const ai = await openai.responses.create(
+      {
+        model,
+        instructions,
+        input,
+      },
+      params.signal ? { signal: params.signal } : undefined
+    );
 
     const raw = ai.output_text?.trim() || "";
     if (!raw) return { ok: false, anchorQaId: "", confidence: 0, reason: "empty", error: "empty response" };

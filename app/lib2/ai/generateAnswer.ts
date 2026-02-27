@@ -13,7 +13,11 @@ export type GenerateAnswerInput = {
 
   // 将来拡張用（今は未使用でもOK）
   promptParts?: PromptParts;
+
+  // ★Abort用（demo/chat どっちでも使える）
+  signal?: AbortSignal;
 };
+
 
 export type GenerateAnswerResult = {
   answer: string;
@@ -28,11 +32,15 @@ export async function generateAnswer(input: GenerateAnswerInput): Promise<Genera
 
   const instructions = buildInstructions(input.promptParts);
 
-  const ai = await openai.responses.create({
-    model,
-    instructions,
-    input: input.message,
-  });
+  const ai = await openai.responses.create(
+    {
+      model,
+      instructions,
+      input: input.message,
+    },
+    // ★OpenAI SDKは第2引数で fetch options を受けられる
+    input.signal ? { signal: input.signal } : undefined
+  );
 
   const answer = (ai.output_text && ai.output_text.trim()) || "";
   if (!answer) throw new Error("AI returned empty response");
