@@ -175,15 +175,17 @@ function LoginInner() {
           inputMode="email"
         />
 
-        <label className="block text-sm mb-1">パスワード</label>
-        <input
-          className="w-full border rounded-md px-3 py-2 mb-4"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          type="password"
-          placeholder="********"
-          autoComplete="current-password"
-        />
+        <label className="block text-sm mb-1">
+  パスワード <span className="text-xs text-zinc-500">(8文字以上)</span>
+</label>
+<input
+  className="w-full border rounded-md px-3 py-2 mb-4"
+  value={password}
+  onChange={(e) => setPassword(e.target.value)}
+  type="password"
+  placeholder="8文字以上で入力"
+  autoComplete="current-password"
+/>
 
         {msg && (
           <p className={`text-sm mb-3 ${msg.kind === "error" ? "text-red-600" : "text-zinc-700"}`}>
@@ -219,6 +221,14 @@ function LoginInner() {
     </main>
   );
 }
+
+<div className="mt-4 text-xs text-zinc-600 leading-relaxed border-t pt-3">
+  <p className="font-semibold mb-1">新規登録の流れ</p>
+  <p>
+    メールアドレスとパスワード（8文字以上）を設定し、「新規登録」を押してください。
+    認証メールが届きますので、メール内のリンクを開いて認証を完了してください。
+  </p>
+</div>
 
 export default function LoginPage() {
   return (
