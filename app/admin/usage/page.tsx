@@ -117,6 +117,11 @@ const [planSaving, setPlanSaving] = useState<Record<string, boolean>>({});
   const [allowUserId, setAllowUserId] = useState("");
   const [allowLabel, setAllowLabel] = useState("");
   const [allowLoading, setAllowLoading] = useState(false);
+  // ===== provision user (auth UID -> public.users) =====
+  const [provUserId, setProvUserId] = useState("");
+  const [provEmail, setProvEmail] = useState("");
+  const [provLoading, setProvLoading] = useState(false);
+  const [provMsg, setProvMsg] = useState<string | null>(null);
 
   async function tokenOrThrow(): Promise<string> {
     const { data, error } = await supabase.auth.getSession();
@@ -229,6 +234,36 @@ const [planSaving, setPlanSaving] = useState<Record<string, boolean>>({});
       setRows((json2.data ?? []) as Row[]);
     } finally {
       setPlanSaving((m) => ({ ...m, [userId]: false }));
+    }
+  }
+
+async function provisionUser() {
+    const uid = provUserId.trim();
+    const email = provEmail.trim();
+    if (!uid) throw new Error("user_id が空やで");
+
+    setProvLoading(true);
+    setProvMsg(null);
+    try {
+      const res = await apiFetch("/api/admin/provision-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: uid, email: email || undefined }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
+
+      setProvMsg(json.created ? "作成した（public.usersに追加）" : "既に存在（補完のみ or 変更なし）");
+      setProvUserId("");
+      setProvEmail("");
+
+      // ついでに usage を再取得（表示更新）
+      const res2 = await apiFetch(`/api/admin/usage?month=${encodeURIComponent(month)}`);
+      const json2 = await res2.json().catch(() => null);
+      if (!res2.ok || !json2?.ok) throw new Error(json2?.error ?? `HTTP ${res2.status}`);
+      setRows((json2.data ?? []) as Row[]);
+    } finally {
+      setProvLoading(false);
     }
   }
 
@@ -528,6 +563,43 @@ const uid = r.user_id;
             </tbody>
           </table>
         </div>
+
+        {/* ===== 友だち追加（Auth UID → public.users 同期） ===== */}
+        <section style={{ marginTop: 18 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 900 }}>ユーザー同期（友だち無料の準備）</h2>
+          <p style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+            Supabase Authentication → Users の UID（uuid）を貼って、public.users に行を作る（初期free / quota=1）。
+          </p>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
+            <input
+              value={provUserId}
+              onChange={(e) => setProvUserId(e.target.value)}
+              placeholder="user_id (Auth UID / uuid)"
+              style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd", width: 360 }}
+            />
+            <input
+              value={provEmail}
+              onChange={(e) => setProvEmail(e.target.value)}
+              placeholder="email（任意：補完用）"
+              style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd", width: 320 }}
+            />
+            <button
+              type="button"
+              disabled={provLoading}
+              onClick={() => provisionUser().catch((e: any) => setErr(e?.message ?? String(e)))}
+              style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd", background: "white", fontWeight: 800 }}
+            >
+              ユーザー同期
+            </button>
+          </div>
+
+          {provMsg && (
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>
+              結果: <b>{provMsg}</b>
+            </div>
+          )}
+        </section>
 
         {/* ===== 無制限 allowlist（同一画面） ===== */}
         <section style={{ marginTop: 18 }}>
