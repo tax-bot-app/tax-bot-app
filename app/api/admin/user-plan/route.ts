@@ -63,7 +63,7 @@ function quotaFor(plan: string): number {
     case "lite":
       return 5;
     case "standard":
-      return 100;
+      return 30;
     case "enterprise":
       return 100; // ←仮。必要なら別値へ
     case "free":
