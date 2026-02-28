@@ -91,6 +91,8 @@ function LoginInner() {
       return;
     }
 
+if (busy) return; // 二重クリック防止
+
     setBusy(true);
     try {
       const { error } = await supabase.auth.signInWithPassword({ email: e, password });
@@ -98,8 +100,7 @@ function LoginInner() {
         setMsg({ kind: "error", text: friendlyAuthMessage(error.message, "signin") });
         return;
       }
-      router.replace("/chat");
-      router.refresh();
+      // ✅ 遷移は onAuthStateChange 側に一本化（ここでreplaceすると体感で“2回押し”になりやすい）
     } finally {
       setBusy(false);
     }
@@ -117,6 +118,8 @@ function LoginInner() {
       return;
     }
 
+    if (busy) return; // 二重クリック防止
+
     setBusy(true);
     try {
       const emailRedirectTo = `${window.location.origin}/login`;
@@ -133,8 +136,7 @@ function LoginInner() {
       }
 
       if (data.session) {
-        router.replace("/chat");
-        router.refresh();
+        // ✅ 遷移は onAuthStateChange 側に一本化
         return;
       }
 
@@ -148,6 +150,7 @@ function LoginInner() {
   };
 
   const sendReset = async () => {
+    if (busy) return; // 二重クリック防止
     setMsg(null);
     const e = normalizeEmail(email);
     if (!e) {
@@ -220,25 +223,26 @@ function LoginInner() {
           <button
             onClick={signIn}
             disabled={busy}
-            className="flex-1 bg-black text-white px-4 py-2 rounded-md disabled:opacity-60"
+            className="flex-1 bg-black text-white px-4 py-2 rounded-md disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
           >
-            ログイン
+          
+            {busy ? "ログイン中…" : "ログイン"}
           </button>
           <button
             onClick={signUp}
             disabled={busy}
-            className="flex-1 bg-zinc-200 text-black px-4 py-2 rounded-md disabled:opacity-60"
+            className="flex-1 bg-zinc-200 text-black px-4 py-2 rounded-md disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
           >
-            新規登録
+            {busy ? "処理中…" : "新規登録"}
           </button>
         </div>
 
         <button
           onClick={sendReset}
           disabled={busy}
-          className="w-full mt-3 bg-white text-black px-4 py-2 rounded-md border disabled:opacity-60"
+          className="w-full mt-3 bg-white text-black px-4 py-2 rounded-md border disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
         >
-          パスワードを忘れた場合はこちら（再設定メール送信）
+          {busy ? "送信中…" : "パスワードを忘れた場合はこちら（再設定メール送信）"}
         </button>
 
         <div className="mt-4 text-xs text-zinc-600 leading-relaxed border-t pt-3">
