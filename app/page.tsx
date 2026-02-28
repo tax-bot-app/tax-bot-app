@@ -755,9 +755,20 @@ const bypass = (() => {
             onToggle={(e) => setPlansOpen((e.target as HTMLDetailsElement).open)}
           >
             <summary style={styles.summary}>
-              <span>プラン</span>
-              <span style={{ color: "rgba(11,18,32,0.60)", fontSize: 12 }}>{demoDone ? "デモ後はここが本番" : "いつでも開けます"}</span>
-            </summary>
+  <span>プラン</span>
+  <span
+    style={{
+      fontSize: 12,
+      color: demoDone
+        ? "rgba(30,94,255,0.75)"   // 送信済み時だけ少し青寄り
+        : "rgba(11,18,32,0.60)",
+      fontWeight: demoDone ? 700 : 400,
+      letterSpacing: "0.02em",
+    }}
+  >
+    プランを見る
+  </span>
+</summary>
 
             <div style={styles.plansBody}>
               <div style={styles.agreeRow}>
@@ -804,7 +815,7 @@ const bypass = (() => {
                             {p.quotaLabel} {p.note ? `・${p.note}` : ""}
                           </div>
                         </div>
-                        <div style={{ fontSize: 14, color: "rgba(11,18,32,0.92)", fontWeight: 900 }}>
+                        <div style={{ fontSize: 14, color: "rgba(11,18,32,0.92)", fontWeight: 900, whiteSpace: "nowrap", flexShrink: 0 }}>
                           {p.priceLabel}
                         </div>
                       </div>
