@@ -65,6 +65,15 @@ export async function GET(req: Request) {
     const plan = (urow?.plan as string) ?? "free";
     const baseLimit = Number(urow?.monthly_quota ?? 0);
 
+     // ✅ 無制限（allowlist）なら usage 参照せずに返す
+ const { data: isUnlimited, error: ulErr } = await db.rpc("is_unlimited_user", {
+   p_user_id: user.id,
+ });
+ if (!ulErr && Boolean(isUnlimited)) {
+   const res: StatusRes = { ok: true, plan, used_talks: 0, limit_talks: null };
+   return NextResponse.json(res);
+ }
+
     // usage（月次集計）
     const { data: usage, error: u2err } = await db
       .from("usage")

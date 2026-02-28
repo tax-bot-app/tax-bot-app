@@ -608,7 +608,10 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
   })();
 
   const badge = (() => {
-    if (!limitTalks) return `プラン: ${plan}`;
+    // null = 無制限（allowlist）
+   if (limitTalks === null) return `プラン: ${plan} / 残り ∞ 回（無制限）`;
+   // 0 or undefined は「未取得 or 未設定」扱い（表示は控えめに）
+   if (limitTalks === undefined) return `プラン: ${plan}`;
     const used = usedTalks ?? 0;
     const left = Math.max(0, limitTalks - used);
     return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）`;
