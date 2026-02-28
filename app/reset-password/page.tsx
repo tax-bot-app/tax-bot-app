@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "../lib/supabaseClient";
+import { Eye, EyeOff } from "lucide-react";
 
 type Phase = "checking" | "ready" | "updating" | "done" | "error";
 
@@ -11,12 +12,21 @@ function normalizeAuthMessage(raw: string): string {
   const low = m.toLowerCase();
 
   if (!m) return "エラーが発生しました。時間をおいてもう一度お試しください。";
-  if (low.includes("password should be at least") || low.includes("password") && low.includes("length"))
+
+  if (
+    low.includes("password should be at least") ||
+    (low.includes("password") && low.includes("length"))
+  ) {
     return "パスワードが短すぎます。8文字以上で設定してください。";
-  if (low.includes("session") && low.includes("missing"))
+  }
+
+  if (low.includes("session") && low.includes("missing")) {
     return "リンクが無効か、期限切れの可能性があります。再設定メールをもう一度お送りください。";
-  if (low.includes("expired"))
+  }
+
+  if (low.includes("expired")) {
     return "リンクの有効期限が切れている可能性があります。再設定メールをもう一度お送りください。";
+  }
 
   // それ以外は断定せず丸める
   return "更新に失敗しました。時間をおいてもう一度お試しください。";
@@ -28,6 +38,7 @@ export default function ResetPasswordPage() {
 
   const [phase, setPhase] = useState<Phase>("checking");
   const [message, setMessage] = useState<string>("");
+  const [showPw, setShowPw] = useState(false);
   const [pw1, setPw1] = useState("");
   const [pw2, setPw2] = useState("");
 
@@ -108,6 +119,8 @@ export default function ResetPasswordPage() {
     }, 900);
   }
 
+  const disabled = phase === "updating";
+
   return (
     <main className="min-h-screen flex flex-col items-center justify-center bg-zinc-50 px-6">
       <h1 className="text-3xl font-bold mb-6">パスワード再設定</h1>
@@ -126,42 +139,67 @@ export default function ResetPasswordPage() {
             <form onSubmit={onSubmit} className="grid gap-3">
               <div>
                 <label className="block text-sm mb-1">
-                  新しいパスワード <span className="text-xs text-zinc-500">(8文字以上)</span>
+                  新しいパスワード{" "}
+                  <span className="text-xs text-zinc-500">(8文字以上)</span>
                 </label>
-                <input
-                  type="password"
-                  className="w-full border rounded-md px-3 py-2"
-                  placeholder="新しいパスワード"
-                  value={pw1}
-                  onChange={(e) => setPw1(e.target.value)}
-                  autoComplete="new-password"
-                  disabled={phase === "updating"}
-                />
+
+                <div className="relative">
+                  <input
+                    type={showPw ? "text" : "password"}
+                    className="w-full border rounded-md px-3 py-2 pr-10"
+                    placeholder="新しいパスワード"
+                    value={pw1}
+                    onChange={(e) => setPw1(e.target.value)}
+                    autoComplete="new-password"
+                    disabled={disabled}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw((v) => !v)}
+                    className="absolute inset-y-0 right-0 px-3 text-zinc-500 hover:text-black disabled:opacity-60"
+                    aria-label={showPw ? "パスワードを隠す" : "パスワードを表示"}
+                    disabled={disabled}
+                  >
+                    {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
 
               <div>
-                <label className="block text-sm mb-1">新しいパスワード（確認）</label>
-                <input
-                  type="password"
-                  className="w-full border rounded-md px-3 py-2"
-                  placeholder="確認用パスワード"
-                  value={pw2}
-                  onChange={(e) => setPw2(e.target.value)}
-                  autoComplete="new-password"
-                  disabled={phase === "updating"}
-                />
+                <label className="block text-sm mb-1">
+                  新しいパスワード（確認）
+                </label>
+
+                <div className="relative">
+                  <input
+                    type={showPw ? "text" : "password"}
+                    className="w-full border rounded-md px-3 py-2 pr-10"
+                    placeholder="確認用パスワード"
+                    value={pw2}
+                    onChange={(e) => setPw2(e.target.value)}
+                    autoComplete="new-password"
+                    disabled={disabled}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw((v) => !v)}
+                    className="absolute inset-y-0 right-0 px-3 text-zinc-500 hover:text-black disabled:opacity-60"
+                    aria-label={showPw ? "パスワードを隠す" : "パスワードを表示"}
+                    disabled={disabled}
+                  >
+                    {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
 
-              {message && (
-                <p className="text-sm text-red-600">{message}</p>
-              )}
+              {message && <p className="text-sm text-red-600">{message}</p>}
 
               <button
                 type="submit"
-                disabled={phase === "updating"}
+                disabled={disabled}
                 className="w-full bg-black text-white px-4 py-2 rounded-md disabled:opacity-60"
               >
-                {phase === "updating" ? "更新中…" : "更新する"}
+                {disabled ? "更新中…" : "更新する"}
               </button>
             </form>
 
@@ -171,9 +209,7 @@ export default function ResetPasswordPage() {
           </>
         )}
 
-        {phase === "done" && (
-          <p className="text-sm text-zinc-700">{message}</p>
-        )}
+        {phase === "done" && <p className="text-sm text-zinc-700">{message}</p>}
 
         {phase === "error" && (
           <>
