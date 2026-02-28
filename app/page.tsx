@@ -168,7 +168,7 @@ export default function Home() {
 
   const submitDemo = async () => {
     setDemoError(null);
-    if (demoDone) return;
+    // demoDoneでも送信は試させる（2回目以降は409で静かに線引き）
 
     const q = (demoInput ?? "").trim();
     if (!q) {
@@ -207,10 +207,11 @@ const bypass = (() => {
       if (!json.ok) {
         // 409 は「送信済み」扱いに寄せる（入力欄消す＋プラン開く）
         if (res.status === 409) {
-          setDemoDone(true);
-          setPlansOpen(true);
-          markDoneCookieAndLS();
+          setDemoDone(true);         // 右上ラベル用に残す
+          setPlansOpen(true);        // プランは開く（スクロールしない）
+          markDoneCookieAndLS();     // 再訪でも「送信済み」を維持
           setDemoAnswer("無料体験は1回のみです。続きはプランから整理できます。");
+          setDemoError(null);        // 赤枠を出さない
           return;
         }
         throw new Error(json.error || "demo-chat failed");
@@ -218,7 +219,7 @@ const bypass = (() => {
 
       setDemoAnswer(json.answer);
       setDemoDone(true);
-      setCookie(DEMO_COOKIE_KEY, "1", 365);
+      markDoneCookieAndLS();
 
       // ✅ デモ回答表示後は、ユーザーの視線を回答に固定（自動スクロールしない）
       setPlansOpen(true); // プランは開くだけ（スクロールはしない）
@@ -682,8 +683,7 @@ const bypass = (() => {
               </div>
             </div>
 
-            {!demoDone && (
-              <div style={styles.inputRow}>
+            <div style={styles.inputRow}>
                 <textarea
                   value={demoInput}
                   onChange={(e) => setDemoInput(e.target.value)}
@@ -707,7 +707,6 @@ const bypass = (() => {
                   </span>
                 </button>
               </div>
-            )}
           </div>
 
           {demoDone && (
