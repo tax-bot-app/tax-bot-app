@@ -78,7 +78,8 @@ export async function GET(req: Request) {
           email,
           plan,
           monthly_quota,
-          is_admin
+          is_admin,
+          created_at
         )
       `
       )
