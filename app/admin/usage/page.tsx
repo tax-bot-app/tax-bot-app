@@ -106,6 +106,11 @@ export default function AdminUsagePage() {
   // sort
   const [sortKey, setSortKey] = useState<SortKey>("updated_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  
+  // ===== plan editor =====
+const [planDraft, setPlanDraft] = useState<Record<string, string>>({});
+const [planSaving, setPlanSaving] = useState<Record<string, boolean>>({});
+  
 
   // ===== unlimited allowlist =====
   const [allowRows, setAllowRows] = useState<AllowRow[]>([]);
@@ -203,6 +208,28 @@ export default function AdminUsagePage() {
     if (!res.ok || !json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
 
     await loadAllowlist();
+  }
+
+  async function saveUserPlan(userId: string, plan: string) {
+    setPlanSaving((m) => ({ ...m, [userId]: true }));
+    try {
+      const res = await apiFetch("/api/admin/user-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, plan }),
+      });
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
+
+      // ✅ 反映のため usage を再取得（plan/quotaが users から出るので）
+      const res2 = await apiFetch(`/api/admin/usage?month=${encodeURIComponent(month)}`);
+      const json2 = await res2.json().catch(() => null);
+      if (!res2.ok || !json2?.ok) throw new Error(json2?.error ?? `HTTP ${res2.status}`);
+      setRows((json2.data ?? []) as Row[]);
+    } finally {
+      setPlanSaving((m) => ({ ...m, [userId]: false }));
+    }
   }
 
   useEffect(() => {
@@ -439,11 +466,48 @@ export default function AdminUsagePage() {
                   const remDisp = c.remaining === null ? "∞" : String(c.remaining ?? 0);
                   const pctDisp = c.pct === null ? "-" : `${Math.round(c.pct * 100)}%`;
                   const monthsDisp = c.monthsActive === null ? "-" : String(c.monthsActive);
+const uid = r.user_id;
+                  const currentPlan = String(r.users?.plan ?? "free").toLowerCase();
+                  const draft = planDraft[uid] ?? currentPlan;
+                  const saving = Boolean(planSaving[uid]);
+                  
 
                   return (
                     <tr key={`${r.user_id}-${r.month}`}>
                       <td style={{ padding: "10px 12px", borderBottom: "1px solid #f0f0f0" }}>{email}</td>
-                      <td style={{ padding: "10px 12px", borderBottom: "1px solid #f0f0f0" }}>{plan}</td>
+                      <td style={{ padding: "10px 12px", borderBottom: "1px solid #f0f0f0" }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <select
+                            value={draft}
+                            onChange={(e) => setPlanDraft((m) => ({ ...m, [uid]: e.target.value }))}
+                            style={{ padding: "6px 8px", borderRadius: 10, border: "1px solid #ddd" }}
+                            title={`現在: ${currentPlan}`}
+                          >
+                            <option value="free">free</option>
+                            <option value="lite">lite</option>
+                            <option value="standard">standard</option>
+                            <option value="enterprise">enterprise</option>
+                          </select>
+
+                          <button
+                            type="button"
+                            disabled={saving || draft === currentPlan}
+                            onClick={() =>
+                              saveUserPlan(uid, draft).catch((e: any) => setErr(e?.message ?? String(e)))
+                            }
+                            style={{
+                              padding: "6px 10px",
+                              borderRadius: 10,
+                              border: "1px solid #ddd",
+                              background: "white",
+                              fontWeight: 800,
+                              opacity: saving || draft === currentPlan ? 0.5 : 1,
+                            }}
+                          >
+                            保存
+                          </button>
+                        </div>
+                      </td>
                       <td style={{ padding: "10px 12px", borderBottom: "1px solid #f0f0f0" }}>{fmtYen(c.revenue)}</td>
                       <td style={{ padding: "10px 12px", borderBottom: "1px solid #f0f0f0" }}>{monthsDisp}</td>
                       <td style={{ padding: "10px 12px", borderBottom: "1px solid #f0f0f0" }}>{quota}</td>
