@@ -782,7 +782,7 @@ const bypass = (() => {
                   <span style={{ color: "rgba(11,18,32,0.86)" }}>利用規約に同意する</span>
                 </label>
 
-                <span style={{ ...styles.small, marginTop: 0 }}>※ 未ログインならログインへ → その後Stripe決済</span>
+                <span style={{ ...styles.small, marginTop: 0 }}>※ 購入にはログイン／新規登録が必要です。</span>
               </div>
 
               <div style={styles.planGrid}>
@@ -826,13 +826,7 @@ const bypass = (() => {
                     </button>
                   );
                 })}
-              </div>
-
-              <div style={{ ...styles.small, marginTop: 12 }}>
-                ※ 申込専用ページは作りません（トップ→チェックアウト直行）。
-                <br />
-                ※ メンテナンス時は /maintenance と ENV（MAINTENANCE_MODE）で制御予定。
-              </div>
+              </div>              
             </div>
           </details>
         </section>
