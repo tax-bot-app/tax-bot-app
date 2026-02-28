@@ -57,45 +57,44 @@ async function requireAdmin(
   return { uid, email };
 }
 
+// GET の中身だけ差し替え
 export async function GET(req: Request) {
   try {
     const supabase = adminSupabase();
     await requireAdmin(req, supabase);
 
-    const { searchParams } = new URL(req.url);
-    const month = searchParams.get("month") ?? new Date().toISOString().slice(0, 7);
-
-    const { data, error } = await supabase
-      .from("usage")
-      .select(
-        `
-        user_id,
-        month,
-        used_talks,
-        limit_talks,
-        updated_at,
-        users:users (
-          email,
-          plan,
-          monthly_quota,
-          is_admin,
-          created_at
-        )
-      `
-      )
-      .eq("month", month)
-      .order("updated_at", { ascending: false });
+    const { data: rows, error } = await supabase
+      .from("unlimited_allowlist")
+      .select("user_id,label,created_at")
+      .order("created_at", { ascending: false });
 
     if (error) throw error;
 
-    return NextResponse.json({ ok: true, data });
+    const userIds = (rows ?? []).map((r: any) => r.user_id).filter(Boolean);
+
+    let emailMap = new Map<string, string | null>();
+    if (userIds.length > 0) {
+      const { data: users, error: e2 } = await supabase
+        .from("users")
+        .select("id,email")
+        .in("id", userIds);
+
+      if (e2) throw e2;
+
+      for (const u of users ?? []) emailMap.set(u.id, u.email ?? null);
+    }
+
+    const out = (rows ?? []).map((r: any) => ({
+      user_id: String(r.user_id),
+      label: r.label ?? null,
+      created_at: String(r.created_at),
+      email: emailMap.get(String(r.user_id)) ?? null,
+    }));
+
+    return NextResponse.json({ ok: true, data: out });
   } catch (e: any) {
     const status = e?.status ?? 500;
-    if (status >= 500) console.error("admin usage api error", e);
-
-    return NextResponse.json(
-      { ok: false, error: e?.message ?? String(e) },
-      { status }
-    );
+    if (status >= 500) console.error("admin allowlist api error", e);
+    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
   }
 }
