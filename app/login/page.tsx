@@ -160,66 +160,75 @@ function LoginInner() {
     }
   };
 
-  return (
-    <main className="min-h-screen flex flex-col items-center justify-center bg-zinc-50 px-6">
-      <h1 className="text-3xl font-bold mb-6">さじかげん・ログイン</h1>
+ return (
+  <main className="min-h-screen flex flex-col items-center justify-center bg-zinc-50 px-6">
+    <h1 className="text-3xl font-bold mb-6">さじかげん・ログイン</h1>
 
-      <div className="w-full max-w-sm bg-white rounded-xl p-6 shadow">
-        <label className="block text-sm mb-1">メール</label>
-        <input
-          className="w-full border rounded-md px-3 py-2 mb-4"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com"
-          autoComplete="email"
-          inputMode="email"
-        />
+    <div className="w-full max-w-sm bg-white rounded-xl p-6 shadow">
+      <label className="block text-sm mb-1">メール</label>
+      <input
+        className="w-full border rounded-md px-3 py-2 mb-4"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="you@example.com"
+        autoComplete="email"
+        inputMode="email"
+      />
 
-        <label className="block text-sm mb-1">
-  パスワード <span className="text-xs text-zinc-500">(8文字以上)</span>
-</label>
-<input
-  className="w-full border rounded-md px-3 py-2 mb-4"
-  value={password}
-  onChange={(e) => setPassword(e.target.value)}
-  type="password"
-  placeholder="8文字以上で入力"
-  autoComplete="current-password"
-/>
+      <label className="block text-sm mb-1">
+        パスワード <span className="text-xs text-zinc-500">(8文字以上)</span>
+      </label>
+      <input
+        className="w-full border rounded-md px-3 py-2 mb-4"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        type="password"
+        placeholder="入力してください"
+        autoComplete="current-password"
+      />
 
-        {msg && (
-          <p className={`text-sm mb-3 ${msg.kind === "error" ? "text-red-600" : "text-zinc-700"}`}>
-            {msg.text}
-          </p>
-        )}
+      {msg && (
+        <p className={`text-sm mb-3 ${msg.kind === "error" ? "text-red-600" : "text-zinc-700"}`}>
+          {msg.text}
+        </p>
+      )}
 
-        <div className="flex gap-2">
-          <button
-            onClick={signIn}
-            disabled={busy}
-            className="flex-1 bg-black text-white px-4 py-2 rounded-md disabled:opacity-60"
-          >
-            ログイン
-          </button>
-          <button
-            onClick={signUp}
-            disabled={busy}
-            className="flex-1 bg-zinc-200 text-black px-4 py-2 rounded-md disabled:opacity-60"
-          >
-            新規登録
-          </button>
-        </div>
-
+      <div className="flex gap-2">
         <button
-          onClick={sendReset}
+          onClick={signIn}
           disabled={busy}
-          className="w-full mt-3 bg-white text-black px-4 py-2 rounded-md border disabled:opacity-60"
+          className="flex-1 bg-black text-white px-4 py-2 rounded-md disabled:opacity-60"
         >
-          パスワードを忘れた場合はこちら（再設定メール送信）
+          ログイン
+        </button>
+        <button
+          onClick={signUp}
+          disabled={busy}
+          className="flex-1 bg-zinc-200 text-black px-4 py-2 rounded-md disabled:opacity-60"
+        >
+          新規登録
         </button>
       </div>
-    </main>
-  );
+
+      <button
+        onClick={sendReset}
+        disabled={busy}
+        className="w-full mt-3 bg-white text-black px-4 py-2 rounded-md border disabled:opacity-60"
+      >
+        パスワードを忘れた場合はこちら（再設定メール送信）
+      </button>
+
+      {/* ✅ 常に下段に表示 */}
+      <div className="mt-4 text-xs text-zinc-600 leading-relaxed border-t pt-3">
+        <p className="font-semibold mb-1">新規登録の流れ</p>
+        <p>
+          メールアドレスとパスワード（8文字以上）を設定し、「新規登録」を押してください。
+          認証メールが届きますので、メール内のリンクを開いて認証を完了してください。
+        </p>
+      </div>
+    </div>
+  </main>
+);
 }
 
 <div className="mt-4 text-xs text-zinc-600 leading-relaxed border-t pt-3">
