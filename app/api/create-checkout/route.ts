@@ -72,12 +72,14 @@ export async function POST(req: Request) {
 
     const origin = req.headers.get("origin") ?? mustEnv("NEXT_PUBLIC_SITE_URL");
 
+    const existingCustomerId = urow?.stripe_customer_id ? String(urow.stripe_customer_id) : null;
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      // ✅ customerを固定：同じユーザーでcustomerが増殖しないようにする
-      ...(urow?.stripe_customer_id ? { customer: String(urow.stripe_customer_id) } : {}),
-      // customerが無い場合も、最低 email を渡して同一化の確率を上げる
-      customer_email: userRes.user.email ?? undefined,
+      // ✅ customer がある時は customer_email を渡さない（Stripeの制約）
+      ...(existingCustomerId
+        ? { customer: existingCustomerId }
+        : { customer_email: userRes.user.email ?? undefined }),
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${origin}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/`,
