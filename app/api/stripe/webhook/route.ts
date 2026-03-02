@@ -212,7 +212,8 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
 
     for (const item of s.items.data ?? []) {
       const planDef = getPlanByPriceId(item.price?.id ?? null);
-      const key = normalizePlanKey(planDef?.key);
+if (!planDef) continue;
+const key = normalizePlanKey(planDef.key);
 
       const cur = getPlan(bestKey);
       const next = getPlan(key);
@@ -369,11 +370,14 @@ export async function POST(req: Request) {
         stripe_subscription_id: subscriptionId,
       });
 
-      // ✅ まず暫定でも usage を当月同期（紐付け直後に事故らないように）
-      await syncUsageCurrentMonth({
-        userId,
-        monthly_quota: tempPlan.monthlyQuota,
-      });
+      /// ✅ 暫定usage同期は「planDefが取れた時だけ」
+      // 値下げ切替などで旧priceが来ると tempPlanKey が free になり得るため、0同期事故を防ぐ
+      if (planDef) {
+        await syncUsageCurrentMonth({
+          userId,
+          monthly_quota: tempPlan.monthlyQuota,
+        });
+      }
 
       // ✅ 最後に“正”同期（複数サブスクでも最強プランへ）→ ここでも usage 同期される
       if (customerId) {

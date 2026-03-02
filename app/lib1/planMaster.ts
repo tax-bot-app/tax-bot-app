@@ -11,13 +11,48 @@ export type PlanDefinition = {
   /**
    * Stripe price IDs mapped to this plan.
    * - free: []
-   * - paid plans: one or more price IDs (future-proof for price changes)
+   * - paid plans: resolved via ENV (test/live separated by environment)
    */
   priceIds: string[];
 
   /** For UI display / ranking (higher = stronger plan) */
   sortOrder: number;
 };
+
+function envOptional(name: string): string | null {
+  const v = process.env[name];
+  const t = typeof v === "string" ? v.trim() : "";
+  return t ? t : null;
+}
+
+function envRequired(name: string): string {
+  const v = envOptional(name);
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
+
+/**
+ * Plan -> Stripe PriceId（test/live は Vercel 環境で分離）
+ * ENV names:
+ * - PRICE_ID_LITE
+ * - PRICE_ID_STANDARD
+ * - PRICE_ID_ENTERPRISE
+ */
+const PRICE_ID_BY_PLAN: Partial<Record<Exclude<PlanKey, "free">, string>> = {
+  lite: envOptional("PRICE_ID_LITE") ?? undefined,
+  standard: envOptional("PRICE_ID_STANDARD") ?? undefined,
+  enterprise: envOptional("PRICE_ID_ENTERPRISE") ?? undefined,
+};
+
+export function getPriceId(planKey: PlanKey): string {
+  if (planKey === "free") throw new Error("free has no priceId");
+
+  const id = PRICE_ID_BY_PLAN[planKey as Exclude<PlanKey, "free">];
+  if (id) return id;
+
+  // fallback (still ENV-driven; gives clearer error)
+  return envRequired(`PRICE_ID_${String(planKey).toUpperCase()}`);
+}
 
 export const PLAN_MASTER: Record<PlanKey, PlanDefinition> = {
   free: {
@@ -32,8 +67,8 @@ export const PLAN_MASTER: Record<PlanKey, PlanDefinition> = {
     key: "lite",
     label: "Lite",
     monthlyQuota: 5,
-    // ✅ Stripe test mode priceId
-    priceIds: ["price_1SmqJoQ3OyVaMed9QdAkDBzA"],
+    // ✅ Stripe priceId is ENV-driven
+    priceIds: [],
     sortOrder: 1,
   },
 
@@ -41,8 +76,8 @@ export const PLAN_MASTER: Record<PlanKey, PlanDefinition> = {
     key: "standard",
     label: "Standard",
     monthlyQuota: 30,
-    // ✅ Stripe test mode priceId
-    priceIds: ["price_1Sm8qnQ3OyVaMed9WMDOPgLZ"],
+    // ✅ Stripe priceId is ENV-driven
+    priceIds: [],
     sortOrder: 2,
   },
 
@@ -50,8 +85,8 @@ export const PLAN_MASTER: Record<PlanKey, PlanDefinition> = {
     key: "enterprise",
     label: "Enterprise",
     monthlyQuota: 100,
-    // ✅ Stripe test mode priceId
-    priceIds: ["price_1Smq2QQ3OyVaMed9uh5CgQfD"],
+    // ✅ Stripe priceId is ENV-driven
+    priceIds: [],
     sortOrder: 3,
   },
 } as const;
@@ -62,18 +97,42 @@ export function getPlan(planKey: PlanKey): PlanDefinition {
 }
 
 /** Get plan definition by Stripe priceId (returns null if unknown). */
-export function getPlanByPriceId(
-  priceId: string | null | undefined
-): PlanDefinition | null {
+export function getPlanByPriceId(priceId: string | null | undefined): PlanDefinition | null {
   if (!priceId) return null;
 
-  const hit =
-    Object.values(PLAN_MASTER).find((p) => p.priceIds.includes(priceId)) ?? null;
+  const liteNow = envOptional("PRICE_ID_LITE");
+  const liteLegacy = envOptional("PRICE_ID_LITE_LEGACY");
+  const standardNow = envOptional("PRICE_ID_STANDARD");
+  const standardLegacy = envOptional("PRICE_ID_STANDARD_LEGACY");
+  const enterpriseNow = envOptional("PRICE_ID_ENTERPRISE");
+  const enterpriseLegacy = envOptional("PRICE_ID_ENTERPRISE_LEGACY");
 
-  // free has no priceIds by design
-  if (hit?.key === "free") return null;
+  // ✅ Lite は「現行 + 旧」を両方 lite 扱いにする
+  if (
+    (liteNow && priceId === liteNow) ||
+    (liteLegacy && priceId === liteLegacy)
+  ) {
+    return getPlan("lite");
+  }
 
-  return hit;
+  // ✅ Standard は「現行 + 旧」を両方 standard 扱いにする
+  if (
+    (standardNow && priceId === standardNow) ||
+    (standardLegacy && priceId === standardLegacy)
+  ) {
+    return getPlan("standard");
+  }
+
+  // ✅ Enterprise も「現行 + 旧」を両方 enterprise 扱いにする
+  if (
+    (enterpriseNow && priceId === enterpriseNow) ||
+    (enterpriseLegacy && priceId === enterpriseLegacy)
+  ) {
+    return getPlan("enterprise");
+  }
+
+  // ✅ 不明 priceId は null（freeに丸めない）
+  return null;
 }
 
 /** Ordered plans for UI display (includes free by default). */
@@ -92,12 +151,7 @@ export function listPaidPlans(): PlanDefinition[] {
 
 /** Type guard */
 export function isPlanKey(value: unknown): value is PlanKey {
-  return (
-    value === "free" ||
-    value === "lite" ||
-    value === "standard" ||
-    value === "enterprise"
-  );
+  return value === "free" || value === "lite" || value === "standard" || value === "enterprise";
 }
 
 /**

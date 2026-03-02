@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 
-import { getPlan, type PlanKey } from "../../lib1/planMaster";
+import { getPriceId, type PlanKey } from "../../lib1/planMaster";
 
 function mustEnv(name: string): string {
   const v = process.env[name];
@@ -30,13 +30,6 @@ function adminSupabase() {
   return createClient(url, serviceRole, { auth: { persistSession: false } });
 }
 
-function pickPriceId(planKey: PlanKey): string {
-  const plan = getPlan(planKey);
-  const priceId = plan.priceIds?.[0];
-  if (!priceId) throw new Error(`No priceId configured for plan: ${planKey}`);
-  return priceId;
-}
-
 export async function POST(req: Request) {
   try {
     const { plan } = (await req.json().catch(() => ({}))) as ReqBody;
@@ -45,7 +38,8 @@ export async function POST(req: Request) {
     if (!plan || plan === "free") {
       return NextResponse.json({ ok: false, error: "invalid plan" }, { status: 400 });
     }
-// ✅ ログイン必須（誰でもcheckout叩ける事故を止める）
+
+    // ✅ ログイン必須（誰でもcheckout叩ける事故を止める）
     const token = bearerToken(req);
     if (!token) {
       return NextResponse.json({ ok: false, error: "missing auth" }, { status: 401 });
@@ -59,11 +53,7 @@ export async function POST(req: Request) {
     }
 
     const uid = userRes.user.id;
-    const { data: urow, error: uErr } = await db
-      .from("users")
-      .select("plan")
-      .eq("id", uid)
-      .maybeSingle();
+    const { data: urow, error: uErr } = await db.from("users").select("plan").eq("id", uid).maybeSingle();
     if (uErr) throw uErr;
 
     const currentPlan = String(urow?.plan ?? "free").toLowerCase();
@@ -74,7 +64,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const priceId = pickPriceId(plan);
+    // ✅ Price ID は ENV 正本（test/live を環境で分離）
+    const priceId = getPriceId(plan);
 
     const origin = req.headers.get("origin") ?? mustEnv("NEXT_PUBLIC_SITE_URL");
 
