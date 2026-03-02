@@ -100,44 +100,58 @@ export function getPlan(planKey: PlanKey): PlanDefinition {
 export function getPlanByPriceId(priceId: string | null | undefined): PlanDefinition | null {
   if (!priceId) return null;
 
+  const debug = process.env.DEBUG_STRIPE_PLAN_SYNC === "1";
+
   const liteNow = envOptional("PRICE_ID_LITE");
   const liteLegacy = envOptional("PRICE_ID_LITE_LEGACY");
   const liteNext = envOptional("PRICE_ID_LITE_NEXT");
+
   const standardNow = envOptional("PRICE_ID_STANDARD");
   const standardLegacy = envOptional("PRICE_ID_STANDARD_LEGACY");
   const standardNext = envOptional("PRICE_ID_STANDARD_NEXT");
+
   const enterpriseNow = envOptional("PRICE_ID_ENTERPRISE");
   const enterpriseLegacy = envOptional("PRICE_ID_ENTERPRISE_LEGACY");
   const enterpriseNext = envOptional("PRICE_ID_ENTERPRISE_NEXT");
 
-  // ✅ Lite は「現行 + 旧」を両方 lite 扱いにする
-  if (
+  if (debug) {
+    console.log("[planSync] mapCheck", JSON.stringify({
+      priceId,
+      lite: { now: liteNow, legacy: liteLegacy, next: liteNext },
+      standard: { now: standardNow, legacy: standardLegacy, next: standardNext },
+      enterprise: { now: enterpriseNow, legacy: enterpriseLegacy, next: enterpriseNext },
+    }));
+  }
+
+  const hitLite =
     (liteNow && priceId === liteNow) ||
     (liteLegacy && priceId === liteLegacy) ||
-    (liteNext && priceId === liteNext)
-  ) {
-    return getPlan("lite");
-  }
+    (liteNext && priceId === liteNext);
 
-  // ✅ Standard は「現行 + 旧」を両方 standard 扱いにする
-  if (
+  const hitStandard =
     (standardNow && priceId === standardNow) ||
     (standardLegacy && priceId === standardLegacy) ||
-    (standardNext && priceId === standardNext)
-  ) {
-    return getPlan("standard");
-  }
+    (standardNext && priceId === standardNext);
 
-  // ✅ Enterprise も「現行 + 旧」を両方 enterprise 扱いにする
-  if (
+  const hitEnterprise =
     (enterpriseNow && priceId === enterpriseNow) ||
     (enterpriseLegacy && priceId === enterpriseLegacy) ||
-    (enterpriseNext && priceId === enterpriseNext)
-  ) {
+    (enterpriseNext && priceId === enterpriseNext);
+
+  if (hitLite) {
+    if (debug) console.log("[planSync] mapResult", JSON.stringify({ priceId, mapped: "lite" }));
+    return getPlan("lite");
+  }
+  if (hitStandard) {
+    if (debug) console.log("[planSync] mapResult", JSON.stringify({ priceId, mapped: "standard" }));
+    return getPlan("standard");
+  }
+  if (hitEnterprise) {
+    if (debug) console.log("[planSync] mapResult", JSON.stringify({ priceId, mapped: "enterprise" }));
     return getPlan("enterprise");
   }
 
-  // ✅ 不明 priceId は null（freeに丸めない）
+  if (debug) console.log("[planSync] mapResult", JSON.stringify({ priceId, mapped: "unknown" }));
   return null;
 }
 
