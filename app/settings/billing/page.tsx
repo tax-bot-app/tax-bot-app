@@ -52,12 +52,12 @@ export default function BillingSettingsPage() {
   return (
     <div style={{ maxWidth: 720, margin: "24px auto", padding: "0 16px" }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>
-        請求・プラン設定
+        請求設定
       </h1>
 
       <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
         <p style={{ margin: "0 0 12px 0" }}>
-          プラン変更・解約・請求履歴の確認はStripeの公式画面で行います。
+          カード変更・解約・請求履歴の確認はStripeの公式画面で行います。
         </p>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -74,7 +74,7 @@ export default function BillingSettingsPage() {
               fontWeight: 700,
             }}
           >
-            {loading ? "開いてます…" : "プラン変更・解約を開く"}
+            {loading ? "開いてます…" : "請求設定を開く（カード/解約）"}
           </button>
 
           <button
