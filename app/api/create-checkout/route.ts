@@ -53,7 +53,10 @@ export async function POST(req: Request) {
     }
 
     const uid = userRes.user.id;
-    const { data: urow, error: uErr } = await db.from("users").select("plan").eq("id", uid).maybeSingle();
+    const { data: urow, error: uErr } = await db
+    .from("users")
+    .select("plan,stripe_customer_id")
+    .eq("id", uid).maybeSingle();
     if (uErr) throw uErr;
 
     const currentPlan = String(urow?.plan ?? "free").toLowerCase();
@@ -71,10 +74,20 @@ export async function POST(req: Request) {
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
+      // ✅ customerを固定：同じユーザーでcustomerが増殖しないようにする
+      ...(urow?.stripe_customer_id ? { customer: String(urow.stripe_customer_id) } : {}),
+      // customerが無い場合も、最低 email を渡して同一化の確率を上げる
+      customer_email: userRes.user.email ?? undefined,
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${origin}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/`,
     });
+
+    // ✅ customer が返ってきたらDBに寄せておく（Webhook前でも安定）
+    const sessCustomerId = typeof session.customer === "string" ? session.customer : null;
+    if (sessCustomerId && !urow?.stripe_customer_id) {
+      await db.from("users").update({ stripe_customer_id: sessCustomerId, updated_at: new Date().toISOString() }).eq("id", uid);
+    }
 
     return NextResponse.json({ ok: true, url: session.url }, { status: 200 });
   } catch (e: any) {
