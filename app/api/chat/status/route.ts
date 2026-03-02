@@ -42,8 +42,10 @@ export async function GET(req: Request) {
     }
 
     const user = userRes.user;
-    const month = new Date().toISOString().slice(0, 7);
-
+    // ✅ JSTで "YYYY-MM"（Webhookと統一。UTCズレ事故防止）
+    const d = new Date();
+    const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+    const month = jst.toISOString().slice(0, 7);
     // ② DBアクセスは RLS効かせるため Authorization header 付きclient
     const db = createClient(url, anon, {
       auth: { persistSession: false },
