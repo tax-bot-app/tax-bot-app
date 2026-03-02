@@ -102,15 +102,19 @@ export function getPlanByPriceId(priceId: string | null | undefined): PlanDefini
 
   const liteNow = envOptional("PRICE_ID_LITE");
   const liteLegacy = envOptional("PRICE_ID_LITE_LEGACY");
+  const liteNext = envOptional("PRICE_ID_LITE_NEXT");
   const standardNow = envOptional("PRICE_ID_STANDARD");
   const standardLegacy = envOptional("PRICE_ID_STANDARD_LEGACY");
+  const standardNext = envOptional("PRICE_ID_STANDARD_NEXT");
   const enterpriseNow = envOptional("PRICE_ID_ENTERPRISE");
   const enterpriseLegacy = envOptional("PRICE_ID_ENTERPRISE_LEGACY");
+  const enterpriseNext = envOptional("PRICE_ID_ENTERPRISE_NEXT");
 
   // ✅ Lite は「現行 + 旧」を両方 lite 扱いにする
   if (
     (liteNow && priceId === liteNow) ||
-    (liteLegacy && priceId === liteLegacy)
+    (liteLegacy && priceId === liteLegacy) ||
+    (liteNext && priceId === liteNext)
   ) {
     return getPlan("lite");
   }
@@ -118,7 +122,8 @@ export function getPlanByPriceId(priceId: string | null | undefined): PlanDefini
   // ✅ Standard は「現行 + 旧」を両方 standard 扱いにする
   if (
     (standardNow && priceId === standardNow) ||
-    (standardLegacy && priceId === standardLegacy)
+    (standardLegacy && priceId === standardLegacy) ||
+    (standardNext && priceId === standardNext)
   ) {
     return getPlan("standard");
   }
@@ -126,7 +131,8 @@ export function getPlanByPriceId(priceId: string | null | undefined): PlanDefini
   // ✅ Enterprise も「現行 + 旧」を両方 enterprise 扱いにする
   if (
     (enterpriseNow && priceId === enterpriseNow) ||
-    (enterpriseLegacy && priceId === enterpriseLegacy)
+    (enterpriseLegacy && priceId === enterpriseLegacy) ||
+    (enterpriseNext && priceId === enterpriseNext)
   ) {
     return getPlan("enterprise");
   }
