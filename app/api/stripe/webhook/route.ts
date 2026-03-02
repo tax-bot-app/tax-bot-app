@@ -188,6 +188,8 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
   monthly_quota: number;
   subscription_id: string | null;
 }> {
+  const debug = process.env.DEBUG_STRIPE_PLAN_SYNC === "1";//デバック用
+
   const subs = await stripe.subscriptions.list({
     customer: customerId,
     status: "all",
@@ -197,6 +199,19 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
   const candidates = subs.data.filter((s) =>
     ["active", "trialing"].includes(s.status)
   );
+
+  if (debug) {
+    console.log("[planSync] subs", JSON.stringify({
+      customerId,
+      total: subs.data.length,
+      statuses: subs.data.map((s) => s.status),
+      candidates: candidates.map((s) => ({
+        id: s.id,
+        status: s.status,
+        prices: (s.items?.data ?? []).map((it) => it.price?.id ?? null),
+      })),
+    }));
+  }
 
   if (candidates.length === 0) {
     const free = getPlan("free");
@@ -211,7 +226,8 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
     let bestKey: PlanKey = "free";
 
     for (const item of s.items.data ?? []) {
-      const planDef = getPlanByPriceId(item.price?.id ?? null);
+      const pid = item.price?.id ?? null;
+      const planDef = getPlanByPriceId(pid);
 if (!planDef) continue;
 const key = normalizePlanKey(planDef.key);
 
@@ -243,6 +259,12 @@ const key = normalizePlanKey(planDef.key);
   const plan = best.bestKey;
   const planDef = getPlan(plan);
 
+  if (debug) {
+    console.log("[planSync] best", JSON.stringify({
+      customerId,
+      picked: { subId: best.sub.id, plan, sortOrder: best.sortOrder },
+    }));
+  }
   return {
     plan,
     monthly_quota: planDef.monthlyQuota,
