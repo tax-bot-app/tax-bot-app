@@ -1488,13 +1488,9 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
             <div className="sheetSection">
               <div className="sheetLabel">その他</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <Link href="/" style={{ ...LINK_BTN, width: "100%" }} onClick={() => setMenuOpen(false)}>
-                  プラン変更（アップグレード）
-                </Link>
-
                 <Link href="/settings/billing" style={{ ...LINK_BTN, width: "100%" }} onClick={() => setMenuOpen(false)}>
-                  請求設定（カード/解約）
-                </Link>
+   プラン変更 / 請求設定
+ </Link>
                 <button
                   type="button"
                   style={{ ...BTN, width: "100%" }}

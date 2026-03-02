@@ -26,6 +26,11 @@ export default function BillingSettingsPage() {
 
       const json = await res.json();
       if (!res.ok || !json?.ok) {
+        // 未購入はトップへ（プラン表）
+        if (res.status === 409 && json?.code === "NO_CUSTOMER") {
+          window.location.href = "/";
+          return;
+        }
         throw new Error(json?.error || "Failed to create portal session");
       }
 
