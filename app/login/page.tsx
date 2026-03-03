@@ -38,6 +38,8 @@ function friendlyAuthMessage(raw: string, action: "signin" | "signup" | "reset")
 function LoginInner() {
   const router = useRouter();
   const sp = useSearchParams();
+  const planRaw = String(sp.get("plan") ?? "").toLowerCase();
+  const plan = (["lite", "standard", "enterprise"] as const).includes(planRaw as any) ? planRaw : "";
 
   const supabase = useMemo(() => {
     return createBrowserClient(
@@ -65,14 +67,14 @@ function LoginInner() {
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       if (data.session) {
-        router.replace("/chat");
+        router.replace(plan ? `/checkout?plan=${encodeURIComponent(plan)}` : "/chat");
         router.refresh();
       }
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) {
-        router.replace("/chat");
+        router.replace(plan ? `/checkout?plan=${encodeURIComponent(plan)}` : "/chat");
         router.refresh();
       }
     });
@@ -81,7 +83,7 @@ function LoginInner() {
       mounted = false;
       sub.subscription.unsubscribe();
     };
-  }, [router, supabase]);
+  }, [router, supabase, plan]);
 
   const signIn = async () => {
     setMsg(null);
@@ -122,7 +124,7 @@ if (busy) return; // 二重クリック防止
 
     setBusy(true);
     try {
-      const emailRedirectTo = `${window.location.origin}/login`;
+      const emailRedirectTo = `${window.location.origin}/auth/callback${plan ? `?plan=${encodeURIComponent(plan)}` : ""}`;
 
       const { data, error } = await supabase.auth.signUp({
         email: e,
@@ -142,7 +144,7 @@ if (busy) return; // 二重クリック防止
 
       setMsg({
         kind: "info",
-        text: "登録を受け付けました。確認メールが届いた場合は、メール内のリンクを開いてからログインしてください。",
+        text: "登録を受け付けました。確認メールのリンクを開くと、そのまま決済画面に進みます（迷惑メールもご確認ください）。",
       });
     } finally {
       setBusy(false);

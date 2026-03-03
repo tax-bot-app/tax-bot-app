@@ -244,25 +244,12 @@ const bypass = (() => {
     try {
       const { data, error } = await supabase.auth.getSession();
       if (error || !data.session?.access_token) {
-        window.location.href = "/login";
+        window.location.href = `/login?plan=${encodeURIComponent(String(plan))}`;
         return;
       }
 
-      const res = await fetch("/api/create-checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${data.session.access_token}`,
-        },
-        body: JSON.stringify({ plan }),
-      });
-
-      const json = (await res.json().catch(() => null)) as CheckoutRes | null;
-      if (!json) throw new Error("create-checkout: empty response");
-      if (!json.ok) throw new Error(json.error || "create-checkout failed");
-      if (!json.url) throw new Error("create-checkout: url missing");
-
-      window.location.href = json.url;
+      // ログイン済みなら /checkout に統一（新規登録→認証後の導線と同じ）
+      window.location.href = `/checkout?plan=${encodeURIComponent(String(plan))}`;
     } catch (e: any) {
       alert(`決済に進めません：${e?.message ?? String(e)}`);
     } finally {
