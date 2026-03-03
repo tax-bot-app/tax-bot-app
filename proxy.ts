@@ -9,7 +9,6 @@ export async function proxy(req: NextRequest) {
   const AUTH_CALLBACK_PREFIXES = [
     "/auth/v1",
     "/auth/callback",
-    "/api/auth/callback",
     "/api/auth/confirm",
     "/auth/v1/callback",
     "/api/auth",
