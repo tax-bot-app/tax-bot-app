@@ -1,16 +1,16 @@
 // app/checkout/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
 
 const ALLOWED = new Set(["lite", "standard", "enterprise"]);
 
-export default function CheckoutPage() {
+function CheckoutInner() {
   const supabase = useMemo(() => getSupabaseClient(), []);
   const sp = useSearchParams();
-  const [msg, setMsg] = useState<string>("決済画面を開いています…");
+  const [msg, setMsg] = useState("決済画面を開いています…");
 
   useEffect(() => {
     const planRaw = String(sp.get("plan") ?? "").toLowerCase();
@@ -39,10 +39,12 @@ export default function CheckoutPage() {
           },
           body: JSON.stringify({ plan }),
         });
-        const json = await res.json();
+
+        const json = await res.json().catch(() => null);
         if (!res.ok || !json?.ok || !json?.url) {
           throw new Error(json?.error || "決済ページの作成に失敗しました。");
         }
+
         window.location.href = json.url;
       } catch (e: any) {
         setMsg(e?.message ?? "決済ページの作成に失敗しました。");
@@ -57,5 +59,13 @@ export default function CheckoutPage() {
         <p style={{ margin: 0 }}>{msg}</p>
       </div>
     </div>
+  );
+}
+
+export default function CheckoutPage() {
+  return (
+    <Suspense fallback={<div />}>
+      <CheckoutInner />
+    </Suspense>
   );
 }
