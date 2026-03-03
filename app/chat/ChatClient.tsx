@@ -182,6 +182,37 @@ export default function ChatClient() {
   const supabase = useMemo(() => getSupabaseClient(), []);
   const router = useRouter();
 
+const openPortalFromMenu = async () => {
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+
+    const token = data.session?.access_token;
+    if (!token) {
+      window.location.href = "/login";
+      return;
+    }
+
+    const res = await fetch("/api/stripe/portal", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const json = await res.json();
+    if (!res.ok || !json?.ok) {
+      if (res.status === 409 && json?.code === "NO_CUSTOMER") {
+        window.location.href = "/";
+        return;
+      }
+      throw new Error(json?.error || "Failed to create portal session");
+    }
+
+    window.location.href = json.url;
+  } catch (e: any) {
+    alert(e?.message ?? String(e));
+  }
+};
+
   const MAX_INPUT_LENGTH = 6000;
   const WARN_THRESHOLD = Math.floor(MAX_INPUT_LENGTH * 0.8); // 4800
   const cut = (s: string) => (s.length > MAX_INPUT_LENGTH ? s.slice(0, MAX_INPUT_LENGTH) : s);
@@ -1488,9 +1519,16 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
             <div className="sheetSection">
               <div className="sheetLabel">その他</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <Link href="/settings/billing" style={{ ...LINK_BTN, width: "100%" }} onClick={() => setMenuOpen(false)}>
+                <button
+   type="button"
+   style={{ ...BTN, width: "100%" }}
+   onClick={async () => {
+     setMenuOpen(false);
+     await openPortalFromMenu();
+   }}
+ >
    プラン変更 / 請求設定
- </Link>
+ </button>
                 <button
                   type="button"
                   style={{ ...BTN, width: "100%" }}
