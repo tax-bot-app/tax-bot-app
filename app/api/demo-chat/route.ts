@@ -29,6 +29,7 @@ function getBypassToken(req: Request): string | null {
 }
 
 function isBypassed(req: Request): boolean {
+  if (process.env.NODE_ENV === "production") return false;
   const want = (process.env.DEMO_BYPASS_TOKEN ?? "").trim();
   if (!want) return false;
   const got = getBypassToken(req);
@@ -55,7 +56,8 @@ function mustEnv(name: string): string {
 
 function hasDemoCookie(cookieHeader: string | null): boolean {
   const c = cookieHeader ?? "";
-  return /(?:^|;\s*)sjk_demo_done=1(?:;|$)/.test(c);
+  const re = new RegExp(`(?:^|;\\s*)${DEMO_COOKIE}=1(?:;|$)`);
+  return re.test(c);
 }
 
 function setDemoCookie(res: NextResponse) {
