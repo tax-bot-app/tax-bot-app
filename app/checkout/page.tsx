@@ -22,8 +22,14 @@ function CheckoutInner() {
     }
 
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token;
+       // ✅ 認証直後のcookie反映遅延に備えて1回だけリトライ
+      let token = "";
+      for (let i = 0; i < 2; i++) {
+        const { data } = await supabase.auth.getSession();
+        token = data.session?.access_token ?? "";
+        if (token) break;
+        await new Promise((r) => setTimeout(r, 250));
+      }
 
       if (!token) {
         window.location.href = `/login?plan=${encodeURIComponent(plan)}`;

@@ -1,6 +1,7 @@
 // app/auth/callback/route.ts
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,7 @@ function mustEnv(name: string): string {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  const cookieStore = await cookies();
 
   // plan は保持（クエリで来る）
   const plan = String(url.searchParams.get("plan") ?? "").toLowerCase();
@@ -35,8 +37,8 @@ export async function GET(req: Request) {
     {
       cookies: {
         getAll() {
-          // route handler では req から取れないので空でOK（交換が主目的）
-          return [];
+          // ✅ callback の“受け取ったcookie”を渡す（これが無いと交換が不安定になる）
+          return cookieStore.getAll();
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => {
