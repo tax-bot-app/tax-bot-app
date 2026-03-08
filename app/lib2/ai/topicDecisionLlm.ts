@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { getOpenAIModel } from "@/app/lib/openaiModel";
 import { TOPIC_TAX_AUDIT } from "../topicDecision";
 
 function mustEnv(name: string): string {
@@ -71,7 +72,7 @@ export async function decideTopicByLLM(params: {
   const { message, prevUserMessage, prevAssistantMessage, recentUserMsgs, availableTopics } = params;
 
   const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
-  const model = process.env.OPENAI_MODEL_TOPIC || process.env.OPENAI_MODEL || "gpt-5.2";
+  const model = getOpenAIModel("topic");
 
   const topics = uniq(availableTopics).slice(0, 220);
 

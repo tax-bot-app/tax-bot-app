@@ -1,4 +1,5 @@
 // app/api/chat/route.ts
+import { getOpenAIModel } from "@/app/lib/openaiModel";
 import { generateAnswer } from "../../lib2/ai/generateAnswer";
 import { decideAnchorQaByLLM } from "../../lib2/ai/decideAnchorQaByLLM";
 import type { PromptParts } from "../../lib2/ai/prompt";

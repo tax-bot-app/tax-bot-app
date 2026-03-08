@@ -1,5 +1,6 @@
 //lib2/ai/decideAnchorQaByLLM.ts
 import OpenAI from "openai";
+import { getOpenAIModel } from "@/app/lib/openaiModel";
 
 function mustEnv(name: string): string {
   const v = process.env[name];
@@ -37,7 +38,7 @@ export async function decideAnchorQaByLLM(params: {
     }
 
     const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
-    const model = process.env.OPENAI_MODEL || "gpt-5.2";
+    const model = getOpenAIModel("small");
 
     const listText = list
       .map(

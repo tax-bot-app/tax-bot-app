@@ -1,5 +1,6 @@
 // app/lib2/guardrails/brandSuppressByLLM.ts
 import OpenAI from "openai";
+import { getOpenAIModel } from "@/app/lib/openaiModel";
 import type { GuardrailDecision } from "./judge";
 
 function mustEnv(name: string): string {
@@ -53,7 +54,7 @@ export async function decideSuppressBrandingByLLM(args: {
 
   // ここから先は guardrail.action === "none" しか来ない
   const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
-  const model = process.env.OPENAI_MODEL || "gpt-5.2";
+  const model = getOpenAIModel("small");
 
   const instruction = [
     "あなたは会話の『ブランド口上』を抑制すべきかどうかだけ判定する分類器。",

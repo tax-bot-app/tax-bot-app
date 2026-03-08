@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { getOpenAIModel } from "@/app/lib/openaiModel";
 
 function mustEnv(name: string): string {
   const v = process.env[name];
@@ -34,7 +35,7 @@ export async function chooseQaByLLM(params: {
       apiKey: mustEnv("OPENAI_API_KEY"),
     });
 
-    const model = process.env.OPENAI_MODEL || "gpt-5.2";
+    const model = getOpenAIModel("small");
 
     const { message, candidates } = params;
     const pickN = Math.max(1, Math.min(12, Number(params.pickN ?? 2)));

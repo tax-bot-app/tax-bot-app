@@ -1,5 +1,6 @@
 // app/lib2/ai/generateAnswer.ts
 import OpenAI from "openai";
+import { getOpenAIModel } from "@/app/lib/openaiModel";
 import { buildInstructions, type PromptParts } from "./prompt";
 
 function mustEnv(name: string): string {
@@ -28,7 +29,7 @@ export async function generateAnswer(input: GenerateAnswerInput): Promise<Genera
     apiKey: mustEnv("OPENAI_API_KEY"),
   });
 
-  const model = process.env.OPENAI_MODEL || "gpt-5.2";
+  const model = getOpenAIModel("main");
 
   const instructions = buildInstructions(input.promptParts);
 
