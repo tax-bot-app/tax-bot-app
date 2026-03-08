@@ -565,7 +565,7 @@ const bypass = (() => {
                   onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(30,94,255,0.06)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
-                  プライバシーボリシー
+                  プライバシーポリシー
                 </Link>
                 <Link
                   href="/terms"
@@ -604,13 +604,13 @@ const bypass = (() => {
 
           <div style={{ ...styles.heroCard, gridArea: "copy" }}>
             <h1 style={styles.h1}>
-  税理士はそのまま。
+  『ダメです。』
   <br />
-  相談だけ、もう一段。
+  で諦めていませんか？
 </h1>
 
             <p style={styles.sub}>
-              ・「ダメ」で止めずに、税務調査の現実を踏まえて整理する。
+              ・税理士はそのまま。相談だけ、もう一段。
               <br />
               ・自社に合う可能性を、ちゃんと見極める。
             </p>
