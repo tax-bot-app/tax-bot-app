@@ -120,14 +120,15 @@ export default function FeedbackNewClient({ initialKind }: Props) {
         meta,
       };
 
-      const { error } = await supabase.from("feedback_reports").insert(payload);
+            const { error } = await supabase.from("feedback_reports").insert(payload);
       if (error) throw error;
 
       writeFeedbackCooldown();
-      if (kind === "report_answer") clearFeedbackDraft();
+      clearFeedbackDraft();
 
       setDone(true);
       setBody("");
+      setDraft(null);
       setCooldownLeftMs(readFeedbackCooldownLeftMs());
     } catch (e: any) {
       setErrMsg(e?.message ?? "送信に失敗しました。時間をおいて再度お試しください。");
@@ -230,14 +231,9 @@ export default function FeedbackNewClient({ initialKind }: Props) {
               fontSize: 14,
             }}
           >
-            {draft?.target_answer?.trim() || "対象の回答が見つかりませんでした。"}
+                        {draft?.target_answer?.trim() || "対象の回答を読み込めませんでした。必要であれば内容を本文にご記入ください。"}
           </div>
-
-          {!!draft?.conversation_id && (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-              conversation_id: {draft.conversation_id}
-            </div>
-          )}
+        
         </section>
       )}
 
@@ -276,88 +272,121 @@ export default function FeedbackNewClient({ initialKind }: Props) {
         </div>
       )}
 
-      <section>
-        <label
-          htmlFor="feedback-body"
-          style={{ display: "block", fontWeight: 900, marginBottom: 8 }}
-        >
-          内容
-        </label>
+            {!done ? (
+        <>
+          <section>
+            <label
+              htmlFor="feedback-body"
+              style={{ display: "block", fontWeight: 900, marginBottom: 8 }}
+            >
+              内容
+            </label>
 
-        <textarea
-          id="feedback-body"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder={
-            kind === "report_answer"
-              ? "どこが気になったかを入力してください"
-              : kind === "request"
-              ? "追加してほしいこと、改善してほしいことを入力してください"
-              : "お問い合わせ内容を入力してください"
-          }
-          style={{
-            width: "100%",
-            minHeight: 220,
-            border: "1px solid #d1d5db",
-            borderRadius: 14,
-            padding: 14,
-            fontSize: 16,
-            lineHeight: 1.8,
-            resize: "vertical",
-            boxSizing: "border-box",
-          }}
-          disabled={done}
-        />
+            <textarea
+              id="feedback-body"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder={
+                kind === "report_answer"
+                  ? "どこが気になったかを入力してください"
+                  : kind === "request"
+                  ? "追加してほしいこと、改善してほしいことを入力してください"
+                  : "お問い合わせ内容を入力してください"
+              }
+              style={{
+                width: "100%",
+                minHeight: 220,
+                border: "1px solid #d1d5db",
+                borderRadius: 14,
+                padding: 14,
+                fontSize: 16,
+                lineHeight: 1.8,
+                resize: "vertical",
+                boxSizing: "border-box",
+              }}
+            />
 
-        <div
-          style={{
-            marginTop: 8,
-            fontSize: 13,
-            color: bodyLen >= 30 ? "#666" : "#b91c1c",
-          }}
-        >
-          {bodyLen}/30文字以上
-        </div>
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 13,
+                color: bodyLen >= 30 ? "#666" : "#b91c1c",
+              }}
+            >
+              {bodyLen}/30文字以上
+            </div>
 
-        {cooldownLeftMs > 0 && !done && (
-          <div style={{ marginTop: 6, fontSize: 13, color: "#92400e" }}>
-            連続送信防止のため、あと {cooldownSec} 秒お待ちください。
+            {cooldownLeftMs > 0 && (
+              <div style={{ marginTop: 6, fontSize: 13, color: "#92400e" }}>
+                連続送信防止のため、あと {cooldownSec} 秒お待ちください。
+              </div>
+            )}
+          </section>
+
+          <div style={{ marginTop: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={!canSubmit}
+              style={{
+                padding: "12px 18px",
+                borderRadius: 12,
+                border: "1px solid #111",
+                background: "#111",
+                color: "#fff",
+                fontWeight: 800,
+                opacity: canSubmit ? 1 : 0.5,
+                cursor: canSubmit ? "pointer" : "not-allowed",
+              }}
+            >
+              {submitting ? "送信中…" : "送信"}
+            </button>
+
+            <Link
+              href="/feedback"
+              style={{
+                padding: "12px 18px",
+                borderRadius: 12,
+                border: "1px solid #d1d5db",
+                color: "#111",
+                textDecoration: "none",
+              }}
+            >
+              送信履歴を見る
+            </Link>
           </div>
-        )}
-      </section>
+        </>
+      ) : (
+        <div style={{ marginTop: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <Link
+            href="/feedback"
+            style={{
+              padding: "12px 18px",
+              borderRadius: 12,
+              border: "1px solid #111",
+              background: "#111",
+              color: "#fff",
+              fontWeight: 800,
+              textDecoration: "none",
+            }}
+          >
+            送信履歴を見る
+          </Link>
 
-      <div style={{ marginTop: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          onClick={onSubmit}
-          disabled={!canSubmit}
-          style={{
-            padding: "12px 18px",
-            borderRadius: 12,
-            border: "1px solid #111",
-            background: "#111",
-            color: "#fff",
-            fontWeight: 800,
-            opacity: canSubmit ? 1 : 0.5,
-            cursor: canSubmit ? "pointer" : "not-allowed",
-          }}
-        >
-          {submitting ? "送信中…" : "送信"}
-        </button>
-
-        <Link
-          href="/feedback"
-          style={{
-            padding: "12px 18px",
-            borderRadius: 12,
-            border: "1px solid #d1d5db",
-            color: "#111",
-            textDecoration: "none",
-          }}
-        >
-          送信履歴を見る
-        </Link>
-      </div>
+          <Link
+            href="/chat"
+            style={{
+              padding: "12px 18px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            チャットに戻る
+          </Link>
+        </div>
+      )}
 
       <div style={{ marginTop: 14, fontSize: 12, color: "#666" }}>
         種別: {kindLabel(kind)}

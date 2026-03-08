@@ -179,13 +179,7 @@ export default function FeedbackPage() {
               >
                 {row.body}
               </div>
-
-              {row.conversation_id && (
-                <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-                  conversation_id: {row.conversation_id}
-                </div>
-              )}
-            </section>
+              </section>
           ))}
         </div>
       )}
