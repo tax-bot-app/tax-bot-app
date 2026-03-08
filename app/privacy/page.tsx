@@ -1,4 +1,5 @@
 // app/privacy/page.tsx
+import ReactMarkdown from "react-markdown";
 import { getPrivacyMarkdown } from "../lib/legal";
 
 export const metadata = {
@@ -11,13 +12,13 @@ export default function PrivacyPage() {
 
   return (
     <main className="legalPage">
-      <div className="legalInner">
+      <div className="legalInner legalMarkdown">
         <h1>プライバシーポリシー</h1>
         <p className="legalLead">
           本ページは「さじかげん」における個人情報等の取扱いを定めるものです。
         </p>
 
-        <pre className="legalPre">{content}</pre>
+        <ReactMarkdown>{content}</ReactMarkdown>
       </div>
     </main>
   );

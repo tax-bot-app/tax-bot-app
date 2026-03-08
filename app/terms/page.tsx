@@ -1,4 +1,5 @@
 // app/terms/page.tsx
+import ReactMarkdown from "react-markdown";
 import { getTermsMarkdown } from "../lib/legal";
 
 export const metadata = {
@@ -11,13 +12,13 @@ export default function TermsPage() {
 
   return (
     <main className="legalPage">
-      <div className="legalInner">
+      <div className="legalInner legalMarkdown">
         <h1>利用規約</h1>
         <p className="legalLead">
           本ページは「さじかげん」の利用規約です。
         </p>
 
-        <pre className="legalPre">{content}</pre>
+        <ReactMarkdown>{content}</ReactMarkdown>
       </div>
     </main>
   );

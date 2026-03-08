@@ -31,7 +31,7 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-/* ===== legal pages (/terms, /privacy) ===== */
+/* ===== legal markdown (/terms, /privacy) ===== */
 .legalPage {
   min-height: 100vh;
   padding: 40px 16px 72px;
@@ -49,7 +49,7 @@ body {
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
 }
 
-.legalInner h1 {
+.legalInner > h1 {
   margin: 0 0 12px;
   font-size: 32px;
   line-height: 1.35;
@@ -64,14 +64,63 @@ body {
   font-size: 14px;
 }
 
-.legalPre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: inherit;
-  font-size: 15px;
-  line-height: 1.95;
+.legalMarkdown {
   color: rgba(11, 18, 32, 0.92);
+}
+
+.legalMarkdown h1,
+.legalMarkdown h2,
+.legalMarkdown h3,
+.legalMarkdown h4 {
+  color: #0b1220;
+  line-height: 1.45;
+  margin-top: 2em;
+  margin-bottom: 0.7em;
+}
+
+.legalMarkdown h1 {
+  font-size: 30px;
+}
+
+.legalMarkdown h2 {
+  font-size: 22px;
+  padding-top: 8px;
+  border-top: 1px solid #e6eaf2;
+}
+
+.legalMarkdown h3 {
+  font-size: 18px;
+}
+
+.legalMarkdown p {
+  margin: 0 0 1em;
+  line-height: 1.95;
+}
+
+.legalMarkdown ol,
+.legalMarkdown ul {
+  margin: 0 0 1.2em 1.4em;
+  padding: 0;
+  line-height: 1.9;
+}
+
+.legalMarkdown li {
+  margin: 0 0 0.35em;
+}
+
+.legalMarkdown strong {
+  font-weight: 800;
+}
+
+.legalMarkdown a {
+  color: #1e5eff;
+  text-decoration: underline;
+}
+
+.legalMarkdown hr {
+  border: 0;
+  border-top: 1px solid #e6eaf2;
+  margin: 24px 0;
 }
 
 @media (max-width: 640px) {
@@ -84,11 +133,24 @@ body {
     border-radius: 16px;
   }
 
-  .legalInner h1 {
+  .legalInner > h1 {
     font-size: 26px;
   }
 
-  .legalPre {
+  .legalMarkdown h1 {
+    font-size: 24px;
+  }
+
+  .legalMarkdown h2 {
+    font-size: 19px;
+  }
+
+  .legalMarkdown h3 {
+    font-size: 17px;
+  }
+
+  .legalMarkdown p,
+  .legalMarkdown li {
     font-size: 14px;
     line-height: 1.85;
   }
