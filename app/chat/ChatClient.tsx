@@ -5,6 +5,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
 import { yuji } from "../fonts";
+import {
+  clearFeedbackDraft,
+  saveFeedbackDraft,
+  type FeedbackDraft,
+  type FeedbackKind,
+} from "@/app/lib/feedbackDraft";
 
 type Role = "user" | "assistant";
 
@@ -14,31 +20,6 @@ type MessageRow = {
   role: Role;
   content: string;
   created_at: string;
-};
-
-type FeedbackKind = "report_answer" | "contact" | "request";
-
-type FeedbackDraft = {
-  kind: FeedbackKind;
-  conversation_id: string | null;
-  message_id: string | null;
-  target_answer: string | null;
-  context_messages: Array<{
-    id: string;
-    role: Role;
-    content: string;
-    created_at: string;
-  }>;
-  page_path: string;
-  dialect: Dialect;
-  stance: Stance;
-};
-
-type AiTarget = {
-  messageId: string;
-  conversationId: string | null;
-  content: string;
-  messageIndex: number;
 };
 
 type ThreadItem = {
@@ -77,6 +58,12 @@ type ChatRes =
 
 type Dialect = "kansai" | "standard";
 type Stance = "zubatto" | "sanbo";
+type AiTarget = {
+  messageId: string;
+  conversationId: string | null;
+  content: string;
+  messageIndex: number;
+};
 
 /** ===== utils ===== */
 function clamp(s: string, n: number) {
