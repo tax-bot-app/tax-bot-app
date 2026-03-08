@@ -1,27 +1,8 @@
-"use client";
-
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 
 type FeedbackKind = "report_answer" | "contact" | "request";
 
-type DraftPayload = {
-  conversation_id?: string | null;
-  message_id?: string | null;
-  target_answer?: string | null;
-  context_messages?: Array<{
-    id?: string;
-    role?: "user" | "assistant";
-    content?: string;
-    created_at?: string;
-  }>;
-  page_path?: string | null;
-} | null;
-
-const DRAFT_KEY = "feedback:draft:v1";
-
-function normalizeKind(raw: string | null): FeedbackKind {
+function normalizeKind(raw?: string): FeedbackKind {
   if (raw === "report_answer") return "report_answer";
   if (raw === "request") return "request";
   return "contact";
@@ -43,28 +24,13 @@ function descriptionFor(kind: FeedbackKind) {
   return "サービスに関するご意見・不具合・お問い合わせ内容をお送りください。";
 }
 
-export default function FeedbackNewPage() {
-  const searchParams = useSearchParams();
-  const kind = useMemo(() => normalizeKind(searchParams.get("kind")), [searchParams]);
-
-  const [body, setBody] = useState("");
-  const [draft, setDraft] = useState<DraftPayload>(null);
-
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(DRAFT_KEY);
-      if (!raw) {
-        setDraft(null);
-        return;
-      }
-      const parsed = JSON.parse(raw) as DraftPayload;
-      setDraft(parsed);
-    } catch {
-      setDraft(null);
-    }
-  }, []);
-
-  const minOk = body.trim().length >= 30;
+export default async function FeedbackNewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ kind?: string }>;
+}) {
+  const params = await searchParams;
+  const kind = normalizeKind(params?.kind);
 
   return (
     <main style={{ maxWidth: 860, margin: "0 auto", padding: "24px 16px 80px" }}>
@@ -96,33 +62,19 @@ export default function FeedbackNewPage() {
         </p>
       </div>
 
-      {kind === "report_answer" && draft?.target_answer && (
+      {kind === "report_answer" && (
         <section
           style={{
             border: "1px solid #e5e7eb",
             borderRadius: 14,
             padding: 14,
             marginBottom: 18,
+            background: "#fafafa",
+            color: "#666",
+            fontSize: 14,
           }}
         >
-          <div style={{ fontWeight: 900, marginBottom: 8 }}>対象の回答</div>
-          <div
-            style={{
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-              lineHeight: 1.7,
-              color: "#111",
-              fontSize: 14,
-            }}
-          >
-            {draft.target_answer}
-          </div>
-
-          {draft.conversation_id && (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-              conversation_id: {draft.conversation_id}
-            </div>
-          )}
+          対象の回答は、送信処理の実装時に表示対応します。
         </section>
       )}
 
@@ -136,8 +88,6 @@ export default function FeedbackNewPage() {
 
         <textarea
           id="feedback-body"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
           placeholder={
             kind === "report_answer"
               ? "どこが気になったかを入力してください"
@@ -157,10 +107,6 @@ export default function FeedbackNewPage() {
             boxSizing: "border-box",
           }}
         />
-
-        <div style={{ marginTop: 8, fontSize: 13, color: minOk ? "#666" : "#b91c1c" }}>
-          {body.trim().length}/30文字以上
-        </div>
       </section>
 
       <div style={{ marginTop: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -174,7 +120,7 @@ export default function FeedbackNewPage() {
             background: "#111",
             color: "#fff",
             fontWeight: 800,
-            opacity: minOk ? 1 : 0.5,
+            opacity: 0.5,
             cursor: "not-allowed",
           }}
         >
