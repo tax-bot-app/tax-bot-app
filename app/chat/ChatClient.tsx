@@ -16,6 +16,31 @@ type MessageRow = {
   created_at: string;
 };
 
+type FeedbackKind = "report_answer" | "contact" | "request";
+
+type FeedbackDraft = {
+  kind: FeedbackKind;
+  conversation_id: string | null;
+  message_id: string | null;
+  target_answer: string | null;
+  context_messages: Array<{
+    id: string;
+    role: Role;
+    content: string;
+    created_at: string;
+  }>;
+  page_path: string;
+  dialect: Dialect;
+  stance: Stance;
+};
+
+type AiTarget = {
+  messageId: string;
+  conversationId: string | null;
+  content: string;
+  messageIndex: number;
+};
+
 type ThreadItem = {
   id: string;
   title: string;
@@ -167,6 +192,7 @@ function sleep(ms: number) {
 
 /** ===== constants ===== */
 const WELCOME_SEEN_KEY = "chat:welcomeSeen:v3";
+const FEEDBACK_DRAFT_KEY = "feedback:draft:v1";
 const PINS_KEY = "chat:pins:v1";
 const WELCOME_MESSAGE = [
   "はじめまして、税理士法人GLADZ代表税理士野口のAI、AI野口です。",
@@ -257,7 +283,7 @@ const openPortalFromMenu = async () => {
 
   // AI profile full screen (report/inquiry)
   const [aiProfileOpen, setAiProfileOpen] = useState(false);
-  const [aiTargetText, setAiTargetText] = useState<string>("");
+const [aiTarget, setAiTarget] = useState<AiTarget | null>(null);
 
   // thread row menu (…)
   const [threadMenuOpen, setThreadMenuOpen] = useState(false);
@@ -293,8 +319,7 @@ const openPortalFromMenu = async () => {
   const shouldAutoScrollRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
 
-  const CONTACT_URL = process.env.NEXT_PUBLIC_CONTACT_URL || "mailto:support@example.com";
-const FAQ_URL = process.env.NEXT_PUBLIC_FAQ_URL || "";
+  const FAQ_URL = process.env.NEXT_PUBLIC_FAQ_URL || "";
 const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
   const AI_AVATAR_URL = "/ai-noguchi.jpg";
 
@@ -965,10 +990,78 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
 
   
   /** ===== helpers ===== */
-  const openAiProfileFromAnswer = (text: string) => {
-    setAiTargetText(text);
-    setAiProfileOpen(true);
+  const saveFeedbackDraft = (draft: FeedbackDraft) => {
+  try {
+    sessionStorage.setItem(FEEDBACK_DRAFT_KEY, JSON.stringify(draft));
+  } catch {}
+};
+
+const buildReportDraftFromIndex = (messageIndex: number): FeedbackDraft | null => {
+  const target = messages[messageIndex];
+  if (!target) return null;
+
+  const start = Math.max(0, messageIndex - 3);
+  const context = messages.slice(start, messageIndex + 1).map((m) => ({
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    created_at: m.created_at,
+  }));
+
+  return {
+    kind: "report_answer",
+    conversation_id: target.conversation_id || activeConversationId || null,
+    message_id: target.id || null,
+    target_answer: target.content || "",
+    context_messages: context,
+    page_path: "/chat",
+    dialect,
+    stance,
   };
+};
+
+const openAiProfileFromAnswer = (message: MessageRow, messageIndex: number) => {
+  setAiTarget({
+    messageId: message.id,
+    conversationId: message.conversation_id || activeConversationId || null,
+    content: message.content || "",
+    messageIndex,
+  });
+  setAiProfileOpen(true);
+};
+
+const goFeedback = (kind: FeedbackKind) => {
+  setAiProfileOpen(false);
+  setMenuOpen(false);
+  router.push(`/feedback/new?kind=${kind}`);
+};
+
+const goFeedbackContact = () => {
+  try {
+    sessionStorage.removeItem(FEEDBACK_DRAFT_KEY);
+  } catch {}
+  goFeedback("contact");
+};
+
+const goFeedbackRequest = () => {
+  try {
+    sessionStorage.removeItem(FEEDBACK_DRAFT_KEY);
+  } catch {}
+  goFeedback("request");
+};
+
+const goFeedbackReport = () => {
+  if (!aiTarget) {
+    router.push("/feedback/new?kind=report_answer");
+    return;
+  }
+
+  const draft = buildReportDraftFromIndex(aiTarget.messageIndex);
+  if (draft) saveFeedbackDraft(draft);
+
+  setAiProfileOpen(false);
+  router.push("/feedback/new?kind=report_answer");
+};
 
   // 段落ブロック区切り（話題っぽい区切り）
   const renderAssistantContent = (rawContent: string) => {
@@ -1143,12 +1236,12 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
                         <img
                           src={AI_AVATAR_URL}
                           alt="AI野口"
-                          onClick={() => openAiProfileFromAnswer(content)}
+                          onClick={() => openAiProfileFromAnswer(m, idx)}
                           onError={() => setAiAvatarOk(false)}
                           className="avatarImg"
                         />
                       ) : (
-                        <div className="avatarFallback" onClick={() => openAiProfileFromAnswer(content)} title="AI野口">
+                        <div className="avatarFallback" onClick={() => openAiProfileFromAnswer(m, idx)} title="AI野口">
                           🤖
                         </div>
                       )}
@@ -1156,7 +1249,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
 
                     <div className="asstBody">
                       <div className="asstNameLine">
-                        <button type="button" className="asstNameBtn" onClick={() => openAiProfileFromAnswer(content)}>
+                        <button type="button" className="asstNameBtn" onClick={() => openAiProfileFromAnswer(m, idx)}>
                           AI野口
                         </button>
                         <span className="asstTime">{toHm(m.created_at)}</span>
@@ -1183,7 +1276,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
                             className="actBtn"
                             title="不適切な回答を報告"
                             aria-label="不適切な回答を報告"
-                            onClick={() => openAiProfileFromAnswer(content)}
+                            onClick={() => openAiProfileFromAnswer(m, idx)}
                           >
                             ⚑
                           </button>
@@ -1530,15 +1623,14 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
    プラン変更 / 請求設定
  </button>
                 <button
-                  type="button"
-                  style={{ ...BTN, width: "100%" }}
-                  onClick={() => {
-                    setMenuOpen(false);
-                    openUrl(CONTACT_URL);
-                  }}
-                >
-                  お問い合わせ
-                </button>
+  type="button"
+  style={{ ...BTN, width: "100%" }}
+  onClick={() => {
+    goFeedbackContact();
+  }}
+>
+  お問い合わせ
+</button>
                 <button
                   type="button"
                   style={{ ...BTN, width: "100%" }}
@@ -1665,22 +1757,30 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
                 <div style={{ color: "#666", fontSize: 13, marginTop: 4 }}>税理士法人GLADZ 代表税理士 野口のAI</div>
               </div>
 
-              {aiTargetText && (
-                <div className="answerPreview">
-                  <div className="previewLabel">対象の回答</div>
-                  <div className="previewText">{aiTargetText}</div>
-                </div>
-              )}
+              {aiTarget?.content && (
+  <div className="answerPreview">
+    <div className="previewLabel">対象の回答</div>
+    <div className="previewText">{aiTarget.content}</div>
+  </div>
+)}
 
               <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
-                <button type="button" style={{ ...BTN, width: "100%", padding: "12px 12px" }} onClick={() => openUrl(CONTACT_URL)}>
-                  不適切な回答を報告
-                </button>
+  <button
+    type="button"
+    style={{ ...BTN, width: "100%", padding: "12px 12px" }}
+    onClick={() => goFeedbackReport()}
+  >
+    不適切な回答を報告
+  </button>
 
-                <button type="button" style={{ ...BTN, width: "100%", padding: "12px 12px" }} onClick={() => openUrl(CONTACT_URL)}>
-                  問い合わせ・要望など
-                </button>
-              </div>
+  <button
+    type="button"
+    style={{ ...BTN, width: "100%", padding: "12px 12px" }}
+    onClick={() => goFeedbackContact()}
+  >
+    問い合わせ・要望など
+  </button>
+</div>
             </div>
           </div>
         </div>
