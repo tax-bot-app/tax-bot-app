@@ -601,10 +601,17 @@ const bypass = (() => {
 </div>
 
 <div style={{ ...styles.heroCard, gridArea: "copy" }}>
-  <h1 style={{ ...styles.h1, textAlign: "center" }}>
-    <span style={{ display: "block" }}>『ダメです。』のひと言で</span>
-    <span style={{ display: "block" }}>諦めていませんか？</span>
-  </h1>
+  <h1
+  style={{
+    ...styles.h1,
+    textAlign: "center",
+    fontSize: 28,
+    lineHeight: 1.15,
+  }}
+>
+  <span style={{ display: "block" }}>『ダメです。』のひと言で</span>
+  <span style={{ display: "block" }}>諦めていませんか？</span>
+</h1>
 
             <p style={styles.sub}>
               ・税理士はそのまま。相談だけ、もう一段。
