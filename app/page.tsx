@@ -772,8 +772,6 @@ const bypass = (() => {
                   />
                   <span style={{ color: "rgba(11,18,32,0.86)" }}>利用規約に同意する</span>
                 </label>
-
-                <span style={{ ...styles.small, marginTop: 0 }}>※ 購入にはログイン／新規登録が必要です。</span>
               </div>
 
               <div style={styles.planGrid}>
