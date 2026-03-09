@@ -605,9 +605,9 @@ const bypass = (() => {
 
           <div style={{ ...styles.heroCard, gridArea: "copy" }}>
             <h1 style={styles.h1}>
-  『ダメです。』
+  『ダメです。』のひと言で
   <br />
-  で諦めていませんか？
+  諦めていませんか？
 </h1>
 
             <p style={styles.sub}>
