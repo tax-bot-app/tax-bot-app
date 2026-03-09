@@ -561,7 +561,7 @@ const bypass = (() => {
                 </Link>
                 <Link
                   href="/privacy"
-                  style={styles.menuItem}
+                  style={{ ...styles.menuItem, whiteSpace: "nowrap" }}
                   onClick={() => setMenuOpen(false)}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(30,94,255,0.06)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
@@ -604,10 +604,9 @@ const bypass = (() => {
 
 
           <div style={{ ...styles.heroCard, gridArea: "copy" }}>
-            <h1 style={styles.h1}>
-  『ダメです。』のひと言で
-  <br />
-  諦めていませんか？
+            <h1 style={{ textAlign: "center", lineHeight: 1.15 }}>
+  <span style={{ display: "block" }}>『ダメです。』のひと言で</span>
+  <span style={{ display: "block" }}>諦めていませんか？</span>
 </h1>
 
             <p style={styles.sub}>
