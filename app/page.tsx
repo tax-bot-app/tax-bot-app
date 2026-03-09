@@ -511,6 +511,7 @@ const bypass = (() => {
   color: "#8A6D1F",
   background: "linear-gradient(180deg, #F8E9B0, #E9C96A)",
   fontWeight: 900,
+  whiteSpace: "nowrap",
 },
 
     footer: { marginTop: 40, color: "rgba(11,18,32,0.62)", fontSize: 12, lineHeight: 1.7 },

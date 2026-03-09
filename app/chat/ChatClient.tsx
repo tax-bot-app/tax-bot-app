@@ -1566,36 +1566,7 @@ const goFeedbackReport = () => {
     </div>
   </div>
 </div>
-
-
-            <div className="sheetSection">
-  <div className="sheetLabel">ヘルプ</div>
-  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-    <button
-      type="button"
-      style={{ ...BTN, width: "100%" }}
-      onClick={() => {
-        setMenuOpen(false);
-        openUrl(FAQ_URL); // ✅ 同一タブ
-      }}
-    >
-      FAQ
-    </button>
-
-    <button
-      type="button"
-      style={{ ...BTN, width: "100%" }}
-      onClick={() => {
-        setMenuOpen(false);
-        openUrl(TERMS_URL); // ✅ 同一タブ
-      }}
-    >
-      利用規約
-    </button>
-  </div>
-</div>
-
-
+         
             <div className="sheetSection">
               <div className="sheetLabel">その他</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
