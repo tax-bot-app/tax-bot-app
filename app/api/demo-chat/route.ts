@@ -28,11 +28,10 @@ function getBypassToken(req: Request): string | null {
   return t ? String(t).trim() : null;
 }
 
-function isBypassed(req: Request): boolean {
-  if (process.env.NODE_ENV === "production") return false;
+function isBypassed(req: Request): boolean {  
   const want = (process.env.DEMO_BYPASS_TOKEN ?? "").trim();
   if (!want) return false;
-  const got = getBypassToken(req);
+  const got = (getBypassToken(req) ?? "").trim();
   return Boolean(got && got === want);
 }
 
