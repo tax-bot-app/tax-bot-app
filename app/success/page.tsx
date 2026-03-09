@@ -3,10 +3,15 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { trackPurchase } from "../lib/metaPixel";
 
 export default function SuccessPage() {
   const router = useRouter();
   const [sec, setSec] = useState(5);
+
+  useEffect(() => {
+    trackPurchase();
+  }, []);
 
   // ✅ 5秒カウントダウン → /chat へ自動遷移
   useEffect(() => {

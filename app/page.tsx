@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { getSupabaseClient } from "./lib/supabaseClient";
+import { trackDemoStart, trackInitiateCheckout, trackPlanView } from "./lib/metaPixel";
 
 type Plan = "lite" | "standard" | "enterprise";
 
@@ -35,6 +36,12 @@ const PLANS: Array<{
   note: "複数担当・継続運用向け。社内共有や定例相談の補助に。" 
 },
 ];
+
+const PLAN_META_PRICE: Record<Plan, number> = {
+  lite: 3300,
+  standard: 16500,
+  enterprise: 33000,
+};
 
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
 type DemoRes = { ok: true; answer: string } | { ok: false; error: string };
@@ -223,6 +230,8 @@ const bypass = (() => {
 
       // ✅ デモ回答表示後は、ユーザーの視線を回答に固定（自動スクロールしない）
       setPlansOpen(true); // プランは開くだけ（スクロールはしない）
+       trackDemoStart();
+      trackPlanView();
     } catch (e: any) {
       setDemoError(`送信に失敗しました：${e?.message ?? String(e)}`);
     } finally {
@@ -248,6 +257,8 @@ const bypass = (() => {
         return;
       }
 
+      trackInitiateCheckout(plan, PLAN_META_PRICE[plan]);
+      
       // ログイン済みなら /checkout に統一（新規登録→認証後の導線と同じ）
       window.location.href = `/checkout?plan=${encodeURIComponent(String(plan))}`;
     } catch (e: any) {
