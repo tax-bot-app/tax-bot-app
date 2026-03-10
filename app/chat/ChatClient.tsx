@@ -181,17 +181,17 @@ function sleep(ms: number) {
 /** ===== constants ===== */
 const FEEDBACK_DRAFT_KEY = "feedback:draft:v1";
 const PINS_KEY = "chat:pins:v1";
-const buildWelcomeMessage = (plan: string) =>
+const buildWelcomeMessage = (_plan: string) =>
   [
     "はじめまして、税理士法人GLADZ代表税理士野口のAI、AI野口です。",
     "あなたの税務の悩みを「ちょうどいいさじかげん」で整理します。",
     "",
     "口調はメニュー（⋯）から固定できます（関西弁 / ズバっと など）。",
-    ...(String(plan).toLowerCase() === "free"
-      ? ["", "プラン申込がまだの方は、メニュー（⋯）の「プラン変更 / 請求設定」から進めてください。"]
-      : []),
     "",
-    "お好みのスタイルを選んで気軽にご相談ください",
+    "プラン申込がまだの方は、メニュー（⋯）の「プラン変更 / 請求設定」から進めてください。",
+    "すでにお申込み済みの方は、同じメニューからいつでもプラン変更が可能です。",
+    "",
+    "お好みのスタイルを選んで気軽にご相談ください。",
   ].join("\n");
 
 /** ===== main ===== */
