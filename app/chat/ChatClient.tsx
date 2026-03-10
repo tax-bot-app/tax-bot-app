@@ -183,7 +183,7 @@ const FEEDBACK_DRAFT_KEY = "feedback:draft:v1";
 const PINS_KEY = "chat:pins:v1";
 const buildWelcomeMessage = (_plan: string) =>
   [
-    "はじめまして、税理士法人GLADZ代表税理士野口のAI、AI野口です。",
+    "はじめまして、税理士法人GLADZ代表税理士野口のAI、【AI野口】です。",
     "あなたの税務の悩みを「ちょうどいいさじかげん」で整理します。",
     "",
     "口調はメニュー（⋯）や相談内容入力画面から選べます。（関西弁 / ズバっと など）。",
