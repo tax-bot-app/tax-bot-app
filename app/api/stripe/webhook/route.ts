@@ -188,7 +188,7 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
   monthly_quota: number;
   subscription_id: string | null;
 }> {
-  const debug = process.env.DEBUG_STRIPE_PLAN_SYNC === "1";//デバック用
+  const debug = process.env.DEBUG_STRIPE_PLAN_SYNC === "1";
 
   const subs = await stripe.subscriptions.list({
     customer: customerId,
@@ -222,32 +222,53 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
     };
   }
 
-  const scored = candidates.map((s) => {
-    let bestKey: PlanKey = "free";
+  const scored = candidates
+    .map((s) => {
+      let bestKey: PlanKey | null = null;
 
-    for (const item of s.items.data ?? []) {
-      const pid = item.price?.id ?? null;
-      const planDef = getPlanByPriceId(pid);
-if (!planDef) continue;
-const key = normalizePlanKey(planDef.key);
+      for (const item of s.items.data ?? []) {
+        const pid = item.price?.id ?? null;
+        const planDef = getPlanByPriceId(pid);
+        if (!planDef) continue;
 
-      const cur = getPlan(bestKey);
-      const next = getPlan(key);
-      if (next.sortOrder > cur.sortOrder) bestKey = key;
-    }
+        const key = normalizePlanKey(planDef.key);
+        if (!bestKey || getPlan(key).sortOrder > getPlan(bestKey).sortOrder) {
+          bestKey = key;
+        }
+      }
 
-    const anyS = s as any;
-    const periodEnd = Number(anyS.current_period_end ?? 0);
-    const created = Number(anyS.created ?? 0);
+      // ✅ active subscription はあるが、price が1つも解決できないものは候補にしない
+      if (!bestKey) {
+        if (debug) {
+          console.warn("[planSync] unresolved active subscription", JSON.stringify({
+            customerId,
+            subId: s.id,
+            prices: (s.items?.data ?? []).map((it) => it.price?.id ?? null),
+          }));
+        }
+        return null;
+      }
 
-    return {
-      sub: s,
-      bestKey,
-      sortOrder: getPlan(bestKey).sortOrder,
-      periodEnd,
-      created,
-    };
-  });
+      const anyS = s as any;
+      const periodEnd = Number(anyS.current_period_end ?? 0);
+      const created = Number(anyS.created ?? 0);
+
+      return {
+        sub: s,
+        bestKey,
+        sortOrder: getPlan(bestKey).sortOrder,
+        periodEnd,
+        created,
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+
+  // ✅ active/trialing はあるのに、どれも plan 解決できないなら free に落とさず失敗にする
+  if (scored.length === 0) {
+    throw new Error(
+      `Active subscriptions exist but no recognized price IDs for customer ${customerId}`
+    );
+  }
 
   scored.sort((a, b) => {
     if (b.sortOrder !== a.sortOrder) return b.sortOrder - a.sortOrder;
@@ -265,6 +286,7 @@ const key = normalizePlanKey(planDef.key);
       picked: { subId: best.sub.id, plan, sortOrder: best.sortOrder },
     }));
   }
+
   return {
     plan,
     monthly_quota: planDef.monthlyQuota,
@@ -285,7 +307,10 @@ async function syncUserPlanByCustomerId(customerId: string): Promise<{
     stripe_subscription_id: best.subscription_id,
   });
 
-  if (!updated?.userId) return null;
+  if (!updated?.userId) {
+    console.warn("[planSync] user not found for customer", { customerId });
+    return null;
+  }
 
   // ✅ users が確定した直後に usage を当月分だけ同期
   await syncUsageCurrentMonth({
@@ -379,33 +404,73 @@ export async function POST(req: Request) {
         priceId = sub.items.data?.[0]?.price?.id ?? null;
       }
 
-      const planDef = getPlanByPriceId(priceId);
-      const tempPlanKey: PlanKey = normalizePlanKey(planDef?.key);
-      const tempPlan = getPlan(tempPlanKey);
+            const planDef = getPlanByPriceId(priceId);
 
-      // ✅ users を upsert（この時点で userId を確実に取得）
-      const { userId } = await upsertUserByEmail({
-        email,
-        plan: tempPlanKey,
-        monthly_quota: tempPlan.monthlyQuota,
-        stripe_customer_id: customerId,
-        stripe_subscription_id: subscriptionId,
-      });
-
-      /// ✅ 暫定usage同期は「planDefが取れた時だけ」
-      // 値下げ切替などで旧priceが来ると tempPlanKey が free になり得るため、0同期事故を防ぐ
+      // ✅ unknown price は free に丸めて users.plan を壊さない
       if (planDef) {
+        const tempPlanKey: PlanKey = normalizePlanKey(planDef.key);
+        const tempPlan = getPlan(tempPlanKey);
+
+        const { userId } = await upsertUserByEmail({
+          email,
+          plan: tempPlanKey,
+          monthly_quota: tempPlan.monthlyQuota,
+          stripe_customer_id: customerId,
+          stripe_subscription_id: subscriptionId,
+        });
+
+        // ✅ 暫定usage同期は plan 解決できた時だけ
         await syncUsageCurrentMonth({
           userId,
           monthly_quota: tempPlan.monthlyQuota,
         });
+      } else {
+        const supabase = adminSupabase();
+
+        const { data: existingUser, error: findErr } = await supabase
+          .from("users")
+          .select("id")
+          .eq("email", email)
+          .maybeSingle();
+
+        if (findErr) throw findErr;
+
+        if (existingUser?.id) {
+          const { error: updErr } = await supabase
+            .from("users")
+            .update({
+              stripe_customer_id: customerId,
+              stripe_subscription_id: subscriptionId,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existingUser.id);
+
+          if (updErr) throw updErr;
+        } else {
+          // 新規でprice不明はレアだが、紐付けだけ残して plan は free のまま
+          const { error: insErr } = await supabase.from("users").insert({
+            email,
+            plan: "free",
+            monthly_quota: 0,
+            stripe_customer_id: customerId,
+            stripe_subscription_id: subscriptionId,
+          });
+
+          if (insErr) throw insErr;
+        }
+
+        console.error("[planSync] unknown priceId on checkout.session.completed", {
+          email,
+          customerId,
+          subscriptionId,
+          priceId,
+        });
       }
 
-      // ✅ 最後に“正”同期（複数サブスクでも最強プランへ）→ ここでも usage 同期される
+      // ✅ 最後に“正”同期（複数サブスクでも最強プランへ）
       if (customerId) {
         await syncUserPlanByCustomerId(customerId);
       }
-
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
