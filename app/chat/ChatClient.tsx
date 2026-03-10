@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
 import { yuji } from "../fonts";
+import type { PlanKey } from "../lib1/planMaster";
 import {
   clearFeedbackDraft,
   saveFeedbackDraft,
@@ -181,21 +182,32 @@ function sleep(ms: number) {
 const WELCOME_SEEN_KEY = "chat:welcomeSeen:v3";
 const FEEDBACK_DRAFT_KEY = "feedback:draft:v1";
 const PINS_KEY = "chat:pins:v1";
-const WELCOME_MESSAGE = [
-  "はじめまして、税理士法人GLADZ代表税理士野口のAI、AI野口です。",
-  "あなたの税務の悩みを「ちょうどさじかげん」で整理します。",
-  "",
-  "口調はメニュー（⋯）から固定できます（関西弁 / ズバっと など）。",
-  "",
-  "お好みのスタイルを選んで気軽にご相談ください",
-].join("\n");
+const buildWelcomeMessage = (plan: string) =>
+  [
+    "はじめまして、税理士法人GLADZ代表税理士野口のAI、AI野口です。",
+    "あなたの税務の悩みを「ちょうどさじかげん」で整理します。",
+    "",
+    "口調はメニュー（⋯）から固定できます（関西弁 / ズバっと など）。",
+    ...(String(plan).toLowerCase() === "free"
+      ? ["", "プラン申込がまだの方は、メニュー（⋯）の「プラン変更 / 請求設定」から進めてください。"]
+      : []),
+    "",
+    "お好みのスタイルを選んで気軽にご相談ください",
+  ].join("\n");
 
 /** ===== main ===== */
 export default function ChatClient() {
   const supabase = useMemo(() => getSupabaseClient(), []);
   const router = useRouter();
 
-const openPortalFromMenu = async () => {
+const openPlanFromMenu = async () => {
+  // free は Stripeポータルではなく、チャット内プラン選択を開く
+  if (String(plan).toLowerCase() === "free") {
+    setMenuOpen(false);
+    setPlanSheetOpen(true);
+    return;
+  }
+
   try {
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
@@ -214,7 +226,9 @@ const openPortalFromMenu = async () => {
     const json = await res.json();
     if (!res.ok || !json?.ok) {
       if (res.status === 409 && json?.code === "NO_CUSTOMER") {
-        window.location.href = "/";
+        // 一応の保険。customer未作成なら free 相当としてプランシートへ。
+        setMenuOpen(false);
+        setPlanSheetOpen(true);
         return;
       }
       throw new Error(json?.error || "Failed to create portal session");
@@ -223,6 +237,47 @@ const openPortalFromMenu = async () => {
     window.location.href = json.url;
   } catch (e: any) {
     alert(e?.message ?? String(e));
+  }
+};
+
+const startCheckoutFromChat = async (planKey: PlanKey) => {
+  try {
+    if (!planAgree) {
+      alert("利用規約への同意が必要です。");
+      return;
+    }
+
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+
+    const token = data.session?.access_token;
+    if (!token) {
+      window.location.href = "/login";
+      return;
+    }
+
+    setPlanLoading(planKey);
+
+    const res = await fetch("/api/create-checkout", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ plan: planKey }),
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok || !json?.ok) {
+      throw new Error(json?.error || "checkout failed");
+    }
+
+    window.location.href = json.url;
+  } catch (e: any) {
+    alert(e?.message ?? String(e));
+  } finally {
+    setPlanLoading(null);
   }
 };
 
@@ -283,6 +338,10 @@ const [aiTarget, setAiTarget] = useState<AiTarget | null>(null);
 
   // avatar fallback
   const [aiAvatarOk, setAiAvatarOk] = useState(true);
+
+  const [planSheetOpen, setPlanSheetOpen] = useState(false);
+const [planAgree, setPlanAgree] = useState(false);
+const [planLoading, setPlanLoading] = useState<PlanKey | null>(null);
 
   // pins (local)
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
@@ -954,7 +1013,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
         id: "welcome",
         conversation_id: "welcome",
         role: "assistant",
-        content: WELCOME_MESSAGE,
+        content: buildWelcomeMessage(plan),
         created_at: new Date().toISOString(),
       };
       setMessages([welcome]);
@@ -1571,15 +1630,14 @@ const goFeedbackReport = () => {
               <div className="sheetLabel">その他</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <button
-   type="button"
-   style={{ ...BTN, width: "100%" }}
-   onClick={async () => {
-     setMenuOpen(false);
-     await openPortalFromMenu();
-   }}
- >
-   プラン変更 / 請求設定
- </button>
+  type="button"
+  style={{ ...BTN, width: "100%" }}
+  onClick={async () => {
+    await openPlanFromMenu();
+  }}
+>
+  プラン変更 / 請求設定
+</button>
                 <button
   type="button"
   style={{ ...BTN, width: "100%" }}
@@ -1604,6 +1662,88 @@ const goFeedbackReport = () => {
           </div>
         </div>
       )}
+
+      {planSheetOpen && (
+  <div className="overlay" role="dialog" aria-modal="true" onClick={() => setPlanSheetOpen(false)}>
+    <div className="menuSheet" onClick={(e) => e.stopPropagation()}>
+      <div className="sheetTop">
+        <div style={{ fontWeight: 900 }}>プラン選択</div>
+        <button
+          type="button"
+          style={BTN}
+          onClick={() => setPlanSheetOpen(false)}
+        >
+          閉じる
+        </button>
+      </div>
+
+      <div className="sheetSection">
+        <div className="sheetLabel">継続利用にはプラン契約が必要です</div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button
+            type="button"
+            style={{ ...BTN, width: "100%", textAlign: "left" }}
+            disabled={planLoading !== null}
+            onClick={() => startCheckoutFromChat("lite")}
+          >
+            Lite（月5回）
+          </button>
+
+          <button
+            type="button"
+            style={{ ...BTN, width: "100%", textAlign: "left" }}
+            disabled={planLoading !== null}
+            onClick={() => startCheckoutFromChat("standard")}
+          >
+            Standard（月30回）
+          </button>
+
+          <button
+            type="button"
+            style={{ ...BTN, width: "100%", textAlign: "left" }}
+            disabled={planLoading !== null}
+            onClick={() => startCheckoutFromChat("enterprise")}
+          >
+            Enterprise（月100回）
+          </button>
+        </div>
+
+        <label
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            marginTop: 14,
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={planAgree}
+            onChange={(e) => setPlanAgree(e.target.checked)}
+          />
+          <span style={{ fontSize: 13, color: "#333" }}>
+            利用規約に同意する
+          </span>
+        </label>
+
+        {TERMS_URL && (
+          <div style={{ marginTop: 8 }}>
+            <a
+              href={TERMS_URL}
+              target="_blank"
+              rel="noreferrer"
+              style={{ fontSize: 12, color: "#555" }}
+            >
+              利用規約を見る
+            </a>
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
 
       {/* ===== 全画面入力 ===== */}
       {composerOpen && (
