@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import { getPriceId, type PlanKey } from "../../lib1/planMaster";
 
-function mustEnv(name: string): string {
+function mustEnv(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
   return v;
@@ -39,13 +39,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "invalid plan" }, { status: 400 });
     }
 
-    // ✅ ログイン必須（誰でもcheckout叩ける事故を止める）
+    // ログイン必須
     const token = bearerToken(req);
     if (!token) {
       return NextResponse.json({ ok: false, error: "missing auth" }, { status: 401 });
     }
 
-    // ✅ 付与済み（standard/enterprise）はcheckout不要：事故防止
     const db = adminSupabase();
     const { data: userRes, error: userErr } = await db.auth.getUser(token);
     if (userErr || !userRes?.user?.id) {
@@ -54,41 +53,71 @@ export async function POST(req: Request) {
 
     const uid = userRes.user.id;
     const { data: urow, error: uErr } = await db
-    .from("users")
-    .select("plan,stripe_customer_id")
-    .eq("id", uid).maybeSingle();
+      .from("users")
+      .select("plan,stripe_customer_id")
+      .eq("id", uid)
+      .maybeSingle();
+
     if (uErr) throw uErr;
 
     const currentPlan = String(urow?.plan ?? "free").toLowerCase();
-    if (currentPlan === "standard" || currentPlan === "enterprise") {
+
+    // ✅ free以外は新規checkout禁止
+    if (currentPlan !== "free") {
       return NextResponse.json(
-        { ok: false, error: "このアカウントはプラン付与済みのため、決済は不要です。" },
+        { ok: false, error: "すでに有効なプランがあります。プラン変更は別導線で行ってください。" },
         { status: 409 }
       );
     }
 
-    // ✅ Price ID は ENV 正本（test/live を環境で分離）
-    const priceId = getPriceId(plan);
-
-    const origin = req.headers.get("origin") ?? mustEnv("NEXT_PUBLIC_SITE_URL");
-
     const existingCustomerId = urow?.stripe_customer_id ? String(urow.stripe_customer_id) : null;
+
+    // ✅ Stripe側でも有効契約を確認（DBズレ保険）
+    if (existingCustomerId) {
+      const subs = await stripe.subscriptions.list({
+        customer: existingCustomerId,
+        status: "all",
+        limit: 20,
+      });
+
+      const activeLike = subs.data.find((s) =>
+        ["trialing", "active", "past_due", "unpaid"].includes(s.status)
+      );
+
+      if (activeLike) {
+        return NextResponse.json(
+          { ok: false, error: "すでにStripe上で有効な契約があります。重複決済を防ぐため停止しました。" },
+          { status: 409 }
+        );
+      }
+    }
+
+    const priceId = getPriceId(plan);
+    const origin = req.headers.get("origin") ?? mustEnv("NEXT_PUBLIC_SITE_URL");
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      // ✅ customer がある時は customer_email を渡さない（Stripeの制約）
       ...(existingCustomerId
         ? { customer: existingCustomerId }
         : { customer_email: userRes.user.email ?? undefined }),
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${origin}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/`,
+      metadata: {
+        user_id: uid,
+        plan,
+      },
     });
 
-    // ✅ customer が返ってきたらDBに寄せておく（Webhook前でも安定）
     const sessCustomerId = typeof session.customer === "string" ? session.customer : null;
     if (sessCustomerId && !urow?.stripe_customer_id) {
-      await db.from("users").update({ stripe_customer_id: sessCustomerId, updated_at: new Date().toISOString() }).eq("id", uid);
+      await db
+        .from("users")
+        .update({
+          stripe_customer_id: sessCustomerId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", uid);
     }
 
     return NextResponse.json({ ok: true, url: session.url }, { status: 200 });
