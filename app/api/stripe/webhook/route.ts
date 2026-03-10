@@ -298,7 +298,16 @@ async function syncUserPlanByCustomerId(customerId: string): Promise<{
   userId: string;
   monthly_quota: number;
 } | null> {
+  console.log("[planSync] start", JSON.stringify({ customerId }));
+
   const best = await computeBestPlanForCustomer(customerId);
+
+  console.log("[planSync] resolved", JSON.stringify({
+    customerId,
+    plan: best.plan,
+    monthly_quota: best.monthly_quota,
+    subscription_id: best.subscription_id,
+  }));
 
   const updated = await updateUserByCustomerId({
     stripe_customer_id: customerId,
@@ -312,11 +321,16 @@ async function syncUserPlanByCustomerId(customerId: string): Promise<{
     return null;
   }
 
-  // ✅ users が確定した直後に usage を当月分だけ同期
   await syncUsageCurrentMonth({
     userId: updated.userId,
     monthly_quota: best.monthly_quota,
   });
+
+  console.log("[planSync] applied", JSON.stringify({
+    customerId,
+    userId: updated.userId,
+    monthly_quota: best.monthly_quota,
+  }));
 
   return { userId: updated.userId, monthly_quota: best.monthly_quota };
 }
@@ -363,7 +377,13 @@ export async function POST(req: Request) {
     );
   }
 
-  try {
+    try {
+    console.log("[stripeWebhook] received", JSON.stringify({
+      id: event.id,
+      type: event.type,
+      created: event.created,
+    }));
+
     // 1) Checkout完了（emailが取れる最強イベント）
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
@@ -378,6 +398,14 @@ export async function POST(req: Request) {
         (typeof session.customer_email === "string"
           ? session.customer_email
           : null);
+
+      console.log("[stripeWebhook] checkout.session.completed", JSON.stringify({
+        sessionId: session.id,
+        customerId,
+        subscriptionId,
+        email,
+      }));
+
 
       if (!email && customerId) {
         const cust = (await stripe.customers.retrieve(
@@ -475,12 +503,20 @@ export async function POST(req: Request) {
     }
 
     // 2) サブスク作成/更新 → customer全体を同期（users更新→usage同期まで含む）
-    if (
+        if (
       event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated"
     ) {
       const sub = event.data.object as Stripe.Subscription;
       const customerId = typeof sub.customer === "string" ? sub.customer : null;
+
+      console.log("[stripeWebhook] subscription.event", JSON.stringify({
+        type: event.type,
+        subId: sub.id,
+        customerId,
+        status: sub.status,
+        prices: (sub.items?.data ?? []).map((it) => it.price?.id ?? null),
+      }));
 
       if (customerId) {
         await syncUserPlanByCustomerId(customerId);
@@ -490,12 +526,30 @@ export async function POST(req: Request) {
     }
 
     // 3) 解約（deleted） → free固定にせず、残りサブスクで再計算（users更新→usage同期まで含む）
-    if (event.type === "customer.subscription.deleted") {
+        if (event.type === "customer.subscription.deleted") {
       const sub = event.data.object as Stripe.Subscription;
       const customerId = typeof sub.customer === "string" ? sub.customer : null;
 
+      console.log("[stripeWebhook] subscription.event", JSON.stringify({
+        type: event.type,
+        subId: sub.id,
+        customerId,
+        status: sub.status,
+        prices: (sub.items?.data ?? []).map((it) => it.price?.id ?? null),
+      }));
+
       if (customerId) {
-        await syncUserPlanByCustomerId(customerId);
+        try {
+          await syncUserPlanByCustomerId(customerId);
+        } catch (e) {
+          console.warn("[planSync] first deleted-sync failed, retrying once", {
+            customerId,
+            error: e instanceof Error ? e.message : String(e),
+          });
+
+          await new Promise((r) => setTimeout(r, 1500));
+          await syncUserPlanByCustomerId(customerId);
+        }
       }
 
       return NextResponse.json({ received: true }, { status: 200 });
