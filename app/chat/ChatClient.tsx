@@ -179,13 +179,12 @@ function sleep(ms: number) {
 }
 
 /** ===== constants ===== */
-const WELCOME_SEEN_KEY = "chat:welcomeSeen:v3";
 const FEEDBACK_DRAFT_KEY = "feedback:draft:v1";
 const PINS_KEY = "chat:pins:v1";
 const buildWelcomeMessage = (plan: string) =>
   [
     "はじめまして、税理士法人GLADZ代表税理士野口のAI、AI野口です。",
-    "あなたの税務の悩みを「ちょうどさじかげん」で整理します。",
+    "あなたの税務の悩みを「ちょうどいいさじかげん」で整理します。",
     "",
     "口調はメニュー（⋯）から固定できます（関西弁 / ズバっと など）。",
     ...(String(plan).toLowerCase() === "free"
@@ -1001,26 +1000,37 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
 
   // welcome
   useEffect(() => {
-    if (!threadsLoaded) return;
-    if (activeConversationId) return;
-    if (threads.length > 0) return;
+  if (loading) return;
 
-    const seen = loadLocal(WELCOME_SEEN_KEY);
-    if (seen === "1") return;
+  const hasRealMessages = messages.some((m) => m.id !== "welcome");
+  if (hasRealMessages) return;
 
-    if (messages.length === 0) {
-      const welcome: MessageRow = {
-        id: "welcome",
-        conversation_id: "welcome",
-        role: "assistant",
-        content: buildWelcomeMessage(plan),
-        created_at: new Date().toISOString(),
-      };
-      setMessages([welcome]);
+  if (messages.length === 0) {
+    const welcome: MessageRow = {
+      id: "welcome",
+      conversation_id: activeConversationId || "welcome",
+      role: "assistant",
+      content: buildWelcomeMessage(plan),
+      created_at: new Date().toISOString(),
+    };
+    setMessages([welcome]);
+    return;
+  }
+
+  // 既に welcome が入っていて、plan が変わった時だけ文言更新
+  if (messages.length === 1 && messages[0]?.id === "welcome") {
+    const next = buildWelcomeMessage(plan);
+    if (messages[0].content !== next) {
+      setMessages([
+        {
+          ...messages[0],
+          content: next,
+        },
+      ]);
     }
-    saveLocal(WELCOME_SEEN_KEY, "1");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadsLoaded, activeConversationId, threads.length]);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [loading, messages.length, plan, activeConversationId]);
 
   // lock body scroll for overlays (menu/thread/profile/threadMenu/composer)
   useEffect(() => {
