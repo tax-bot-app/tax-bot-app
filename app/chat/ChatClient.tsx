@@ -179,9 +179,10 @@ function sleep(ms: number) {
 }
 
 /** ===== constants ===== */
+const WELCOME_ONCE_KEY = "chat:welcomeOnce:v1";
 const FEEDBACK_DRAFT_KEY = "feedback:draft:v1";
 const PINS_KEY = "chat:pins:v1";
-const buildWelcomeMessage = (_plan: string) =>
+const buildWelcomeMessage = () =>
   [
     "はじめまして、税理士法人GLADZ代表税理士野口のAI、【AI野口】です。",
     "あなたの税務の悩みを「ちょうどいいさじかげん」で整理します。",
@@ -999,38 +1000,26 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
   }, []);
 
   // welcome
-  useEffect(() => {
+useEffect(() => {
   if (loading) return;
 
-  const hasRealMessages = messages.some((m) => m.id !== "welcome");
-  if (hasRealMessages) return;
+  const seen = loadLocal(WELCOME_ONCE_KEY);
+  if (seen === "1") return;
 
   if (messages.length === 0) {
     const welcome: MessageRow = {
       id: "welcome",
       conversation_id: activeConversationId || "welcome",
       role: "assistant",
-      content: buildWelcomeMessage(plan),
+      content: buildWelcomeMessage(),
       created_at: new Date().toISOString(),
     };
-    setMessages([welcome]);
-    return;
-  }
 
-  // 既に welcome が入っていて、plan が変わった時だけ文言更新
-  if (messages.length === 1 && messages[0]?.id === "welcome") {
-    const next = buildWelcomeMessage(plan);
-    if (messages[0].content !== next) {
-      setMessages([
-        {
-          ...messages[0],
-          content: next,
-        },
-      ]);
-    }
+    setMessages([welcome]);
+    saveLocal(WELCOME_ONCE_KEY, "1");
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [loading, messages.length, plan, activeConversationId]);
+}, [loading, messages.length, activeConversationId]);
 
   // lock body scroll for overlays (menu/thread/profile/threadMenu/composer)
   useEffect(() => {
