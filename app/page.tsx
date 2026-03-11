@@ -588,6 +588,15 @@ const bypass = (() => {
                 >
                   利用規約
                 </Link>
+                <Link
+  href="/commerce"
+  style={styles.menuItem}
+  onClick={() => setMenuOpen(false)}
+  onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(30,94,255,0.06)")}
+  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+>
+  販売・提供条件
+</Link>
               </div>
             )}
           </nav>
