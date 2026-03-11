@@ -14,3 +14,7 @@ export function getTermsMarkdown(): string {
 export function getPrivacyMarkdown(): string {
   return readLegalFile("privacy.md");
 }
+
+export function getCommerceMarkdown(): string {
+  return readLegalFile("commerce.md");
+}
