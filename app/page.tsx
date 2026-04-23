@@ -46,6 +46,12 @@ const PLAN_META_PRICE: Record<Plan, number> = {
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
 type DemoRes = { ok: true; answer: string } | { ok: false; error: string };
 
+declare global {
+  interface Window {
+    gtag?: (...args: unknown[]) => void;
+  }
+}
+
 const DEMO_COOKIE_KEY = "sajikagen_demo_done";
 const DEMO_LS_KEY = "sajikagen_demo_done";
 const DEMO_BYPASS_LS = "sjk_demo_bypass";
@@ -126,6 +132,37 @@ export default function Home() {
       setDemoDone(true);
       setPlansOpen(true);
     }
+  }, []);
+
+    useEffect(() => {
+    let cvFired = false;
+
+    const observer = new MutationObserver((mutations) => {
+      if (cvFired) return;
+
+      for (const mutation of mutations) {
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (!(node instanceof HTMLElement)) continue;
+
+          const text = node.innerText || node.textContent || "";
+          if (text.includes("いま内容を整理しています")) {
+            if (typeof window !== "undefined" && typeof window.gtag === "function") {
+              window.gtag("event", "conversion", {
+                send_to: "AW-769471741/fFy4CIzs9pwcEP3p9O4C",
+              });
+            }
+
+            cvFired = true;
+            observer.disconnect();
+            return;
+          }
+        }
+      }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return () => observer.disconnect();
   }, []);
 
   // close menu on outside click / esc
