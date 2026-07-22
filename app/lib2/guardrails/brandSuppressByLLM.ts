@@ -1,13 +1,6 @@
 // app/lib2/guardrails/brandSuppressByLLM.ts
-import OpenAI from "openai";
-import { getOpenAIModel } from "@/app/lib/openaiModel";
+import { withOpenAIModelFallback } from "@/app/lib/openaiResponse";
 import type { GuardrailDecision } from "./judge";
-
-function mustEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
 
 function safeJsonParse(s: string): any | null {
   const t = (s ?? "").trim();
@@ -53,9 +46,6 @@ export async function decideSuppressBrandingByLLM(args: {
   }
 
   // ここから先は guardrail.action === "none" しか来ない
-  const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
-  const model = getOpenAIModel("small");
-
   const instruction = [
     "あなたは会話の『ブランド口上』を抑制すべきかどうかだけ判定する分類器。",
     "出力はJSONのみ。他の文章は禁止。",
@@ -81,12 +71,16 @@ export async function decideSuppressBrandingByLLM(args: {
     .join("\n");
 
   try {
-    const res = await openai.responses.create({
-      model,
-      instructions: instruction,
-      input,
-      temperature: 0.2,
-    } as any);
+    const res = await withOpenAIModelFallback({
+      purpose: "small",
+      run: (openai, model) =>
+        openai.responses.create({
+          model,
+          instructions: instruction,
+          input,
+          temperature: 0.2,
+        } as any),
+    });
 
     const text = (res.output_text ?? "").trim();
     const obj = safeJsonParse(text);
@@ -100,4 +94,3 @@ export async function decideSuppressBrandingByLLM(args: {
     return { suppressBranding: false, reason: "fallback:none" };
   }
 }
-

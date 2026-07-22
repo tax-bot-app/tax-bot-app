@@ -1,11 +1,4 @@
-import OpenAI from "openai";
-import { getOpenAIModel } from "@/app/lib/openaiModel";
-
-function mustEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
+import { withOpenAIModelFallback } from "@/app/lib/openaiResponse";
 
 export type QaCandidateThin = {
   id: string;
@@ -31,12 +24,6 @@ export async function chooseQaByLLM(params: {
   signal?: AbortSignal;
 }): Promise<ChooseQaResult> {
   try {
-    const openai = new OpenAI({
-      apiKey: mustEnv("OPENAI_API_KEY"),
-    });
-
-    const model = getOpenAIModel("small");
-
     const { message, candidates } = params;
     const pickN = Math.max(1, Math.min(12, Number(params.pickN ?? 2)));
     const preferBucket = params.preferBucket ?? "subject";
@@ -81,10 +68,14 @@ ${message}
 ${listText}
 `;
 
-    const ai = await openai.responses.create(
-      { model, instructions, input: inputText },
-      params.signal ? { signal: params.signal } : undefined
-    );
+    const ai = await withOpenAIModelFallback({
+      purpose: "small",
+      run: (openai, model) =>
+        openai.responses.create(
+          { model, instructions, input: inputText },
+          params.signal ? { signal: params.signal } : undefined
+        ),
+    });
 
     const raw = ai.output_text?.trim() || "";
 

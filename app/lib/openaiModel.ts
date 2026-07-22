@@ -28,3 +28,42 @@ export function getOpenAIModel(
   if (purpose === "small") return small || common || fallbackSmall;
   return common || fallbackMain;
 }
+
+function splitModels(v: unknown): string[] {
+  return clean(v)
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
+}
+
+/**
+ * 実行時フォールバック候補。
+ *
+ * OPENAI_MODEL_FALLBACKS は用途共通、用途別ENVはその手前で試す。
+ * 同一モデルは除外し、指定順を維持する。
+ */
+export function getOpenAIModelCandidates(
+  purpose: "main" | "topic" | "small" = "main"
+): string[] {
+  const purposeFallbacks = splitModels(
+    purpose === "main"
+      ? process.env.OPENAI_MODEL_MAIN_FALLBACKS
+      : purpose === "topic"
+        ? process.env.OPENAI_MODEL_TOPIC_FALLBACKS
+        : process.env.OPENAI_MODEL_SMALL_FALLBACKS
+  );
+  const commonFallbacks = splitModels(process.env.OPENAI_MODEL_FALLBACKS);
+  // ENV追加前でも、現行既定値の終了で即停止しないための最後の保険。
+  // 新世代公開時はENVを先に更新し、コード既定値は定期メンテで追随する。
+  const emergencyDefaults =
+    purpose === "main" ? ["gpt-5.6-sol"] : ["gpt-5.4-mini", "gpt-5.6-sol"];
+
+  return Array.from(
+    new Set([
+      getOpenAIModel(purpose),
+      ...purposeFallbacks,
+      ...commonFallbacks,
+      ...emergencyDefaults,
+    ])
+  );
+}

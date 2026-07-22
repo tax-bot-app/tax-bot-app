@@ -1,12 +1,5 @@
 //lib2/ai/decideAnchorQaByLLM.ts
-import OpenAI from "openai";
-import { getOpenAIModel } from "@/app/lib/openaiModel";
-
-function mustEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
+import { withOpenAIModelFallback } from "@/app/lib/openaiResponse";
 
 export type AnchorCandidate = {
   id: string;
@@ -36,9 +29,6 @@ export async function decideAnchorQaByLLM(params: {
     if (list.length === 0) {
       return { ok: false, anchorQaId: "", confidence: 0, reason: "no_candidates", error: "no_candidates" };
     }
-
-    const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
-    const model = getOpenAIModel("small");
 
     const listText = list
       .map(
@@ -78,14 +68,14 @@ ${message}
 ${listText}
 `;
 
-    const ai = await openai.responses.create(
-      {
-        model,
-        instructions,
-        input,
-      },
-      params.signal ? { signal: params.signal } : undefined
-    );
+    const ai = await withOpenAIModelFallback({
+      purpose: "small",
+      run: (openai, model) =>
+        openai.responses.create(
+          { model, instructions, input },
+          params.signal ? { signal: params.signal } : undefined
+        ),
+    });
 
     const raw = ai.output_text?.trim() || "";
     if (!raw) return { ok: false, anchorQaId: "", confidence: 0, reason: "empty", error: "empty response" };

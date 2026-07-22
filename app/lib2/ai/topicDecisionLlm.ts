@@ -1,12 +1,5 @@
-import OpenAI from "openai";
-import { getOpenAIModel } from "@/app/lib/openaiModel";
+import { withOpenAIModelFallback } from "@/app/lib/openaiResponse";
 import { TOPIC_TAX_AUDIT } from "../topicDecision";
-
-function mustEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
 
 function safeJsonParse(s: string): any | null {
   const t = (s ?? "").trim();
@@ -70,9 +63,6 @@ export async function decideTopicByLLM(params: {
   | { ok: false; error: string; rawText: string }
 > {
   const { message, prevUserMessage, prevAssistantMessage, recentUserMsgs, availableTopics } = params;
-
-  const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
-  const model = getOpenAIModel("topic");
 
   const topics = uniq(availableTopics).slice(0, 220);
 
@@ -156,7 +146,10 @@ export async function decideTopicByLLM(params: {
 
   let rawText = "";
   try {
-    const res = await openai.responses.create({ model, instructions, input });
+    const res = await withOpenAIModelFallback({
+      purpose: "topic",
+      run: (openai, model) => openai.responses.create({ model, instructions, input }),
+    });
     rawText = (res.output_text ?? "").trim();
 
     const obj = safeJsonParse(rawText);
