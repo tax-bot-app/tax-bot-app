@@ -8,14 +8,15 @@ import crypto from "crypto";
 export const runtime = "nodejs";
 
 type DemoRes =
-  | { ok: true; answer: string }
-  | { ok: false; error: string };
+  | { ok: true; answer: string; usedAttempts: number }
+  | { ok: false; error: string; usedAttempts?: number };
 
 const DEMO_MAX_INPUT = 400;
 const DEMO_MAX_OUTPUT = 750;
 const DEMO_COOKIE = "sajikagen_demo_done";
 const DEMO_TIMEOUT_MS = 60_000;
 const DEMO_DEVICE_TABLE = "demo_device_attempts";
+const DEMO_MAX_ATTEMPTS = 3;
 
 function envBool(name: string, def = false): boolean {
   const v = (process.env[name] ?? "").toLowerCase().trim();
@@ -53,21 +54,43 @@ function mustEnv(name: string): string {
   return v;
 }
 
-function hasDemoCookie(cookieHeader: string | null): boolean {
+function getDemoCookieCount(cookieHeader: string | null): number {
   const c = cookieHeader ?? "";
-  const re = new RegExp(`(?:^|;\\s*)${DEMO_COOKIE}=1(?:;|$)`);
-  return re.test(c);
+  const match = c.match(new RegExp(`(?:^|;\\s*)${DEMO_COOKIE}=([^;]+)`));
+  const count = Number.parseInt(decodeURIComponent(match?.[1] ?? "0"), 10);
+  return Number.isFinite(count) ? Math.min(Math.max(count, 0), DEMO_MAX_ATTEMPTS) : 0;
 }
 
-function setDemoCookie(res: NextResponse) {
-  // 180日（「1回のみ」の記憶としてちょうど良い）
-  res.cookies.set(DEMO_COOKIE, "1", {
+function setDemoCookie(res: NextResponse, count: number) {
+  const safeCount = Math.min(Math.max(Math.trunc(count), 0), DEMO_MAX_ATTEMPTS);
+  res.cookies.set(DEMO_COOKIE, String(safeCount), {
     httpOnly: false, // ★フロントで読めるように
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 180,
   });
+}
+
+async function reserveDeviceAttempt(
+  db: any,
+  deviceId: string,
+  ua: string | null
+): Promise<number | null> {
+  for (let attempt = 1; attempt <= DEMO_MAX_ATTEMPTS; attempt += 1) {
+    // 1回目は旧仕様と同じキーにし、過去の利用履歴を引き継ぐ。
+    const source = attempt === 1 ? deviceId : `${deviceId}\n${attempt}`;
+    const deviceKey = hmacDeviceKey(source);
+    const { error } = await db.from(DEMO_DEVICE_TABLE).insert({ device_key: deviceKey, ua });
+    if (!error) return attempt;
+    if (String((error as any)?.code ?? "") !== "23505") {
+      console.error("[demo-chat] failed to reserve device attempt", {
+        code: String((error as any)?.code ?? "unknown"),
+      });
+      return null;
+    }
+  }
+  return DEMO_MAX_ATTEMPTS + 1;
 }
 
 function extractSection(answer: string, head: "🥄" | "✅" | "⚠️"): string[] {
@@ -348,7 +371,16 @@ export async function POST(req: Request) {
 // ===== 0) bypass（自分用）=====
     const bypass = isBypassed(req);
 
-    // ===== 1) device 制限（段階導入：ENFORCE=off の間は保存だけ）=====
+    const cookieCount = getDemoCookieCount(req.headers.get("cookie"));
+    if (!bypass && cookieCount >= DEMO_MAX_ATTEMPTS) {
+      return NextResponse.json(
+        { ok: false, error: "無料体験は3回までです。プラン確認から続けられます。", usedAttempts: DEMO_MAX_ATTEMPTS } satisfies DemoRes,
+        { status: 409 }
+      );
+    }
+
+    // ===== 1) device 制限（旧DBのUNIQUE制約をそのまま使い3枠方式）=====
+    let deviceAttempt: number | null = null;
     if (!bypass && deviceId) {
       const deviceKey = hmacDeviceKey(deviceId);
       const adminDevice = isAdminDevice(deviceKey);
@@ -356,33 +388,26 @@ export async function POST(req: Request) {
 
       if (!adminDevice) {
         const ua = req.headers.get("user-agent") ?? null;
-        const { error } = await db.from(DEMO_DEVICE_TABLE).insert({ device_key: deviceKey, ua });
-
-        // UNIQUE違反（=2回目以降）
-        const isUnique = String((error as any)?.code ?? "") === "23505";
-        if (enforce && isUnique) {
+        deviceAttempt = await reserveDeviceAttempt(db, deviceId, ua);
+        if (enforce && deviceAttempt !== null && deviceAttempt > DEMO_MAX_ATTEMPTS) {
           return NextResponse.json(
-            { ok: false, error: "無料体験は1回のみです。プラン確認から続けられます。" } satisfies DemoRes,
+            { ok: false, error: "無料体験は3回までです。プラン確認から続けられます。", usedAttempts: DEMO_MAX_ATTEMPTS } satisfies DemoRes,
             { status: 409 }
           );
         }
       }
     }
 
-    // ===== 2) Cookie 制限（保険A：同ブラウザの再訪でも潰す）=====
-    if (!bypass && hasDemoCookie(req.headers.get("cookie"))) {
-      return NextResponse.json(
-        { ok: false, error: "無料体験は1回のみです。プラン確認から続けられます。" } satisfies DemoRes,
-        { status: 409 }
-      );
-    }
+    const usedAttempts = bypass
+      ? 0
+      : Math.min(Math.max(cookieCount + 1, deviceAttempt ?? 0), DEMO_MAX_ATTEMPTS);
 
 
     const gr = judgeGuardrails(message);
     if (gr.action === "block") {
       // block でも「1回消費」扱いにする（抜け道防止）
-      const res = NextResponse.json({ ok: true, answer: String(gr.userMessage ?? "").trim() } satisfies DemoRes);
-      if (!bypass) setDemoCookie(res);
+      const res = NextResponse.json({ ok: true, answer: String(gr.userMessage ?? "").trim(), usedAttempts } satisfies DemoRes);
+      if (!bypass) setDemoCookie(res, usedAttempts);
       return res;
     }
     
@@ -420,8 +445,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "AI returned empty response" } satisfies DemoRes, { status: 502 });
     }
 
-    const res = NextResponse.json({ ok: true, answer } satisfies DemoRes);
-    if (!bypass) setDemoCookie(res);
+    const res = NextResponse.json({ ok: true, answer, usedAttempts } satisfies DemoRes);
+    if (!bypass) setDemoCookie(res, usedAttempts);
     return res;
   } catch (e: any) {
     const msg = String(e?.message ?? "");

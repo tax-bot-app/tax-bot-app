@@ -44,7 +44,9 @@ const PLAN_META_PRICE: Record<Plan, number> = {
 };
 
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
-type DemoRes = { ok: true; answer: string } | { ok: false; error: string };
+type DemoRes =
+  | { ok: true; answer: string; usedAttempts: number }
+  | { ok: false; error: string; usedAttempts?: number };
 
 declare global {
   interface Window {
@@ -56,6 +58,7 @@ const DEMO_COOKIE_KEY = "sajikagen_demo_done";
 const DEMO_LS_KEY = "sajikagen_demo_done";
 const DEMO_BYPASS_LS = "sjk_demo_bypass";
 const DEMO_MAX_LEN = 400;
+const DEMO_MAX_ATTEMPTS = 3;
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -68,16 +71,22 @@ function setCookie(name: string, value: string, days = 365) {
   document.cookie = `${name}=${encodeURIComponent(value)}; Expires=${expires}; Path=/; SameSite=Lax`;
 }
 
-function isDoneByCookieOrLS(): boolean {
-  const c = getCookie(DEMO_COOKIE_KEY) === "1";
-  let l = false;
-  try { l = localStorage.getItem(DEMO_LS_KEY) === "1"; } catch {}
-  return c || l;
+function parseDemoCount(value: string | null): number {
+  const count = Number.parseInt(value ?? "0", 10);
+  return Number.isFinite(count) ? Math.min(Math.max(count, 0), DEMO_MAX_ATTEMPTS) : 0;
 }
 
-function markDoneCookieAndLS() {
-  setCookie(DEMO_COOKIE_KEY, "1", 180);
-  try { localStorage.setItem(DEMO_LS_KEY, "1"); } catch {}
+function getDemoCountByCookieOrLS(): number {
+  const cookieCount = parseDemoCount(getCookie(DEMO_COOKIE_KEY));
+  let localCount = 0;
+  try { localCount = parseDemoCount(localStorage.getItem(DEMO_LS_KEY)); } catch {}
+  return Math.max(cookieCount, localCount);
+}
+
+function markDemoCountCookieAndLS(count: number) {
+  const safeCount = Math.min(Math.max(Math.trunc(count), 0), DEMO_MAX_ATTEMPTS);
+  setCookie(DEMO_COOKIE_KEY, String(safeCount), 180);
+  try { localStorage.setItem(DEMO_LS_KEY, String(safeCount)); } catch {}
 }
 
 async function getDeviceId(): Promise<string | null> {
@@ -104,7 +113,9 @@ export default function Home() {
   const [demoInput, setDemoInput] = useState("");
   const [demoBusy, setDemoBusy] = useState(false);
   const [demoDots, setDemoDots] = useState("");
-  const [demoDone, setDemoDone] = useState(false);
+  const [demoUsed, setDemoUsed] = useState(0);
+  const demoDone = demoUsed > 0;
+  const demoLimitReached = demoUsed >= DEMO_MAX_ATTEMPTS;
   const [demoAnswer, setDemoAnswer] = useState<string | null>(null);
   const [demoError, setDemoError] = useState<string | null>(null);
 
@@ -127,9 +138,9 @@ export default function Home() {
 
   // init: cookie
   useEffect(() => {
-    const done = isDoneByCookieOrLS();
-    if (done) {
-      setDemoDone(true);
+    const used = getDemoCountByCookieOrLS();
+    setDemoUsed(used);
+    if (used > 0) {
       setPlansOpen(true);
     }
   }, []);
@@ -212,7 +223,11 @@ export default function Home() {
 
   const submitDemo = async () => {
     setDemoError(null);
-    // demoDoneでも送信は試させる（2回目以降は409で静かに線引き）
+    if (demoLimitReached) {
+      setDemoAnswer("無料体験は3回までです。続きはプランから整理できます。");
+      setPlansOpen(true);
+      return;
+    }
 
     const q = (demoInput ?? "").trim();
     if (!q) {
@@ -251,10 +266,11 @@ const bypass = (() => {
       if (!json.ok) {
         // 409 は「送信済み」扱いに寄せる（入力欄消す＋プラン開く）
         if (res.status === 409) {
-          setDemoDone(true);         // 右上ラベル用に残す
+          const usedAttempts = json.usedAttempts ?? DEMO_MAX_ATTEMPTS;
+          setDemoUsed(usedAttempts);
           setPlansOpen(true);        // プランは開く（スクロールしない）
-          markDoneCookieAndLS();     // 再訪でも「送信済み」を維持
-          setDemoAnswer("無料体験は1回のみです。続きはプランから整理できます。");
+          markDemoCountCookieAndLS(usedAttempts);
+          setDemoAnswer("無料体験は3回までです。続きはプランから整理できます。");
           setDemoError(null);        // 赤枠を出さない
           return;
         }
@@ -262,8 +278,8 @@ const bypass = (() => {
       }
 
       setDemoAnswer(json.answer);
-      setDemoDone(true);
-      markDoneCookieAndLS();
+      setDemoUsed(json.usedAttempts);
+      markDemoCountCookieAndLS(json.usedAttempts);
 
       // ✅ デモ回答表示後は、ユーザーの視線を回答に固定（自動スクロールしない）
       setPlansOpen(true); // プランは開くだけ（スクロールはしない）
@@ -703,7 +719,7 @@ const bypass = (() => {
           id="demo"
           style={styles.section}
         >
-          <h2 style={styles.sectionTitle}>無料体験（1問）</h2>
+          <h2 style={styles.sectionTitle}>無料体験（3回）</h2>
 
           <div style={styles.chatShell}>
             <div style={styles.chatTop}>
@@ -711,7 +727,7 @@ const bypass = (() => {
                 <div style={styles.dot} />
                 <div style={{ fontWeight: 900 }}>さじかげん（デモ）</div>
               </div>
-              <div style={{ color: "rgba(11,18,32,0.55)", fontSize: 12 }}>{demoDone ? "送信済み" : "未送信"}</div>
+              <div style={{ color: "rgba(11,18,32,0.55)", fontSize: 12 }}>{demoUsed} / {DEMO_MAX_ATTEMPTS}回使用</div>
             </div>
 
             <div style={styles.chatBody}>
@@ -738,20 +754,20 @@ const bypass = (() => {
                   placeholder="相談内容を入力してください"
                   style={styles.textarea}
                   maxLength={DEMO_MAX_LEN + 20}
-                  disabled={demoBusy}
+                  disabled={demoBusy || demoLimitReached}
                 />
                 <button
                   style={{
                     ...styles.btnPrimary,
-                    opacity: demoBusy ? 0.6 : 1,
-                    cursor: demoBusy ? "not-allowed" : "pointer",
+                    opacity: demoBusy || demoLimitReached ? 0.6 : 1,
+                    cursor: demoBusy || demoLimitReached ? "not-allowed" : "pointer",
                     padding: "12px 14px",
                   }}
                   onClick={submitDemo}
-                  disabled={demoBusy}
+                  disabled={demoBusy || demoLimitReached}
                 >
                   <span style={{ opacity: demoBusy ? 0.9 : 1 }}>
-                    {demoBusy ? `送信中${demoDots}` : "送信"}
+                    {demoBusy ? `送信中${demoDots}` : demoLimitReached ? "3回使用済み" : "送信"}
                   </span>
                 </button>
               </div>
