@@ -58,7 +58,7 @@ Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployす�
 - `PRICE_ID_LITE_NEXT`: 月額1,480円（税込）
 - `PRICE_ID_STANDARD_NEXT`: 月額4,800円（税込）
 - `PRICE_ID_ENTERPRISE_NEXT`: 月額9,800円（税込）
-- `NEXT_PUBLIC_SITE_URL`: Checkout完了・キャンセル後に戻す本番サイトのHTTPS URL
+- `NEXT_PUBLIC_SITE_URL`: 認証callback・Checkout・Customer Portalで共用する本番サイトのHTTPS URL。`APP_URL` は戻り先判定に使用しない
 
 旧Price IDは、新料金での本番決済、Webhook同期、利用回数、Customer Portalを確認するまで削除・アーカイブしない。
 
@@ -78,6 +78,12 @@ Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployす�
 2. Checkoutを完了し、`NEXT_PUBLIC_SITE_URL` の `/success` へ戻ることを確認
 3. Checkoutをキャンセルし、`NEXT_PUBLIC_SITE_URL` のトップへ戻ることを確認
 4. VercelのプレビューURLからCheckoutを開始した場合も、完了・キャンセル後は本番サイトへ戻ることを確認
+
+### 認証・Customer Portal戻り先の確認
+
+1. 認証メールのリンクから認証し、`NEXT_PUBLIC_SITE_URL` のプラン選択またはCheckoutへ戻ることを確認
+2. Customer Portalを終了し、`NEXT_PUBLIC_SITE_URL` の `/chat` へ戻ることを確認
+3. Vercel Runtime Logsに `Invalid NEXT_PUBLIC_SITE_URL` が出ていないことを確認
 
 ## Stripe Webhookの再実行管理
 

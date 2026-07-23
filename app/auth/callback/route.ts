@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
+import { siteOrigin } from "../../lib/siteOrigin";
+
 export const runtime = "nodejs";
 
 function mustEnv(name: string): string {
@@ -13,6 +15,7 @@ function mustEnv(name: string): string {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  const appUrl = siteOrigin();
   const cookieStore = await cookies();
 
   // plan は保持（クエリで来る）
@@ -23,12 +26,12 @@ export async function GET(req: Request) {
   const code = url.searchParams.get("code");
 
   const res = NextResponse.redirect(
-    new URL(safePlan ? `/checkout?plan=${encodeURIComponent(safePlan)}` : "/?plans=1", url.origin)
+    new URL(safePlan ? `/checkout?plan=${encodeURIComponent(safePlan)}` : "/?plans=1", appUrl)
   );
 
   if (!code) {
     // code が無い＝認証失敗 or 直アクセス。loginへ返す
-    return NextResponse.redirect(new URL(safePlan ? `/login?plan=${encodeURIComponent(safePlan)}` : "/login", url.origin));
+    return NextResponse.redirect(new URL(safePlan ? `/login?plan=${encodeURIComponent(safePlan)}` : "/login", appUrl));
   }
 
   const supabase = createServerClient(
@@ -52,7 +55,7 @@ export async function GET(req: Request) {
   // ✅ ここが本丸：code -> session cookie
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
-    return NextResponse.redirect(new URL(`/login?reason=expired${safePlan ? `&plan=${encodeURIComponent(safePlan)}` : ""}`, url.origin));
+    return NextResponse.redirect(new URL(`/login?reason=expired${safePlan ? `&plan=${encodeURIComponent(safePlan)}` : ""}`, appUrl));
   }
 
   return res;

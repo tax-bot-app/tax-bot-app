@@ -3,6 +3,8 @@ import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
+import { siteOrigin } from "../../../lib/siteOrigin";
+
 export const runtime = "nodejs";
 
 function mustEnv(name: string): string {
@@ -82,7 +84,7 @@ export async function POST(req: Request) {
     }
 
     // 4) Portal Session作成
-    const appUrl = mustEnv("APP_URL"); // 本番URL固定推奨
+    const appUrl = siteOrigin();
     const session = await stripeClient().billingPortal.sessions.create({
       customer: customerId,
       return_url: `${appUrl}/chat`,

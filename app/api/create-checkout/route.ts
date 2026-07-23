@@ -4,32 +4,12 @@ import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 
 import { getPriceId, type PlanKey } from "../../lib1/planMaster";
+import { siteOrigin } from "../../lib/siteOrigin";
 
 function mustEnv(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
   return v;
-}
-
-function checkoutBaseUrl(): string {
-  const raw = mustEnv("NEXT_PUBLIC_SITE_URL");
-
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("Invalid NEXT_PUBLIC_SITE_URL");
-  }
-
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
-    throw new Error("Invalid NEXT_PUBLIC_SITE_URL");
-  }
-
-  if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
-    throw new Error("NEXT_PUBLIC_SITE_URL must use https in production");
-  }
-
-  return url.origin;
 }
 
 let stripe: Stripe | null = null;
@@ -119,7 +99,7 @@ export async function POST(req: Request) {
     }
 
     const priceId = getPriceId(plan);
-    const siteUrl = checkoutBaseUrl();
+    const siteUrl = siteOrigin();
 
     const session = await stripeClient().checkout.sessions.create({
       mode: "subscription",
