@@ -19,6 +19,7 @@ Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployす�
 - `PRICE_ID_LITE_NEXT`: 月額1,480円（税込）
 - `PRICE_ID_STANDARD_NEXT`: 月額4,800円（税込）
 - `PRICE_ID_ENTERPRISE_NEXT`: 月額9,800円（税込）
+- `NEXT_PUBLIC_SITE_URL`: Checkout完了・キャンセル後に戻す本番サイトのHTTPS URL
 
 旧Price IDは、新料金での本番決済、Webhook同期、利用回数、Customer Portalを確認するまで削除・アーカイブしない。
 
@@ -31,6 +32,13 @@ Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployす�
 5. Customer Portalで契約内容と金額を確認
 6. 管理画面の想定売上が新料金で集計されることを確認
 7. 問題がなければStripeの旧価格をアーカイブ
+
+### Checkout戻り先の確認
+
+1. Vercel Productionの `NEXT_PUBLIC_SITE_URL` が本番サイトのHTTPS URLであることを確認
+2. Checkoutを完了し、`NEXT_PUBLIC_SITE_URL` の `/success` へ戻ることを確認
+3. Checkoutをキャンセルし、`NEXT_PUBLIC_SITE_URL` のトップへ戻ることを確認
+4. VercelのプレビューURLからCheckoutを開始した場合も、完了・キャンセル後は本番サイトへ戻ることを確認
 
 ## Stripe Webhookの再実行管理
 

@@ -11,6 +11,27 @@ function mustEnv(name: string) {
   return v;
 }
 
+function checkoutBaseUrl(): string {
+  const raw = mustEnv("NEXT_PUBLIC_SITE_URL");
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("Invalid NEXT_PUBLIC_SITE_URL");
+  }
+
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new Error("Invalid NEXT_PUBLIC_SITE_URL");
+  }
+
+  if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
+    throw new Error("NEXT_PUBLIC_SITE_URL must use https in production");
+  }
+
+  return url.origin;
+}
+
 const stripe = new Stripe(mustEnv("STRIPE_SECRET_KEY"), {
   apiVersion: "2025-12-15.clover",
 });
@@ -93,7 +114,7 @@ export async function POST(req: Request) {
     }
 
     const priceId = getPriceId(plan);
-    const origin = req.headers.get("origin") ?? mustEnv("NEXT_PUBLIC_SITE_URL");
+    const siteUrl = checkoutBaseUrl();
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -101,8 +122,8 @@ export async function POST(req: Request) {
         ? { customer: existingCustomerId }
         : { customer_email: userRes.user.email ?? undefined }),
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${origin}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/`,
+      success_url: `${siteUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${siteUrl}/`,
       metadata: {
         user_id: uid,
         plan,
@@ -121,8 +142,9 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ ok: true, url: session.url }, { status: 200 });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("create-checkout error:", e);
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
+    const message = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
