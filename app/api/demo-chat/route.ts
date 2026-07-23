@@ -1,6 +1,6 @@
 // app/api/demo-chat/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { judgeGuardrails } from "../../lib2/guardrails";
 import { buildAnswerCore } from "../chat/route";
 import crypto from "crypto";
@@ -17,6 +17,11 @@ const DEMO_COOKIE = "sajikagen_demo_done";
 const DEMO_TIMEOUT_MS = 60_000;
 const DEMO_DEVICE_TABLE = "demo_device_attempts";
 const DEMO_MAX_ATTEMPTS = 3;
+
+type DemoDeviceReservation = {
+  attempt: number;
+  deviceKey: string | null;
+};
 
 function envBool(name: string, def = false): boolean {
   const v = (process.env[name] ?? "").toLowerCase().trim();
@@ -73,24 +78,44 @@ function setDemoCookie(res: NextResponse, count: number) {
 }
 
 async function reserveDeviceAttempt(
-  db: any,
+  db: SupabaseClient,
   deviceId: string,
   ua: string | null
-): Promise<number | null> {
+): Promise<DemoDeviceReservation | null> {
   for (let attempt = 1; attempt <= DEMO_MAX_ATTEMPTS; attempt += 1) {
     // 1回目は旧仕様と同じキーにし、過去の利用履歴を引き継ぐ。
     const source = attempt === 1 ? deviceId : `${deviceId}\n${attempt}`;
     const deviceKey = hmacDeviceKey(source);
     const { error } = await db.from(DEMO_DEVICE_TABLE).insert({ device_key: deviceKey, ua });
-    if (!error) return attempt;
-    if (String((error as any)?.code ?? "") !== "23505") {
+    if (!error) return { attempt, deviceKey };
+    if (String(error.code ?? "") !== "23505") {
       console.error("[demo-chat] failed to reserve device attempt", {
-        code: String((error as any)?.code ?? "unknown"),
+        code: String(error.code ?? "unknown"),
       });
       return null;
     }
   }
-  return DEMO_MAX_ATTEMPTS + 1;
+  return { attempt: DEMO_MAX_ATTEMPTS + 1, deviceKey: null };
+}
+
+async function releaseDeviceAttempt(
+  db: SupabaseClient | null,
+  deviceKey: string | null
+): Promise<void> {
+  if (!db || !deviceKey) return;
+
+  try {
+    const { error } = await db.from(DEMO_DEVICE_TABLE).delete().eq("device_key", deviceKey);
+    if (error) {
+      console.error("[demo-chat] failed to release device attempt", {
+        code: String(error.code ?? "unknown"),
+      });
+    }
+  } catch (error: unknown) {
+    console.error("[demo-chat] failed to release device attempt", {
+      code: error instanceof Error ? error.name : "exception",
+    });
+  }
 }
 
 function extractSection(answer: string, head: "🥄" | "✅" | "⚠️"): string[] {
@@ -381,6 +406,10 @@ function toDemoAnswer(full: string): string {
 }
 
 export async function POST(req: Request) {
+  let reservationDb: SupabaseClient | null = null;
+  let reservedDeviceKey: string | null = null;
+  let keepReservation = false;
+
   try {
     const body = await req.json().catch(() => null);
     const message = String(body?.message ?? "").trim();
@@ -404,6 +433,7 @@ export async function POST(req: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY || mustEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
     const db = createClient(url, key, { auth: { persistSession: false } });
+    reservationDb = db;
 
 // ===== 0) bypass（自分用）=====
     const bypass = isBypassed(req);
@@ -425,7 +455,9 @@ export async function POST(req: Request) {
 
       if (!adminDevice) {
         const ua = req.headers.get("user-agent") ?? null;
-        deviceAttempt = await reserveDeviceAttempt(db, deviceId, ua);
+        const reservation = await reserveDeviceAttempt(db, deviceId, ua);
+        deviceAttempt = reservation?.attempt ?? null;
+        reservedDeviceKey = reservation?.deviceKey ?? null;
         if (enforce && deviceAttempt !== null && deviceAttempt > DEMO_MAX_ATTEMPTS) {
           return NextResponse.json(
             { ok: false, error: "無料体験は3回までです。プラン確認から続けられます。", usedAttempts: DEMO_MAX_ATTEMPTS } satisfies DemoRes,
@@ -443,6 +475,7 @@ export async function POST(req: Request) {
     const gr = judgeGuardrails(message);
     if (gr.action === "block") {
       // block でも「1回消費」扱いにする（抜け道防止）
+      keepReservation = true;
       const res = NextResponse.json({ ok: true, answer: String(gr.userMessage ?? "").trim(), usedAttempts } satisfies DemoRes);
       if (!bypass) setDemoCookie(res, usedAttempts);
       return res;
@@ -479,19 +512,31 @@ export async function POST(req: Request) {
     const answer = toDemoAnswer(core.answer);
 
     if (!answer) {
+      await releaseDeviceAttempt(reservationDb, reservedDeviceKey);
+      reservedDeviceKey = null;
       return NextResponse.json({ ok: false, error: "AI returned empty response" } satisfies DemoRes, { status: 502 });
     }
 
+    keepReservation = true;
     const res = NextResponse.json({ ok: true, answer, usedAttempts } satisfies DemoRes);
     if (!bypass) setDemoCookie(res, usedAttempts);
     return res;
-  } catch (e: any) {
-    const msg = String(e?.message ?? "");
+  } catch (e: unknown) {
+    if (!keepReservation) {
+      await releaseDeviceAttempt(reservationDb, reservedDeviceKey);
+    }
+
+    const errorName =
+      e && typeof e === "object" && "name" in e ? String(e.name ?? "") : "";
+    const msg =
+      e && typeof e === "object" && "message" in e ? String(e.message ?? "") : "";
+    const cause =
+      e && typeof e === "object" && "cause" in e ? String(e.cause ?? "") : "";
     const aborted =
-      e?.name === "AbortError" ||
+      errorName === "AbortError" ||
       /aborted/i.test(msg) ||
       msg.includes("DEMO_TIMEOUT") ||
-      String(e?.cause ?? "").includes("DEMO_TIMEOUT");
+      cause.includes("DEMO_TIMEOUT");
 
       // ★追加：Abort以外の500原因をVercelログに出す
     if (!aborted) console.error("[demo-chat]", e);
