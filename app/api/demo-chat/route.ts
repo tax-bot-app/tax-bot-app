@@ -135,34 +135,41 @@ function stripHeadLine(line: string): string {
 function pickBullets(lines: string[], max: number): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
+  let current = "";
+
+  const pushCurrent = () => {
+    const t = current.trim();
+    current = "";
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
 
   for (const line of lines) {
-    let t = (line ?? "").trim();
-    if (!t) continue;
+    const raw = (line ?? "").trim();
+    if (!raw) continue;
 
-    // 見出し行（✅要点 ... / ⚠️注意 ...）も中身があれば拾う
-    if (/^[✅⚠️]/.test(t)) {
-      t = stripHeadLine(t);
-      if (t && !seen.has(t)) {
-        seen.add(t);
-        out.push(t);
-      }
-      if (out.length >= max) break;
+    if (/^[✅⚠️]/u.test(raw)) {
+      pushCurrent();
+      current = stripHeadLine(raw);
       continue;
     }
 
-    // 箇条書き
-    t = t.replace(/^[-・*]\s*/, "").trim();
-    if (!t) continue;
-
-    if (!seen.has(t)) {
-      seen.add(t);
-      out.push(t);
+    if (/^[-・*]\s*/u.test(raw)) {
+      pushCurrent();
+      current = raw.replace(/^[-・*]\s*/u, "").trim();
+      continue;
     }
-    if (out.length >= max) break;
-  }
 
-  return out.slice(0, max);
+    // AIが箇条書きの途中で改行した場合も、同じ項目としてつなぐ。
+    if (current) current += raw.match(/^[、。）」』]/u) ? raw : ` ${raw}`;
+  }
+  pushCurrent();
+
+  // 読点や接続助詞で終わる不完全な項目は、デモ画面へ出さない。
+  return out
+    .filter((t) => !/[、,：:]$/u.test(t) && !/(でも|ただし|一方で|また|かつ)$/u.test(t))
+    .slice(0, max);
 }
 
 function stripLinesAndCatchphrase(text: string): string {
@@ -218,6 +225,21 @@ function sanitizeDemoFormatting(s: string): string {
   // 箇条書きの "- " を「・」に変える（残したいならここは消さなくてOK）
   t = t.replace(/(^|\n)\s*-\s+/g, "$1・");
   return t;
+}
+
+function clampDemoAnswer(text: string): string {
+  const s = String(text ?? "").trim();
+  if (s.length <= DEMO_MAX_OUTPUT) return s;
+
+  const head = s.slice(0, DEMO_MAX_OUTPUT);
+  const boundaries = ["\n", "。", "！", "？"];
+  const cutAt = Math.max(...boundaries.map((mark) => head.lastIndexOf(mark)));
+
+  // 文章の途中を見せるより、直前の完結した文で止める。
+  if (cutAt >= Math.floor(DEMO_MAX_OUTPUT * 0.6)) {
+    return head.slice(0, cutAt + 1).trimEnd();
+  }
+  return `${head.trimEnd()}…`;
 }
 
 function toDemoAnswer(full: string): string {
@@ -339,8 +361,7 @@ function toDemoAnswer(full: string): string {
 
   let s = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   s = sanitizeDemoFormatting(s);
-  if (s.length > DEMO_MAX_OUTPUT) s = s.slice(0, DEMO_MAX_OUTPUT).trimEnd() + "…";
-  return s;
+  return clampDemoAnswer(s);
 }
 
 export async function POST(req: Request) {

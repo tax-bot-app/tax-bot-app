@@ -812,7 +812,7 @@ const bypass = (() => {
 
           <div style={styles.expertCard}>
             <img
-              src="/ai-noguchi-hero.PNG"
+              src="/ai-noguchi-signup.PNG"
               alt="税理士 野口集平"
               style={styles.expertPhoto}
             />
