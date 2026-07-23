@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { judgeGuardrails } from "../../lib2/guardrails";
 import { buildAnswerCore } from "../chat/route";
+import { completeDemoAttempt } from "../../lib/demoAttemptLifecycle";
 import crypto from "crypto";
 
 export const runtime = "nodejs";
@@ -490,33 +491,42 @@ export async function POST(req: Request) {
 
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort("DEMO_TIMEOUT"), DEMO_TIMEOUT_MS);
-    let core;
-    try {
-      core = await buildAnswerCore({
-        mode: "demo",
-        db,
-        userId,
-        convId,
-        message,
-        dialect: "standard",
-        stance: "sanbo",
-        gr,
-        topicMode,
-        persistDebug: false,
-        signal: ac.signal, // ★追加
-      });
-    } finally {
-      clearTimeout(t);
-    }
+    const attemptResult = await completeDemoAttempt({
+      generate: async () => {
+        try {
+          return await buildAnswerCore({
+            mode: "demo",
+            db,
+            userId,
+            convId,
+            message,
+            dialect: "standard",
+            stance: "sanbo",
+            gr,
+            topicMode,
+            persistDebug: false,
+            signal: ac.signal,
+          });
+        } finally {
+          clearTimeout(t);
+        }
+      },
+      normalizeAnswer: (core) => toDemoAnswer(core.answer),
+      releaseReservation: () =>
+        releaseDeviceAttempt(reservationDb, reservedDeviceKey),
+    });
 
-    const answer = toDemoAnswer(core.answer);
-
-    if (!answer) {
-      await releaseDeviceAttempt(reservationDb, reservedDeviceKey);
+    if (attemptResult.kind === "empty") {
       reservedDeviceKey = null;
       return NextResponse.json({ ok: false, error: "AI returned empty response" } satisfies DemoRes, { status: 502 });
     }
 
+    if (attemptResult.kind === "error") {
+      reservedDeviceKey = null;
+      throw attemptResult.error;
+    }
+
+    const answer = attemptResult.answer;
     keepReservation = true;
     const res = NextResponse.json({ ok: true, answer, usedAttempts } satisfies DemoRes);
     if (!bypass) setDemoCookie(res, usedAttempts);
