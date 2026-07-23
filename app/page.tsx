@@ -335,42 +335,46 @@ const bypass = (() => {
   };
 
   const styles: Record<string, React.CSSProperties> = {
-    wrap: { minHeight: "100vh", background: "#F6F7FB", color: "#0B1220" },
-    container: { maxWidth: 980, margin: "0 auto", padding: "18px 16px 70px" },
+    wrap: {
+      minHeight: "100vh",
+      background: "radial-gradient(circle at 78% 12%, rgba(197,151,65,0.08), transparent 30%), #F8F4EC",
+      color: "#112B46",
+    },
+    container: { maxWidth: 1180, margin: "0 auto", padding: "0 24px 80px" },
 
     header: {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
       gap: 12,
-      padding: "10px 0 14px",
+      padding: "16px 0",
       position: "sticky",
       top: 0,
-      background: "rgba(246,247,251,0.92)",
+      background: "rgba(248,244,236,0.94)",
       backdropFilter: "blur(10px)",
       zIndex: 10,
-      borderBottom: "1px solid #E6EAF2",
+      borderBottom: "1px solid rgba(176,132,52,0.28)",
     },
-    brand: { display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "#0B1220" },
+    brand: { display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "#112B46" },
     brandLogo: { height: 26, width: "auto", display: "block" },
 
     nav: { display: "flex", alignItems: "center", gap: 10, position: "relative" },
     btnGhost: {
-      border: "1px solid #D7DEEA",
-      background: "#fff",
-      color: "#0B1220",
-      borderRadius: 12,
+      border: "1px solid rgba(17,43,70,0.18)",
+      background: "rgba(255,255,255,0.72)",
+      color: "#112B46",
+      borderRadius: 8,
       padding: "10px 12px",
       cursor: "pointer",
       fontWeight: 800,
       lineHeight: 1,
     },
     btnPrimary: {
-      border: "1px solid rgba(0,0,0,0.06)",
-      background: "#1E5EFF",
+      border: "1px solid #173A5E",
+      background: "#173A5E",
       color: "#fff",
-      borderRadius: 14,
-      padding: "12px 14px",
+      borderRadius: 8,
+      padding: "13px 18px",
       cursor: "pointer",
       fontWeight: 900,
       lineHeight: 1,
@@ -400,39 +404,33 @@ const bypass = (() => {
     },
 
     hero: {
-  display: "grid",
-  gridTemplateColumns: "1.05fr 0.95fr",
-  columnGap: 18,
-  rowGap: 10,
-  alignItems: "start",
-  padding: "16px 0 6px",
-  gridTemplateAreas: `
-    "img  copy"
-    "cap  copy"
-  `,
-},
+      display: "flex",
+      flexDirection: "column",
+      padding: "54px 0 8px",
+    },
 
     heroCard: {
-      padding: 6,
+      padding: 0,
       background: "transparent",
       boxShadow: "none",
       display: "flex",
       flexDirection: "column",
       justifyContent: "center",
     },
-    h1: { fontSize: 34, lineHeight: 1.15, margin: 0, letterSpacing: "-0.02em", color: "#0B1220" },
-    sub: { color: "rgba(11,18,32,0.72)", marginTop: 10, marginBottom: 0, lineHeight: 1.7 },
+    h1: { fontSize: 44, lineHeight: 1.28, margin: 0, letterSpacing: "0.01em", color: "#112B46" },
+    sub: { color: "rgba(17,43,70,0.76)", marginTop: 20, marginBottom: 0, lineHeight: 1.9 },
 
     heroActions: { display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" },
 
     // ✅ 角丸なし/影なし（貼り付け感を消すのは “SPフルブリード” で解決）
     heroImgBox: {
       border: 0,
-      borderRadius: 0,
+      borderRadius: 18,
       overflow: "hidden",
       background: "#fff",
-      minHeight: 300,
-      boxShadow: "none",
+      minHeight: 230,
+      maxHeight: 270,
+      boxShadow: "0 16px 42px rgba(17,43,70,0.08)",
     },
     heroImg: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "top center", display: "block" },
 
@@ -440,8 +438,8 @@ const bypass = (() => {
     aiCaptionTitle: { fontWeight: 950, fontSize: 14, margin: 0, color: "#0B1220" },
     aiCaptionSub: { color: "rgba(11,18,32,0.72)", marginTop: 6, marginBottom: 0, lineHeight: 1.6, fontSize: 13 },
 
-    section: { marginTop: 22 },
-    sectionTitle: { fontSize: 18, margin: "0 0 10px", letterSpacing: "0.02em", color: "#0B1220" },
+    section: { marginTop: 36 },
+    sectionTitle: { fontSize: 18, margin: "0 0 12px", letterSpacing: "0.08em", color: "#112B46" },
 
     expertCard: {
       display: "grid",
@@ -450,9 +448,9 @@ const bypass = (() => {
       alignItems: "center",
       marginBottom: 12,
       padding: 14,
-      borderRadius: 18,
-      border: "1px solid #E6EAF2",
-      background: "#fff",
+      borderRadius: 14,
+      border: "1px solid rgba(176,132,52,0.30)",
+      background: "rgba(255,255,255,0.74)",
     },
     expertPhoto: {
       width: 88,
@@ -467,7 +465,7 @@ const bypass = (() => {
       fontSize: 16,
       fontWeight: 950,
       lineHeight: 1.5,
-      color: "#0B1220",
+      color: "#112B46",
     },
     expertMeta: {
       margin: "5px 0 0",
@@ -477,23 +475,23 @@ const bypass = (() => {
     },
 
     chatShell: {
-      borderRadius: 18,
-      border: "1px solid #E6EAF2",
-      background: "#fff",
+      borderRadius: 16,
+      border: "1px solid rgba(17,43,70,0.16)",
+      background: "rgba(255,255,255,0.88)",
       overflow: "hidden",
-      boxShadow: "0 18px 40px rgba(15, 23, 42, 0.08)",
+      boxShadow: "0 24px 60px rgba(17,43,70,0.10)",
     },
     chatTop: {
       padding: "12px 14px",
-      borderBottom: "1px solid #E6EAF2",
+      borderBottom: "1px solid rgba(176,132,52,0.24)",
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
       gap: 10,
-      background: "#fff",
+      background: "rgba(255,253,248,0.92)",
     },
     chatTopLeft: { display: "flex", alignItems: "center", gap: 10 },
-    dot: { width: 9, height: 9, borderRadius: 99, background: "rgba(30,94,255,0.55)" },
+    dot: { width: 9, height: 9, borderRadius: 99, background: "#B58A3A" },
     chatBody: { padding: 14, display: "grid", gap: 10 },
 
     bubbleBot: {
@@ -526,8 +524,8 @@ const bypass = (() => {
       maxWidth: "90%",
       padding: "10px 12px",
       borderRadius: 16,
-      background: "rgba(30,94,255,0.10)",
-      border: "1px solid rgba(30,94,255,0.18)",
+      background: "rgba(23,58,94,0.08)",
+      border: "1px solid rgba(23,58,94,0.16)",
       whiteSpace: "pre-wrap",
       lineHeight: 1.6,
       color: "#0B1220",
@@ -561,14 +559,14 @@ const bypass = (() => {
     exampleCard: {
       marginTop: 16,
       padding: "18px 16px",
-      borderRadius: 18,
-      border: "1px solid #E6EAF2",
-      background: "#fff",
-      boxShadow: "0 18px 40px rgba(15, 23, 42, 0.06)",
+      borderRadius: 14,
+      border: "1px solid rgba(176,132,52,0.28)",
+      background: "rgba(255,255,255,0.78)",
+      boxShadow: "0 18px 44px rgba(17,43,70,0.06)",
     },
     exampleLabel: {
       margin: 0,
-      color: "rgba(30,94,255,0.82)",
+      color: "#9A7027",
       fontSize: 13,
       fontWeight: 900,
       letterSpacing: "0.03em",
@@ -589,8 +587,8 @@ const bypass = (() => {
     upgradeCard: {
       marginTop: 14,
       borderRadius: 18,
-      border: "1px solid rgba(30,94,255,0.22)",
-      background: "linear-gradient(180deg, rgba(30,94,255,0.07), rgba(255,255,255,0.96))",
+      border: "1px solid rgba(176,132,52,0.30)",
+      background: "linear-gradient(180deg, rgba(197,151,65,0.10), rgba(255,255,255,0.94))",
       padding: "18px 16px",
     },
     upgradeTitle: {
@@ -744,6 +742,7 @@ const bypass = (() => {
           </nav>
         </header>
 
+        <div className="introGrid">
         {/* Hero */}
         <section id="hero" style={styles.hero}>
           <div className="heroImgFullBleed" style={{ ...styles.heroImgBox, gridArea: "img" }}>
@@ -762,23 +761,23 @@ const bypass = (() => {
 </p>
 </div>
 
-<div style={{ ...styles.heroCard, gridArea: "copy" }}>
+<div className="heroCopy" style={{ ...styles.heroCard, gridArea: "copy" }}>
+  <p className="eyebrow">経営者のためのAI税務相談</p>
   <h1
+  className="heroTitle"
   style={{
     ...styles.h1,
-    textAlign: "center",
-    fontSize: 28,
-    lineHeight: 1.15,
+    textAlign: "left",
   }}
 >
-  <span style={{ display: "block" }}>『ダメです。』のひと言で</span>
-  <span style={{ display: "block" }}>諦めていませんか？</span>
+  <span style={{ display: "block" }}>税理士はそのまま。</span>
+  <span style={{ display: "block" }}>相談だけ、もう一段。</span>
 </h1>
 
             <p style={styles.sub}>
-              ・税理士はそのまま。相談だけ、もう一段。
-              <br />
-              ・自社に合う可能性を、ちゃんと見極める。
+              税務判断を、税務調査の現実まで踏まえて整理する、
+              <br className="desktopBreak" />
+              経営者向けAI税務相談です。
             </p>
 
             <div style={styles.heroActions}>
@@ -878,7 +877,10 @@ const bypass = (() => {
                 </button>
               </div>
           </div>
+        </section>
+        </div>
 
+        <section className="contentSection">
           <article style={styles.exampleCard} aria-labelledby="example-trip-allowance">
             <p style={styles.exampleLabel}>相談例・回答例</p>
             <h3 id="example-trip-allowance" style={styles.exampleQuestion}>
@@ -1060,28 +1062,102 @@ const bypass = (() => {
     scroll-margin-top: 78px;
   }
 
+  .introGrid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.92fr) minmax(420px, 1.08fr);
+    gap: 52px;
+    align-items: start;
+    padding: 18px 0 14px;
+  }
+
+  .introGrid #demo {
+    margin-top: 24px !important;
+  }
+
+  #hero .heroCopy {
+    order: 1;
+  }
+
+  #hero .heroImgFullBleed {
+    order: 2;
+    margin-top: 30px;
+  }
+
+  #hero .heroCapFullBleed {
+    order: 3;
+  }
+
+  .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 22px;
+    color: #9A7027;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+  }
+
+  .eyebrow::before,
+  .eyebrow::after {
+    content: "";
+    width: 34px;
+    height: 1px;
+    background: #B58A3A;
+  }
+
+  .contentSection {
+    max-width: 920px;
+    margin: 34px auto 0;
+  }
+
   @media (max-width: 860px) {
+    .introGrid {
+      grid-template-columns: 1fr;
+      gap: 6px;
+      padding-top: 0;
+    }
+
+    .introGrid #demo {
+      margin-top: 14px !important;
+    }
+
     #hero {
-      grid-template-columns: 1fr !important;
-      grid-template-areas:
-        "img"
-        "cap"
-        "copy" !important;
+      padding-top: 28px !important;
     }
 
-    /* ✅ SP：ヒーロー画像を左右フルブリード */
+    #hero .heroTitle {
+      font-size: 34px !important;
+      line-height: 1.35 !important;
+    }
+
     #hero .heroImgFullBleed {
-      margin-left: -16px;
-      margin-right: -16px;
-      min-height: 240px !important;
+      min-height: 220px !important;
+      margin-top: 24px;
     }
 
-    /* ✅ SP：説明も画像と同じ幅に（“画像の直下”感が出る） */
     #hero .heroCapFullBleed {
-      margin-left: -16px;
-      margin-right: -16px;
-      padding-left: 16px;
-      padding-right: 16px;
+      padding: 0 8px;
+    }
+
+    .eyebrow {
+      margin-bottom: 16px;
+      font-size: 12px;
+    }
+
+    .desktopBreak {
+      display: none;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .introGrid {
+      margin-left: -8px;
+      margin-right: -8px;
+    }
+
+    #hero .heroTitle {
+      font-size: 30px !important;
     }
   }
 `}</style>
