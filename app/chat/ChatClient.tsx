@@ -290,6 +290,7 @@ const startCheckoutFromChat = async (planKey: PlanKey) => {
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const [plan, setPlan] = useState<string>("(loading)");
+  const [statusLoaded, setStatusLoaded] = useState(false);
   const [usedTalks, setUsedTalks] = useState<number | null>(null);
   const [limitTalks, setLimitTalks] = useState<number | null>(null);
 
@@ -515,6 +516,10 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
       setPlan(json.plan);
       setUsedTalks(json.used_talks);
       setLimitTalks(json.limit_talks);
+      setStatusLoaded(true);
+      if (String(json.plan).toLowerCase() === "free") {
+        setPlanSheetOpen(true);
+      }
     } catch (e: any) {
       if (await handleAuthishError(e)) return;
       setErrMsg(e?.message || "status failed");
@@ -704,7 +709,8 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
 
   const canSend = (() => {
     if (loading) return false;
-    if (!limitTalks) return true;
+    if (!statusLoaded || String(plan).toLowerCase() === "free") return false;
+    if (limitTalks === null) return true;
     const used = usedTalks ?? 0;
     return used < limitTalks;
   })();
@@ -812,6 +818,11 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
   const sendMessage = async (overrideText?: string) => {
     const text = String(overrideText ?? input).trim();
     if (!text) return;
+    if (!statusLoaded || String(plan).toLowerCase() === "free") {
+      setErrMsg("プランを選択すると相談できます。");
+      setPlanSheetOpen(true);
+      return;
+    }
     if (text.length > MAX_INPUT_LENGTH) {
       showToast(`文字数オーバーです（最大 ${MAX_INPUT_LENGTH} 文字）`);
       return;
@@ -864,6 +875,15 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
       if (!json) throw new Error(`chat failed: ${res.status}`);
 
       if (json.ok !== true) {
+        if (res.status === 403) {
+          setMessages((prev) => prev.filter((m) => m.id !== tempUser.id));
+          setErrMsg("プランを選択すると相談できます。");
+          setPlan("free");
+          setUsedTalks(0);
+          setLimitTalks(0);
+          setPlanSheetOpen(true);
+          return;
+        }
         setErrMsg(json.error || `chat failed: ${res.status}`);
         return;
       }
@@ -1239,6 +1259,16 @@ const goFeedbackReport = () => {
             </div>
 
             {errMsg && <div className="errorLine">{errMsg}</div>}
+            {statusLoaded && String(plan).toLowerCase() === "free" && (
+              <button
+                type="button"
+                className="errorLine"
+                style={{ width: "100%", cursor: "pointer", textAlign: "center" }}
+                onClick={() => setPlanSheetOpen(true)}
+              >
+                相談を始めるにはプランを選択してください
+              </button>
+            )}
 
             <div
               ref={msgsRef}
@@ -1388,7 +1418,13 @@ const goFeedbackReport = () => {
         }}
         maxLength={MAX_INPUT_LENGTH}
         // Enter送信は無効（誤爆防止）。送信はボタンのみ。
-        placeholder={loading ? "回答中…" : "相談内容を入力"}
+        placeholder={
+          statusLoaded && String(plan).toLowerCase() === "free"
+            ? "プラン選択後に相談できます"
+            : loading
+              ? "回答中…"
+              : "相談内容を入力"
+        }
         className="chatInput"
         disabled={!canSend}
       />
@@ -1437,7 +1473,13 @@ const goFeedbackReport = () => {
         }}
         disabled={!canSend}
       >
-        <span className="dockPlaceholder">{loading ? "回答中…" : "相談内容を入力"}</span>
+        <span className="dockPlaceholder">
+          {statusLoaded && String(plan).toLowerCase() === "free"
+            ? "プラン選択後に相談できます"
+            : loading
+              ? "回答中…"
+              : "相談内容を入力"}
+        </span>
       </button>
 
       <button

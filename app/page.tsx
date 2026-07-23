@@ -140,8 +140,12 @@ export default function Home() {
   useEffect(() => {
     const used = getDemoCountByCookieOrLS();
     setDemoUsed(used);
-    if (used > 0) {
+    const showPlans = new URLSearchParams(window.location.search).get("plans") === "1";
+    if (used > 0 || showPlans) {
       setPlansOpen(true);
+    }
+    if (showPlans) {
+      window.setTimeout(() => plansRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     }
   }, []);
 

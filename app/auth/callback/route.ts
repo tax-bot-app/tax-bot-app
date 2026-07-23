@@ -23,7 +23,7 @@ export async function GET(req: Request) {
   const code = url.searchParams.get("code");
 
   const res = NextResponse.redirect(
-    new URL(safePlan ? `/checkout?plan=${encodeURIComponent(safePlan)}` : "/chat", url.origin)
+    new URL(safePlan ? `/checkout?plan=${encodeURIComponent(safePlan)}` : "/?plans=1", url.origin)
   );
 
   if (!code) {
