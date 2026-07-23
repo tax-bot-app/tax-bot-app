@@ -102,6 +102,7 @@ async function getDeviceId(): Promise<string | null> {
 
 export default function Home() {
   const demoRef = useRef<HTMLElement | null>(null);
+  const demoInputRef = useRef<HTMLTextAreaElement | null>(null);
   const plansRef = useRef<HTMLElement | null>(null);
 
   const [fatal, setFatal] = useState<string | null>(null);
@@ -118,6 +119,7 @@ export default function Home() {
   const demoLimitReached = demoUsed >= DEMO_MAX_ATTEMPTS;
   const [demoAnswer, setDemoAnswer] = useState<string | null>(null);
   const [demoError, setDemoError] = useState<string | null>(null);
+  const [demoAnsweredThisSession, setDemoAnsweredThisSession] = useState(false);
 
   // plans
   const [agreed, setAgreed] = useState(false);
@@ -220,6 +222,11 @@ export default function Home() {
 
   const onClickFreeTry = () => scrollTo(demoRef.current);
 
+  const onClickExampleTry = () => {
+    scrollTo(demoRef.current);
+    window.setTimeout(() => demoInputRef.current?.focus(), 500);
+  };
+
   const onClickShowPlans = () => {
     setPlansOpen(true);
     setTimeout(() => scrollTo(plansRef.current), 50);
@@ -227,6 +234,7 @@ export default function Home() {
 
   const submitDemo = async () => {
     setDemoError(null);
+    setDemoAnsweredThisSession(false);
     if (demoLimitReached) {
       setDemoAnswer("無料体験は3回までです。続きはプランから整理できます。");
       setPlansOpen(true);
@@ -283,6 +291,7 @@ const bypass = (() => {
 
       setDemoAnswer(json.answer);
       setDemoUsed(json.usedAttempts);
+      setDemoAnsweredThisSession(true);
       markDemoCountCookieAndLS(json.usedAttempts);
 
       // ✅ デモ回答表示後は、ユーザーの視線を回答に固定（自動スクロールしない）
@@ -434,6 +443,39 @@ const bypass = (() => {
     section: { marginTop: 22 },
     sectionTitle: { fontSize: 18, margin: "0 0 10px", letterSpacing: "0.02em", color: "#0B1220" },
 
+    expertCard: {
+      display: "grid",
+      gridTemplateColumns: "88px 1fr",
+      gap: 14,
+      alignItems: "center",
+      marginBottom: 12,
+      padding: 14,
+      borderRadius: 18,
+      border: "1px solid #E6EAF2",
+      background: "#fff",
+    },
+    expertPhoto: {
+      width: 88,
+      height: 88,
+      borderRadius: 16,
+      objectFit: "cover",
+      objectPosition: "24% 42%",
+      display: "block",
+    },
+    expertTitle: {
+      margin: 0,
+      fontSize: 16,
+      fontWeight: 950,
+      lineHeight: 1.5,
+      color: "#0B1220",
+    },
+    expertMeta: {
+      margin: "5px 0 0",
+      color: "rgba(11,18,32,0.72)",
+      fontSize: 13,
+      lineHeight: 1.7,
+    },
+
     chatShell: {
       borderRadius: 18,
       border: "1px solid #E6EAF2",
@@ -515,6 +557,49 @@ const bypass = (() => {
     },
 
     small: { color: "rgba(11,18,32,0.62)", fontSize: 12, lineHeight: 1.6, marginTop: 10 },
+
+    exampleCard: {
+      marginTop: 16,
+      padding: "18px 16px",
+      borderRadius: 18,
+      border: "1px solid #E6EAF2",
+      background: "#fff",
+      boxShadow: "0 18px 40px rgba(15, 23, 42, 0.06)",
+    },
+    exampleLabel: {
+      margin: 0,
+      color: "rgba(30,94,255,0.82)",
+      fontSize: 13,
+      fontWeight: 900,
+      letterSpacing: "0.03em",
+    },
+    exampleQuestion: {
+      margin: "7px 0 0",
+      fontSize: 20,
+      lineHeight: 1.5,
+      color: "#0B1220",
+    },
+    exampleAnswer: {
+      marginTop: 14,
+      paddingTop: 14,
+      borderTop: "1px solid #E6EAF2",
+      color: "rgba(11,18,32,0.84)",
+      lineHeight: 1.8,
+    },
+    upgradeCard: {
+      marginTop: 14,
+      borderRadius: 18,
+      border: "1px solid rgba(30,94,255,0.22)",
+      background: "linear-gradient(180deg, rgba(30,94,255,0.07), rgba(255,255,255,0.96))",
+      padding: "18px 16px",
+    },
+    upgradeTitle: {
+      margin: 0,
+      color: "#0B1220",
+      fontSize: 18,
+      fontWeight: 950,
+      lineHeight: 1.5,
+    },
 
     warn: {
       marginTop: 10,
@@ -725,6 +810,22 @@ const bypass = (() => {
         >
           <h2 style={styles.sectionTitle}>無料体験（3回）</h2>
 
+          <div style={styles.expertCard}>
+            <img
+              src="/ai-noguchi-hero.PNG"
+              alt="税理士 野口集平"
+              style={styles.expertPhoto}
+            />
+            <div>
+              <p style={styles.expertTitle}>税理士・野口集平の判断軸をもとに回答します</p>
+              <p style={styles.expertMeta}>
+                税理士法人GLADZ代表<br />
+                大手ドラッグストアチェーン顧問税理士<br />
+                法人税務・税務調査対応の実務経験をもとに、「できる・できない」だけでなく、現実的な線引きを整理します。
+              </p>
+            </div>
+          </div>
+
           <div style={styles.chatShell}>
             <div style={styles.chatTop}>
               <div style={styles.chatTopLeft}>
@@ -747,12 +848,13 @@ const bypass = (() => {
               {demoError && <div style={styles.warn}>{demoError}</div>}
 
               <div style={styles.small}>
-                無料体験の回答は短めです。有料プランでは金額レンジの具体化や『線引き』までさらに踏み込んで整理します。
+                無料体験では、考え方の入口まで整理します。
               </div>
             </div>
 
             <div style={styles.inputRow}>
                 <textarea
+                  ref={demoInputRef}
                   value={demoInput}
                   onChange={(e) => setDemoInput(e.target.value)}
                   placeholder="相談内容を入力してください"
@@ -777,24 +879,72 @@ const bypass = (() => {
               </div>
           </div>
 
-          {demoDone && (
-            <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid #E6EAF2", background: "#fff", padding: 14 }}>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>※ 有料サービスでは</div>
-              <ul style={{ margin: "0 0 10px 18px", color: "rgba(11,18,32,0.82)", lineHeight: 1.7 }}>
-                <li>✅金額レンジの具体化</li>
-                <li>✅条件分岐ごとの実務整理</li>
-                <li>✅税務調査目線での想定問答</li>
+          <article style={styles.exampleCard} aria-labelledby="example-trip-allowance">
+            <p style={styles.exampleLabel}>相談例・回答例</p>
+            <h3 id="example-trip-allowance" style={styles.exampleQuestion}>
+              出張日当を1日2万円にしても大丈夫ですか？
+            </h3>
+
+            <div style={styles.exampleAnswer}>
+              <p style={{ margin: 0 }}>
+                <strong>1日2万円に設定できる可能性はあります。</strong>
+                <br />
+                ただし、旅費規程に書けば、その全額が自動的に非課税になるわけではありません。
+              </p>
+
+              <ul style={{ margin: "12px 0 0 20px", padding: 0 }}>
+                <li>
+                  出張日当は、出張に通常必要と認められる範囲であれば、給与として課税されない可能性があります。
+                </li>
+                <li>
+                  金額の妥当性は、役員と従業員のバランスや、同業・同規模の会社と比べて不自然でないかなどから判断されます。
+                </li>
               </ul>
 
-              <div style={{ color: "rgba(11,18,32,0.82)", lineHeight: 1.7 }}>
-                ☞このテーマ、放置すると “なんとなく不安” が残ります。
+              <p style={{ margin: "12px 0 0" }}>
+                <strong>注意したいのは、社長だけが2万円で、従業員との差が大きいケースです。</strong>
                 <br />
-                いま整理しますか？
-              </div>
+                出張の距離や日数に関係なく一律に支給している場合も、税務調査では理由を聞かれやすくなります。
+              </p>
+
+              <p style={{ margin: "12px 0 0" }}>
+                御社で2万円が現実的か整理するには、会社規模・従業員数、役員報酬、出張先や頻度、交通費・宿泊費の精算方法、旅費規程の内容を確認する必要があります。
+              </p>
+
+              <p style={{ margin: "12px 0 0", fontWeight: 900, color: "#0B1220" }}>
+                条件を確認しながら、無理のない金額と運用方法を整理しましょう。
+              </p>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <button style={styles.btnPrimary} onClick={onClickExampleTry}>
+                自社の場合を相談してみる
+              </button>
+            </div>
+          </article>
+
+          {demoAnsweredThisSession && (
+            <div style={styles.upgradeCard}>
+              <p style={{ margin: 0, color: "rgba(11,18,32,0.78)", lineHeight: 1.7 }}>
+                無料体験では、考え方の入口まで整理しました。
+                <br />
+                有料版では、この相談を次の段階まで具体化できます。
+              </p>
+
+              <ul style={{ margin: "14px 0 0 20px", padding: 0, color: "rgba(11,18,32,0.88)", lineHeight: 1.8 }}>
+                <li>あなたの会社の金額・運用条件に沿った線引き</li>
+                <li>税務上認められやすくするための必要書類</li>
+                <li>税務調査で聞かれそうな点と、その説明方法</li>
+                <li>顧問税理士へ確認するときの質問文</li>
+              </ul>
+
+              <p style={{ ...styles.upgradeTitle, marginTop: 14 }}>
+                この相談を、そのまま続けますか？
+              </p>
 
               <div style={{ marginTop: 12 }}>
                 <button style={styles.btnPrimary} onClick={onClickShowPlans}>
-                  プランを確認する
+                  この相談の続きを整理する
                 </button>
               </div>
             </div>
