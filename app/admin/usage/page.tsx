@@ -72,12 +72,12 @@ function diffMonthsInclusive(fromISO: string | null | undefined, toMonthKey: str
   return Math.max(diff + 1, 1);
 }
 
-// ★想定売上（円/月）— 管理画面用。必要なら数値だけ差し替え。
+// 想定売上（円/月）— 管理画面用。
 const PLAN_PRICE_YEN: Record<string, number> = {
   free: 0,
-  lite: 3300,
-  standard: 16500, // ←あなたの想定（値下げで6000にする計画あり）
-  enterprise: 0,   // ←ここは後で決める。いったん0でも動く
+  lite: 1480,
+  standard: 4800,
+  enterprise: 9800,
 };
 
 function priceFor(planRaw: string | null | undefined): number {

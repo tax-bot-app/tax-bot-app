@@ -17,30 +17,30 @@ const PLANS: Array<{
   { 
   key: "lite", 
   title: "Lite", 
-  priceLabel: "月額3,300円（税込）", 
+  priceLabel: "月額1,480円（税込）", 
   quotaLabel: "月5回まで", 
   note: "まずは様子見で始めたい方へ。確認や不安の切り分けに。※いつでもアップグレード可能。" 
 },
 { 
   key: "standard", 
   title: "Standard", 
-  priceLabel: "月額16,500円（税込）", 
+  priceLabel: "月額4,800円（税込）", 
   quotaLabel: "月30回まで", 
   note:  "一番選ばれているプラン。自社向けの具体的な線引きまで整理したい方へ。"
 },
 { 
   key: "enterprise", 
   title: "Enterprise", 
-  priceLabel: "月額33,000円（税込）", 
+  priceLabel: "月額9,800円（税込）", 
   quotaLabel: "月100回まで", 
   note: "複数担当・継続運用向け。社内共有や定例相談の補助に。" 
 },
 ];
 
 const PLAN_META_PRICE: Record<Plan, number> = {
-  lite: 3300,
-  standard: 16500,
-  enterprise: 33000,
+  lite: 1480,
+  standard: 4800,
+  enterprise: 9800,
 };
 
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };

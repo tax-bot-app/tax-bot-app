@@ -1,5 +1,25 @@
 # さじかげん｜運用RUNBOOK
 
+## Stripe料金設定
+
+Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployする。
+
+- `PRICE_ID_LITE_NEXT`: 月額1,480円（税込）
+- `PRICE_ID_STANDARD_NEXT`: 月額4,800円（税込）
+- `PRICE_ID_ENTERPRISE_NEXT`: 月額9,800円（税込）
+
+旧Price IDは、新料金での本番決済、Webhook同期、利用回数、Customer Portalを確認するまで削除・アーカイブしない。
+
+### 新料金の本番確認
+
+1. トップの表示価格がStripe Checkoutの金額と一致することを3プランすべて確認
+2. 各プランでCheckoutを実行し、新しいPrice IDが使われることを確認
+3. Webhook成功後、`users.plan`と`monthly_quota`が正しいことを確認
+4. Liteは5回、Standardは30回、Enterpriseは100回になっていることを確認
+5. Customer Portalで契約内容と金額を確認
+6. 管理画面の想定売上が新料金で集計されることを確認
+7. 問題がなければStripeの旧価格をアーカイブ
+
 ## OpenAIモデル設定
 
 Vercel Productionに次を設定し、変更後はRedeployする。

@@ -34,14 +34,14 @@ function envRequired(name: string): string {
 /**
  * Plan -> Stripe PriceId（test/live は Vercel 環境で分離）
  * ENV names:
- * - PRICE_ID_LITE
- * - PRICE_ID_STANDARD
- * - PRICE_ID_ENTERPRISE
+ * - PRICE_ID_LITE_NEXT
+ * - PRICE_ID_STANDARD_NEXT
+ * - PRICE_ID_ENTERPRISE_NEXT
  */
 const PRICE_ID_BY_PLAN: Partial<Record<Exclude<PlanKey, "free">, string>> = {
-  lite: envOptional("PRICE_ID_LITE") ?? undefined,
-  standard: envOptional("PRICE_ID_STANDARD") ?? undefined,
-  enterprise: envOptional("PRICE_ID_ENTERPRISE") ?? undefined,
+  lite: envOptional("PRICE_ID_LITE_NEXT") ?? undefined,
+  standard: envOptional("PRICE_ID_STANDARD_NEXT") ?? undefined,
+  enterprise: envOptional("PRICE_ID_ENTERPRISE_NEXT") ?? undefined,
 };
 
 export function getPriceId(planKey: PlanKey): string {
@@ -51,7 +51,7 @@ export function getPriceId(planKey: PlanKey): string {
   if (id) return id;
 
   // fallback (still ENV-driven; gives clearer error)
-  return envRequired(`PRICE_ID_${String(planKey).toUpperCase()}`);
+  return envRequired(`PRICE_ID_${String(planKey).toUpperCase()}_NEXT`);
 }
 
 export const PLAN_MASTER: Record<PlanKey, PlanDefinition> = {
