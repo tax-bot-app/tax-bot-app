@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+import {
+  createServerClient,
+  type CookieOptions,
+} from "@supabase/ssr";
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // ===== 0) allowlist（常に通す：ループ防止＆ログイン導線確保） =====
@@ -31,13 +34,19 @@ export async function middleware(req: NextRequest) {
   }
 
   // ===== 1) Supabase SSR（セッション同期維持） =====
-  let res = NextResponse.next();
+  const res = NextResponse.next();
 
-res.headers.set("x-mw-hit", "1");
-res.headers.set("x-maint-mode", (process.env.MAINTENANCE_MODE ?? "off").toLowerCase());
+  res.headers.set("x-mw-hit", "1");
+  res.headers.set(
+    "x-maint-mode",
+    (process.env.MAINTENANCE_MODE ?? "off").toLowerCase()
+  );
 
-  const cookiesApplied: Array<{ name: string; value: string; options: any }> =
-    [];
+  const cookiesApplied: Array<{
+    name: string;
+    value: string;
+    options: CookieOptions;
+  }> = [];
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

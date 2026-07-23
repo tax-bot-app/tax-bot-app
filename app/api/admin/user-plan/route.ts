@@ -1,6 +1,7 @@
 // app/api/admin/user-plan/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getPlan, isPlanKey } from "../../../lib1/planMaster";
 
 export const runtime = "nodejs";
 
@@ -54,22 +55,15 @@ function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
 
-// ★この4つだけ許可（今の運用前提）
-const ALLOWED_PLANS = new Set(["free", "lite", "standard", "enterprise"]);
-
-// ★月間quotaは “表示・運用” の整合用（数値はあなたの仕様に合わせて調整OK）
-function quotaFor(plan: string): number {
-  switch (plan) {
-    case "lite":
-      return 5;
-    case "standard":
-      return 30;
-    case "enterprise":
-      return 100; // ←仮。必要なら別値へ
-    case "free":
-    default:
-      return 1; // free の扱いに合わせて
+function apiError(error: unknown): { message: string; status: number } {
+  if (error instanceof Error) {
+    const status = Number((error as Error & { status?: unknown }).status);
+    return {
+      message: error.message,
+      status: Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500,
+    };
   }
+  return { message: String(error), status: 500 };
 }
 
 export async function POST(req: Request) {
@@ -83,11 +77,11 @@ export async function POST(req: Request) {
 
     if (!user_id) return NextResponse.json({ ok: false, error: "user_id required" }, { status: 400 });
     if (!isUuid(user_id)) return NextResponse.json({ ok: false, error: "user_id must be uuid" }, { status: 400 });
-    if (!ALLOWED_PLANS.has(planRaw)) {
+    if (!isPlanKey(planRaw)) {
       return NextResponse.json({ ok: false, error: `invalid plan: ${planRaw}` }, { status: 400 });
     }
 
-    const monthly_quota = quotaFor(planRaw);
+    const monthly_quota = getPlan(planRaw).monthlyQuota;
 
     const { error } = await supabase
       .from("users")
@@ -97,9 +91,9 @@ export async function POST(req: Request) {
     if (error) throw error;
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    const status = e?.status ?? 500;
-    if (status >= 500) console.error("admin user-plan api error", e);
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
+  } catch (error: unknown) {
+    const api = apiError(error);
+    if (api.status >= 500) console.error("admin user-plan api error", error);
+    return NextResponse.json({ ok: false, error: api.message }, { status: api.status });
   }
 }

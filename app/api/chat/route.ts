@@ -8,6 +8,7 @@ import { decideSuppressBrandingByLLM } from "../../lib2/guardrails/brandSuppress
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { precheckChatQuota } from "../../lib/chatQuotaPrecheck";
+import { getPlan, normalizePlanKey } from "../../lib1/planMaster";
 
 // NEW: split
 import {
@@ -66,18 +67,6 @@ function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     s
   );
-}
-function limitFromPlan(plan: string): number {
-  switch (plan) {
-    case "enterprise":
-      return 100;
-    case "standard":
-      return 30;
-    case "lite":
-      return 5;
-    default:
-      return 0;
-  }
 }
 function currentJstMonth(): string {
   const now = new Date();
@@ -3521,8 +3510,8 @@ export async function POST(req: Request) {
     });
 
     const { data: urow } = await db.from("users").select("plan").eq("id", user.id).maybeSingle();
-    const plan = (urow?.plan as string) ?? "free";
-    const limit = limitFromPlan(plan);
+    const plan = normalizePlanKey(urow?.plan);
+    const limit = getPlan(plan).monthlyQuota;
 
     if (limit <= 0) {
       return NextResponse.json(

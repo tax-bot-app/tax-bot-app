@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getPlan } from "../../../lib1/planMaster";
 
 export const runtime = "nodejs";
 
@@ -47,6 +48,16 @@ function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
 
+function apiError(error: unknown): { message: string; status: number } {
+  if (error instanceof Error) {
+    const status = Number((error as Error & { status?: unknown }).status);
+    return {
+      message: error.message,
+      status: Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500,
+    };
+  }
+  return { message: String(error), status: 500 };
+}
 
 export async function POST(req: Request) {
   try {
@@ -77,20 +88,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, user_id, created: false });
     }
 
-    // 2) 無ければ作成（初期free / quota=1）
+    // 2) 無ければ作成（初期free。登録無料体験とは別で、有料チャット枠は0回）
+    const freePlan = getPlan("free");
     const { error: e2 } = await supabase.from("users").insert({
       id: user_id,
       email: email || null,
-      plan: "free",
-     monthly_quota: 1,
+      plan: freePlan.key,
+      monthly_quota: freePlan.monthlyQuota,
       is_admin: false,
     });
     if (e2) throw e2;
 
     return NextResponse.json({ ok: true, user_id, created: true });
-  } catch (e: any) {
-    const status = e?.status ?? 500;
-    if (status >= 500) console.error("admin provision-user api error", e);
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
+  } catch (error: unknown) {
+    const api = apiError(error);
+    if (api.status >= 500) console.error("admin provision-user api error", error);
+    return NextResponse.json({ ok: false, error: api.message }, { status: api.status });
   }
 }

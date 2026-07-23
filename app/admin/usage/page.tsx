@@ -568,7 +568,7 @@ const uid = r.user_id;
         <section style={{ marginTop: 18 }}>
           <h2 style={{ fontSize: 16, fontWeight: 900 }}>ユーザー同期（友だち無料の準備）</h2>
           <p style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-            Supabase Authentication → Users の UID（uuid）を貼って、public.users に行を作る（初期free / quota=1）。
+            Supabase Authentication → Users の UID（uuid）を貼って、public.users に行を作る（初期free / quota=0）。
           </p>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
