@@ -1,5 +1,12 @@
 # さじかげん｜運用RUNBOOK
 
+## フォントとビルド
+
+- フォントは `@fontsource-variable/geist`、`@fontsource-variable/geist-mono`、`@fontsource/yuji-syuku` から配信する。
+- `next/font/google` は使用せず、`npm run build` がGoogle Fontsへの接続なしで完了することを確認する。
+- 依存関係を反映するため、フォント変更時は `package.json` と `package-lock.json` を必ず同時に反映する。
+- `STRIPE_SECRET_KEY` と `STRIPE_WEBHOOK_SECRET` はビルド時ではなく各APIの実行時に必須とする。本番ENVは従来どおりVercelへ設定する。
+
 ## 回数制御の自動テスト
 
 コード変更後は、型チェックとビルドの前に次を実行する。

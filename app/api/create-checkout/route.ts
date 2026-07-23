@@ -32,9 +32,14 @@ function checkoutBaseUrl(): string {
   return url.origin;
 }
 
-const stripe = new Stripe(mustEnv("STRIPE_SECRET_KEY"), {
-  apiVersion: "2025-12-15.clover",
-});
+let stripe: Stripe | null = null;
+
+function stripeClient(): Stripe {
+  stripe ??= new Stripe(mustEnv("STRIPE_SECRET_KEY"), {
+    apiVersion: "2025-12-15.clover",
+  });
+  return stripe;
+}
 
 type ReqBody = { plan?: PlanKey };
 
@@ -95,7 +100,7 @@ export async function POST(req: Request) {
 
     // ✅ Stripe側でも有効契約を確認（DBズレ保険）
     if (existingCustomerId) {
-      const subs = await stripe.subscriptions.list({
+      const subs = await stripeClient().subscriptions.list({
         customer: existingCustomerId,
         status: "all",
         limit: 20,
@@ -116,7 +121,7 @@ export async function POST(req: Request) {
     const priceId = getPriceId(plan);
     const siteUrl = checkoutBaseUrl();
 
-    const session = await stripe.checkout.sessions.create({
+    const session = await stripeClient().checkout.sessions.create({
       mode: "subscription",
       ...(existingCustomerId
         ? { customer: existingCustomerId }

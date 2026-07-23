@@ -11,15 +11,24 @@ function mustEnv(name: string): string {
   return v;
 }
 
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 function bearerFromReq(req: Request): string | null {
   const auth = req.headers.get("authorization") || "";
   const m = auth.match(/^Bearer\s+(.+)$/i);
   return m ? m[1] : null;
 }
 
-const stripe = new Stripe(mustEnv("STRIPE_SECRET_KEY"), {
-  apiVersion: "2025-12-15.clover",
-});
+let stripe: Stripe | null = null;
+
+function stripeClient(): Stripe {
+  stripe ??= new Stripe(mustEnv("STRIPE_SECRET_KEY"), {
+    apiVersion: "2025-12-15.clover",
+  });
+  return stripe;
+}
 
 function adminSupabase() {
   const url = mustEnv("SUPABASE_URL");
@@ -61,7 +70,7 @@ export async function POST(req: Request) {
 
     // 3) 無ければStripe Customer作成して保存
     if (!customerId) {
-      const customer = await stripe.customers.create({ email });
+      const customer = await stripeClient().customers.create({ email });
       customerId = customer.id;
 
       const { error: updErr } = await supabase
@@ -74,14 +83,14 @@ export async function POST(req: Request) {
 
     // 4) Portal Session作成
     const appUrl = mustEnv("APP_URL"); // 本番URL固定推奨
-    const session = await stripe.billingPortal.sessions.create({
+    const session = await stripeClient().billingPortal.sessions.create({
       customer: customerId,
       return_url: `${appUrl}/chat`,
     });
 
     return NextResponse.json({ ok: true, url: session.url }, { status: 200 });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("portal route error", e);
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
+    return NextResponse.json({ ok: false, error: errorMessage(e) }, { status: 500 });
   }
 }

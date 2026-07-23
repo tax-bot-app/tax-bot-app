@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "@fingerprintjs/fingerprintjs": "^5.1.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource/yuji-syuku": "^5.3.0",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.90.0",
     "lucide-react": "^0.575.0",

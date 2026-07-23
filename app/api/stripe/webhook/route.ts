@@ -22,11 +22,14 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-const stripe = new Stripe(mustEnv("STRIPE_SECRET_KEY"), {
-  apiVersion: "2025-12-15.clover",
-});
+let stripe: Stripe | null = null;
 
-const webhookSecret = mustEnv("STRIPE_WEBHOOK_SECRET");
+function stripeClient(): Stripe {
+  stripe ??= new Stripe(mustEnv("STRIPE_SECRET_KEY"), {
+    apiVersion: "2025-12-15.clover",
+  });
+  return stripe;
+}
 
 function adminSupabase() {
   const url = mustEnv("SUPABASE_URL");
@@ -309,7 +312,7 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
 }> {
   const debug = process.env.DEBUG_STRIPE_PLAN_SYNC === "1";
 
-  const subs = await stripe.subscriptions.list({
+  const subs = await stripeClient().subscriptions.list({
     customer: customerId,
     status: "all",
     limit: 100,
@@ -469,7 +472,11 @@ export async function POST(req: Request) {
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
+    event = stripeClient().webhooks.constructEvent(
+      rawBody,
+      sig,
+      mustEnv("STRIPE_WEBHOOK_SECRET"),
+    );
   } catch (e: unknown) {
     return NextResponse.json(
       {
@@ -536,7 +543,7 @@ export async function POST(req: Request) {
 
 
       if (!email && customerId) {
-        const cust = (await stripe.customers.retrieve(
+        const cust = (await stripeClient().customers.retrieve(
           customerId
         )) as Stripe.Customer;
         email = cust.email ?? null;
@@ -554,7 +561,7 @@ export async function POST(req: Request) {
       // 一旦このsubscriptionのpriceIdから暫定プランを入れる（紐付け優先）
       let priceId: string | null = null;
       if (subscriptionId) {
-        const sub = (await stripe.subscriptions.retrieve(
+        const sub = (await stripeClient().subscriptions.retrieve(
           subscriptionId
         )) as Stripe.Subscription;
         priceId = sub.items.data?.[0]?.price?.id ?? null;

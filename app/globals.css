@@ -3,6 +3,8 @@
 :root {
   --background: #f8f4ec;
   --foreground: #112b46;
+  --font-geist-sans: "Geist Variable";
+  --font-geist-mono: "Geist Mono Variable";
 }
 /* stylelint-disable-next-line at-rule-no-unknown */
 @theme inline {
@@ -22,6 +24,10 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
+}
+
+.fontYujiSyuku {
+  font-family: "Yuji Syuku", "Yu Mincho", "Hiragino Mincho ProN", serif;
 }
 
 button,
