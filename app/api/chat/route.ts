@@ -78,6 +78,12 @@ function limitFromPlan(plan: string): number {
       return 0;
   }
 }
+function currentJstMonth(): string {
+  const now = new Date();
+  return new Date(now.getTime() + 9 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 7);
+}
 function clampForContext(s: string, n: number) {
   const t = (s ?? "").replace(/\s+/g, " ").trim();
   return t.length <= n ? t : t.slice(0, n) + "…";
@@ -3617,6 +3623,49 @@ await writeDebugEvent({
     { status: 200 }
   );
 }
+
+    // AI生成前に、明らかな上限到達を止める。
+    // ガードレール遮断は回数を消費しないため、その応答後に通常回答だけを確認する。
+    // 正式な回数消費と同時実行時の最終判定は、生成成功後の consume_talk_v2 が担う。
+    const { data: isUnlimited, error: unlimitedError } = await db.rpc(
+      "is_unlimited_user",
+      { p_user_id: user.id }
+    );
+    if (unlimitedError) {
+      return NextResponse.json(
+        { ok: false, error: `quota precheck failed: ${unlimitedError.message}` } satisfies ChatRes,
+        { status: 500 }
+      );
+    }
+
+    if (!Boolean(isUnlimited)) {
+      const { data: currentUsage, error: usageError } = await db
+        .from("usage")
+        .select("used_talks")
+        .eq("user_id", user.id)
+        .eq("month", currentJstMonth())
+        .maybeSingle();
+
+      if (usageError) {
+        return NextResponse.json(
+          { ok: false, error: `quota precheck failed: ${usageError.message}` } satisfies ChatRes,
+          { status: 500 }
+        );
+      }
+
+      const usedTalks = Number(currentUsage?.used_talks ?? 0);
+      if (usedTalks >= limit) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Monthly quota exceeded",
+            used_talks: usedTalks,
+            limit_talks: limit,
+          } satisfies ChatRes,
+          { status: 429 }
+        );
+      }
+    }
 
     const convId = await ensureConversationId({
       db,
