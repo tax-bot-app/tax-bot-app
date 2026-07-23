@@ -20,6 +20,23 @@ Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployす�
 6. 管理画面の想定売上が新料金で集計されることを確認
 7. 問題がなければStripeの旧価格をアーカイブ
 
+## Stripe Webhookの再実行管理
+
+初回リリース前にSupabase SQL Editorで次を実行する。
+
+```text
+docs/sql/20260723_stripe_webhook_event_status.sql
+```
+
+コードを先にデプロイすると新しい列が存在せずWebhookが失敗するため、必ずSQLを先に適用する。
+
+### 本番確認
+
+1. Stripeのテストイベントを1件送信し、`stripe_webhook_events.status` が `processed` になることを確認
+2. 同じイベントを再送し、ユーザー・usageが重複更新されず200になることを確認
+3. 一時的な処理失敗では `failed` と `last_error` が記録され、再送後に `processed` へ変わることを確認
+4. `processing` が5分以上更新されていない場合、再送で処理を再取得できることを確認
+
 ## OpenAIモデル設定
 
 Vercel Productionに次を設定し、変更後はRedeployする。

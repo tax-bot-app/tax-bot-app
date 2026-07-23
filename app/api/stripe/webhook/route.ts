@@ -18,6 +18,10 @@ function mustEnv(name: string): string {
   return v;
 }
 
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 const stripe = new Stripe(mustEnv("STRIPE_SECRET_KEY"), {
   apiVersion: "2025-12-15.clover",
 });
@@ -37,15 +41,24 @@ function currentMonthKey(): string {
   return jst.toISOString().slice(0, 7);
 }
 
+type WebhookClaim =
+  | { state: "acquired"; token: string }
+  | { state: "processed" }
+  | { state: "in_progress" };
+
+const WEBHOOK_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
+
 /**
- * ✅ 冪等性チェック
- * - stripe_webhook_events.event_id を primary key にして「先にinsert」
- * - すでにあれば 23505(duplicate) で即return
+ * Webhookイベントの処理権を取得する。
+ * - 初回は processing で登録
+ * - processed は完了済みとして終了
+ * - failed または一定時間止まった processing は再取得
+ * - 同時処理中は in_progress を返し、Stripeの再送に任せる
  */
-async function ensureIdempotency(event: Stripe.Event): Promise<{
-  isDuplicate: boolean;
-}> {
+async function claimWebhookEvent(event: Stripe.Event): Promise<WebhookClaim> {
   const supabase = adminSupabase();
+  const now = new Date().toISOString();
+  const token = crypto.randomUUID();
 
   const stripeCreatedAt =
     typeof event.created === "number"
@@ -56,15 +69,121 @@ async function ensureIdempotency(event: Stripe.Event): Promise<{
     event_id: event.id,
     event_type: event.type,
     stripe_created_at: stripeCreatedAt,
+    status: "processing",
+    processing_token: token,
+    last_error: null,
+    processed_at: null,
+    updated_at: now,
   });
 
-  if (!error) return { isDuplicate: false };
+  if (!error) return { state: "acquired", token };
 
-  // Postgres unique violation
-  const code = (error as any)?.code;
-  if (code === "23505") return { isDuplicate: true };
+  const code = (error as { code?: string })?.code;
+  if (code !== "23505") throw error;
 
-  throw error;
+  const { data: existing, error: findError } = await supabase
+    .from("stripe_webhook_events")
+    .select("status,updated_at")
+    .eq("event_id", event.id)
+    .single();
+
+  if (findError) throw findError;
+  if (existing.status === "processed") return { state: "processed" };
+
+  const updatedAtMs = Date.parse(existing.updated_at);
+  const isStale =
+    !Number.isFinite(updatedAtMs) ||
+    Date.now() - updatedAtMs >= WEBHOOK_PROCESSING_TIMEOUT_MS;
+
+  if (existing.status === "processing" && !isStale) {
+    return { state: "in_progress" };
+  }
+
+  let retryQuery = supabase
+    .from("stripe_webhook_events")
+    .update({
+      status: "processing",
+      processing_token: token,
+      last_error: null,
+      processed_at: null,
+      updated_at: now,
+    })
+    .eq("event_id", event.id)
+    .eq("status", existing.status);
+
+  if (existing.updated_at) {
+    retryQuery = retryQuery.eq("updated_at", existing.updated_at);
+  }
+
+  const { data: claimed, error: retryError } = await retryQuery
+    .select("event_id")
+    .maybeSingle();
+
+  if (retryError) throw retryError;
+  return claimed?.event_id
+    ? { state: "acquired", token }
+    : { state: "in_progress" };
+}
+
+async function markWebhookEventProcessed(
+  eventId: string,
+  token: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  const { data, error } = await adminSupabase()
+    .from("stripe_webhook_events")
+    .update({
+      status: "processed",
+      processing_token: null,
+      processed_at: now,
+      last_error: null,
+      updated_at: now,
+    })
+    .eq("event_id", eventId)
+    .eq("status", "processing")
+    .eq("processing_token", token)
+    .select("event_id")
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data?.event_id) {
+    throw new Error(`Webhook processing lease was lost for event ${eventId}`);
+  }
+}
+
+async function markWebhookEventFailed(
+  eventId: string,
+  token: string,
+  cause: unknown
+): Promise<void> {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const { error } = await adminSupabase()
+    .from("stripe_webhook_events")
+    .update({
+      status: "failed",
+      processing_token: null,
+      last_error: message.slice(0, 2000),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("event_id", eventId)
+    .eq("status", "processing")
+    .eq("processing_token", token);
+
+  if (error) {
+    console.error("[stripeWebhook] failed to persist event failure", {
+      eventId,
+      error: error.message,
+    });
+  }
+}
+
+async function processedResponse(
+  eventId: string,
+  token: string,
+  body: Record<string, unknown> = { received: true }
+) {
+  await markWebhookEventProcessed(eventId, token);
+  return NextResponse.json(body, { status: 200 });
 }
 
 /**
@@ -249,9 +368,11 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
         return null;
       }
 
-      const anyS = s as any;
-      const periodEnd = Number(anyS.current_period_end ?? 0);
-      const created = Number(anyS.created ?? 0);
+      const subscriptionTiming = s as Stripe.Subscription & {
+        current_period_end?: number;
+      };
+      const periodEnd = Number(subscriptionTiming.current_period_end ?? 0);
+      const created = Number(subscriptionTiming.created ?? 0);
 
       return {
         sub: s,
@@ -349,35 +470,42 @@ export async function POST(req: Request) {
   let event: Stripe.Event;
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json(
       {
         ok: false,
-        error: `Webhook signature verification failed: ${e?.message ?? e}`,
+        error: `Webhook signature verification failed: ${errorMessage(e)}`,
       },
       { status: 400 }
     );
   }
 
-  // ✅ ここが肝：先に冪等性チェック
+  // 副作用を始める前に、このイベントの処理権を取得する
+  let processingToken: string;
   try {
-    const { isDuplicate } = await ensureIdempotency(event);
-    if (isDuplicate) {
-      // Stripe の再送・二重到達を “何もせず成功” にする
+    const claim = await claimWebhookEvent(event);
+    if (claim.state === "processed") {
       return NextResponse.json(
         { received: true, deduped: true },
         { status: 200 }
       );
     }
-  } catch (e: any) {
-    console.error("idempotency check failed", e);
+    if (claim.state === "in_progress") {
+      return NextResponse.json(
+        { ok: false, retry: true, error: "Webhook event is already processing" },
+        { status: 503 }
+      );
+    }
+    processingToken = claim.token;
+  } catch (e: unknown) {
+    console.error("webhook claim failed", e);
     return NextResponse.json(
-      { ok: false, error: e?.message ?? String(e) },
+      { ok: false, error: errorMessage(e) },
       { status: 500 }
     );
   }
 
-    try {
+  try {
     console.log("[stripeWebhook] received", JSON.stringify({
       id: event.id,
       type: event.type,
@@ -420,7 +548,7 @@ export async function POST(req: Request) {
           customerId,
           subscriptionId,
         });
-        return NextResponse.json({ received: true }, { status: 200 });
+        return processedResponse(event.id, processingToken);
       }
 
       // 一旦このsubscriptionのpriceIdから暫定プランを入れる（紐付け優先）
@@ -499,7 +627,7 @@ export async function POST(req: Request) {
       if (customerId) {
         await syncUserPlanByCustomerId(customerId);
       }
-      return NextResponse.json({ received: true }, { status: 200 });
+      return processedResponse(event.id, processingToken);
     }
 
     // 2) サブスク作成/更新 → customer全体を同期（users更新→usage同期まで含む）
@@ -522,7 +650,7 @@ export async function POST(req: Request) {
         await syncUserPlanByCustomerId(customerId);
       }
 
-      return NextResponse.json({ received: true }, { status: 200 });
+      return processedResponse(event.id, processingToken);
     }
 
     // 3) 解約（deleted） → free固定にせず、残りサブスクで再計算（users更新→usage同期まで含む）
@@ -552,14 +680,15 @@ export async function POST(req: Request) {
         }
       }
 
-      return NextResponse.json({ received: true }, { status: 200 });
+      return processedResponse(event.id, processingToken);
     }
 
-    return NextResponse.json({ received: true }, { status: 200 });
-  } catch (e: any) {
+    return processedResponse(event.id, processingToken);
+  } catch (e: unknown) {
     console.error("webhook handler error", e);
+    await markWebhookEventFailed(event.id, processingToken, e);
     return NextResponse.json(
-      { ok: false, error: e?.message ?? String(e) },
+      { ok: false, error: errorMessage(e) },
       { status: 500 }
     );
   }
