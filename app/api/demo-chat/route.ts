@@ -12,7 +12,7 @@ type DemoRes =
   | { ok: false; error: string; usedAttempts?: number };
 
 const DEMO_MAX_INPUT = 400;
-const DEMO_MAX_OUTPUT = 750;
+const DEMO_MAX_OUTPUT = 1200;
 const DEMO_COOKIE = "sajikagen_demo_done";
 const DEMO_TIMEOUT_MS = 60_000;
 const DEMO_DEVICE_TABLE = "demo_device_attempts";
@@ -227,19 +227,36 @@ function sanitizeDemoFormatting(s: string): string {
   return t;
 }
 
-function clampDemoAnswer(text: string): string {
+function clampCompleteText(text: string, maxLength: number): string {
   const s = String(text ?? "").trim();
-  if (s.length <= DEMO_MAX_OUTPUT) return s;
+  if (maxLength <= 0) return "";
+  if (s.length <= maxLength) return s;
 
-  const head = s.slice(0, DEMO_MAX_OUTPUT);
+  const head = s.slice(0, maxLength);
   const boundaries = ["\n", "。", "！", "？"];
   const cutAt = Math.max(...boundaries.map((mark) => head.lastIndexOf(mark)));
 
-  // 文章の途中を見せるより、直前の完結した文で止める。
-  if (cutAt >= Math.floor(DEMO_MAX_OUTPUT * 0.6)) {
+  if (cutAt >= Math.floor(maxLength * 0.6)) {
     return head.slice(0, cutAt + 1).trimEnd();
   }
   return `${head.trimEnd()}…`;
+}
+
+function clampDemoAnswer(coreText: string, closingText: string): string {
+  const core = String(coreText ?? "").trim();
+  const closing = String(closingText ?? "").trim();
+  const s = [core, closing].filter(Boolean).join("\n\n");
+  if (s.length <= DEMO_MAX_OUTPUT) return s;
+
+  // 会社別の確認質問は、デモから有料相談へつなぐ肝なので先に確保する。
+  const closingSafe =
+    closing.length <= DEMO_MAX_OUTPUT
+      ? closing
+      : clampCompleteText(closing, DEMO_MAX_OUTPUT);
+  const separatorLength = core && closingSafe ? 2 : 0;
+  const coreBudget = Math.max(0, DEMO_MAX_OUTPUT - closingSafe.length - separatorLength);
+  const coreSafe = clampCompleteText(core, coreBudget);
+  return [coreSafe, closingSafe].filter(Boolean).join("\n\n");
 }
 
 function toDemoAnswer(full: string): string {
@@ -248,8 +265,8 @@ function toDemoAnswer(full: string): string {
   if (!a2) return "";
 
   const sec = extractSection(a2, "🥄");  // 🥄先に言うと（本番のまま）
-  const key = extractSection(a2, "✅");  // ✅要点（最大2に削る）
-  const warn = extractSection(a2, "⚠️"); // ⚠️注意（最大1に削る）
+  const key = extractSection(a2, "✅");  // ✅要点
+  const warn = extractSection(a2, "⚠️"); // ⚠️注意
 
   // 「締め」はセクション境界で切れないので、末尾から拾う（作文しない／拾うだけ）
   const linesAll = String(a2 ?? "").replace(/\r\n/g, "\n").split("\n");
@@ -332,10 +349,9 @@ function toDemoAnswer(full: string): string {
     ? tailLines.filter((l) => !/^例(?:\s|[：:])/u.test(l.trim()))
     : tailLines;
 
-  // ✅要点：箇条書きだけを最大2
-  const keyBullets = pickBullets(key, 2);
-  // ⚠️注意：箇条書き/本文を最大1（※は残す）
-  const warnBullets = pickBullets(warn, 1);
+  // 要点・注意を締めすぎず、成立条件が伝わる量を残す。
+  const keyBullets = pickBullets(key, 4);
+  const warnBullets = pickBullets(warn, 2);
 
   const out: string[] = [];
   if (sec.length) out.push(...sec.map((l) => l.trimEnd()));
@@ -344,24 +360,24 @@ function toDemoAnswer(full: string): string {
     out.push("", key[0].trimEnd());
     for (const b of keyBullets) out.push(`- ${b}`);
   }
-  if (warnBullets[0]) {
+  if (warnBullets.length) {
     // ⚠️見出し行は残す（あれば）
     const warnHead = warn.find((l) => l.trimStart().startsWith("⚠️")) ?? "⚠️注意";
     out.push("", warnHead.trimEnd());
-    out.push(String(warnBullets[0]).trimStart().startsWith("※") ? warnBullets[0] : `※ ${warnBullets[0]}`);
+    for (const bullet of warnBullets) {
+      out.push(String(bullet).trimStart().startsWith("※") ? bullet : `※ ${bullet}`);
+    }
   }
 
-  // 締め：本番の締めがあれば最大3行だけ残す。無ければ保険を1行。
+  // 締め：会社別の確認質問を最大3行残す。無ければ保険を1行。
   const tailPicked = tailLinesFinal.slice(0, 3);
-  if (tailPicked.length) {
-    out.push("", ...tailPicked);
-  } else {
-    out.push("", "もう一段、運用まで掘り下げますか？");
-  }
+  const closing = tailPicked.length
+    ? tailPicked.join("\n")
+    : "御社の場合を整理するため、会社規模や現在の運用を教えてください。";
 
-  let s = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-  s = sanitizeDemoFormatting(s);
-  return clampDemoAnswer(s);
+  let core = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  core = sanitizeDemoFormatting(core);
+  return clampDemoAnswer(core, sanitizeDemoFormatting(closing));
 }
 
 export async function POST(req: Request) {
