@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
+import { resolvePortalCustomerAccess } from "../../../lib/portalCustomerAccess";
 import { siteOrigin } from "../../../lib/siteOrigin";
 
 export const runtime = "nodejs";
@@ -54,39 +55,33 @@ export async function POST(req: Request) {
     const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
     if (uErr || !u?.user) return NextResponse.json({ ok: false, error: "Invalid token" }, { status: 401 });
 
-    const email = u.user.email;
-    if (!email) return NextResponse.json({ ok: false, error: "No email on auth user" }, { status: 400 });
-
     const supabase = adminSupabase();
 
-    // 2) usersから stripe_customer_id を取得
+    // 2) 認証済みuser_idに紐づく既存のStripe Customerだけを使用
     const { data: row, error: rowErr } = await supabase
       .from("users")
-      .select("id,email,stripe_customer_id")
-      .eq("email", email)
+      .select("stripe_customer_id")
+      .eq("id", u.user.id)
       .maybeSingle();
 
     if (rowErr) throw rowErr;
 
-    let customerId = row?.stripe_customer_id ?? null;
-
-    // 3) 無ければStripe Customer作成して保存
-    if (!customerId) {
-      const customer = await stripeClient().customers.create({ email });
-      customerId = customer.id;
-
-      const { error: updErr } = await supabase
-        .from("users")
-        .update({ stripe_customer_id: customerId, updated_at: new Date().toISOString() })
-        .eq("email", email);
-
-      if (updErr) throw updErr;
+    const access = resolvePortalCustomerAccess(row?.stripe_customer_id);
+    if (access.kind === "no_customer") {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "NO_CUSTOMER",
+          error: "請求情報がありません。先にプランを選択してください。",
+        },
+        { status: 409 }
+      );
     }
 
-    // 4) Portal Session作成
+    // 3) Portal Session作成
     const appUrl = siteOrigin();
     const session = await stripeClient().billingPortal.sessions.create({
-      customer: customerId,
+      customer: access.customerId,
       return_url: `${appUrl}/chat`,
     });
 

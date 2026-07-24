@@ -100,6 +100,13 @@ Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployす�
 2. Customer Portalを終了し、`NEXT_PUBLIC_SITE_URL` の `/chat` へ戻ることを確認
 3. Vercel Runtime Logsに `Invalid NEXT_PUBLIC_SITE_URL` が出ていないことを確認
 
+### Customer Portal利用者紐付けの確認
+
+1. 契約済み利用者で請求設定を開き、既存のStripe CustomerのPortalが表示されることを確認
+2. Stripe側または認証側のメールアドレス表記が変わっても、`users.id` が一致する利用者のPortalが開くことを確認
+3. 未購入利用者で請求設定を開き、Stripe Customerが新規作成されずトップのプラン選択へ戻ることを確認
+4. 別利用者の `stripe_customer_id` が使用されていないことをStripe Dashboardで確認
+
 ## セキュリティヘッダ確認
 
 本番デプロイ後、トップページと認証・チャット画面のレスポンスヘッダを確認する。
