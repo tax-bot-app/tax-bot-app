@@ -9,6 +9,7 @@ import {
   normalizePlanKey,
   type PlanKey,
 } from "../../../lib1/planMaster";
+import { selectBestStripePlan } from "../../../lib/stripePlanSelection";
 
 export const runtime = "nodejs";
 
@@ -318,24 +319,36 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
     limit: 100,
   });
 
-  const candidates = subs.data.filter((s) =>
-    ["active", "trialing"].includes(s.status)
-  );
+  const subscriptions = subs.data.map((subscription) => {
+    const timing = subscription as Stripe.Subscription & {
+      current_period_end?: number;
+    };
+
+    return {
+      id: subscription.id,
+      status: subscription.status,
+      priceIds: (subscription.items?.data ?? []).map(
+        (item) => item.price?.id ?? null
+      ),
+      currentPeriodEnd: Number(timing.current_period_end ?? 0),
+      created: Number(subscription.created ?? 0),
+    };
+  });
 
   if (debug) {
     console.log("[planSync] subs", JSON.stringify({
       customerId,
       total: subs.data.length,
       statuses: subs.data.map((s) => s.status),
-      candidates: candidates.map((s) => ({
-        id: s.id,
-        status: s.status,
-        prices: (s.items?.data ?? []).map((it) => it.price?.id ?? null),
-      })),
+      candidates: subscriptions.filter((subscription) =>
+        ["active", "trialing"].includes(subscription.status)
+      ),
     }));
   }
 
-  if (candidates.length === 0) {
+  const selection = selectBestStripePlan(subscriptions);
+
+  if (selection.kind === "free") {
     const free = getPlan("free");
     return {
       plan: "free",
@@ -344,77 +357,36 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
     };
   }
 
-  const scored = candidates
-    .map((s) => {
-      let bestKey: PlanKey | null = null;
-
-      for (const item of s.items.data ?? []) {
-        const pid = item.price?.id ?? null;
-        const planDef = getPlanByPriceId(pid);
-        if (!planDef) continue;
-
-        const key = normalizePlanKey(planDef.key);
-        if (!bestKey || getPlan(key).sortOrder > getPlan(bestKey).sortOrder) {
-          bestKey = key;
-        }
-      }
-
-      // ✅ active subscription はあるが、price が1つも解決できないものは候補にしない
-      if (!bestKey) {
-        if (debug) {
-          console.warn("[planSync] unresolved active subscription", JSON.stringify({
-            customerId,
-            subId: s.id,
-            prices: (s.items?.data ?? []).map((it) => it.price?.id ?? null),
-          }));
-        }
-        return null;
-      }
-
-      const subscriptionTiming = s as Stripe.Subscription & {
-        current_period_end?: number;
-      };
-      const periodEnd = Number(subscriptionTiming.current_period_end ?? 0);
-      const created = Number(subscriptionTiming.created ?? 0);
-
-      return {
-        sub: s,
-        bestKey,
-        sortOrder: getPlan(bestKey).sortOrder,
-        periodEnd,
-        created,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
-
-  // ✅ active/trialing はあるのに、どれも plan 解決できないなら free に落とさず失敗にする
-  if (scored.length === 0) {
+  if (selection.kind === "unresolved") {
+    if (debug) {
+      console.warn("[planSync] unresolved active subscriptions", JSON.stringify({
+        customerId,
+        subscriptionIds: selection.activeSubscriptionIds,
+      }));
+    }
     throw new Error(
       `Active subscriptions exist but no recognized price IDs for customer ${customerId}`
     );
   }
 
-  scored.sort((a, b) => {
-    if (b.sortOrder !== a.sortOrder) return b.sortOrder - a.sortOrder;
-    if (b.periodEnd !== a.periodEnd) return b.periodEnd - a.periodEnd;
-    return b.created - a.created;
-  });
-
-  const best = scored[0];
-  const plan = best.bestKey;
+  const plan = selection.plan;
   const planDef = getPlan(plan);
 
   if (debug) {
     console.log("[planSync] best", JSON.stringify({
       customerId,
-      picked: { subId: best.sub.id, plan, sortOrder: best.sortOrder },
+      picked: {
+        subId: selection.subscriptionId,
+        plan,
+        sortOrder: planDef.sortOrder,
+      },
     }));
   }
 
   return {
     plan,
     monthly_quota: planDef.monthlyQuota,
-    subscription_id: best.sub.id,
+    subscription_id: selection.subscriptionId,
   };
 }
 
