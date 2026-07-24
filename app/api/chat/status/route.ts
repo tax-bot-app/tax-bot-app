@@ -1,6 +1,10 @@
 // app/api/chat/status/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  publicChatErrorDiagnostic,
+  publicChatErrorMessage,
+} from "@/app/lib/publicChatError";
 
 export const runtime = "nodejs";
 
@@ -60,7 +64,8 @@ export async function GET(req: Request) {
       .maybeSingle();
 
     if (uerr) {
-      const res: StatusRes = { ok: false, error: uerr.message };
+      console.error("[chat-status:user-lookup-failed]", publicChatErrorDiagnostic(uerr));
+      const res: StatusRes = { ok: false, error: publicChatErrorMessage("status") };
       return NextResponse.json(res, { status: 500 });
     }
 
@@ -71,7 +76,12 @@ export async function GET(req: Request) {
  const { data: isUnlimited, error: ulErr } = await db.rpc("is_unlimited_user", {
    p_user_id: user.id,
  });
- if (!ulErr && Boolean(isUnlimited)) {
+ if (ulErr) {
+   console.error("[chat-status:unlimited-lookup-failed]", publicChatErrorDiagnostic(ulErr));
+   const res: StatusRes = { ok: false, error: publicChatErrorMessage("status") };
+   return NextResponse.json(res, { status: 500 });
+ }
+ if (Boolean(isUnlimited)) {
    const res: StatusRes = { ok: true, plan, used_talks: 0, limit_talks: null };
    return NextResponse.json(res);
  }
@@ -85,7 +95,8 @@ export async function GET(req: Request) {
       .maybeSingle();
 
     if (u2err) {
-      const res: StatusRes = { ok: false, error: u2err.message };
+      console.error("[chat-status:usage-lookup-failed]", publicChatErrorDiagnostic(u2err));
+      const res: StatusRes = { ok: false, error: publicChatErrorMessage("status") };
       return NextResponse.json(res, { status: 500 });
     }
 
@@ -99,8 +110,9 @@ export async function GET(req: Request) {
       limit_talks,
     };
     return NextResponse.json(res);
-  } catch (e: any) {
-    const res: StatusRes = { ok: false, error: e?.message ?? "Unknown error" };
+  } catch (e: unknown) {
+    console.error("[chat-status:unexpected-failed]", publicChatErrorDiagnostic(e));
+    const res: StatusRes = { ok: false, error: publicChatErrorMessage("status") };
     return NextResponse.json(res, { status: 500 });
   }
 }

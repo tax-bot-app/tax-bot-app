@@ -8,6 +8,10 @@ import { decideSuppressBrandingByLLM } from "../../lib2/guardrails/brandSuppress
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { precheckChatQuota } from "../../lib/chatQuotaPrecheck";
+import {
+  publicChatErrorDiagnostic,
+  publicChatErrorMessage,
+} from "../../lib/publicChatError";
 import { getPlan, normalizePlanKey } from "../../lib1/planMaster";
 
 // NEW: split
@@ -3509,7 +3513,18 @@ export async function POST(req: Request) {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
 
-    const { data: urow } = await db.from("users").select("plan").eq("id", user.id).maybeSingle();
+    const { data: urow, error: planError } = await db
+      .from("users")
+      .select("plan")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (planError) {
+      console.error("[chat:plan-lookup-failed]", publicChatErrorDiagnostic(planError));
+      return NextResponse.json(
+        { ok: false, error: publicChatErrorMessage("status") } satisfies ChatRes,
+        { status: 500 }
+      );
+    }
     const plan = normalizePlanKey(urow?.plan);
     const limit = getPlan(plan).monthlyQuota;
 
@@ -3639,8 +3654,12 @@ await writeDebugEvent({
     });
 
     if (quotaPrecheck.kind === "error") {
+      console.error(
+        "[chat:quota-precheck-failed]",
+        publicChatErrorDiagnostic(new Error(quotaPrecheck.message))
+      );
       return NextResponse.json(
-        { ok: false, error: `quota precheck failed: ${quotaPrecheck.message}` } satisfies ChatRes,
+        { ok: false, error: publicChatErrorMessage("quota") } satisfies ChatRes,
         { status: 500 }
       );
     }
@@ -3681,8 +3700,9 @@ try {
   });
   answer = core.answer;
 } catch (e: any) {
+  console.error("[chat:generation-failed]", publicChatErrorDiagnostic(e));
   return NextResponse.json(
-    { ok: false, error: e?.message || "AI failed. Please retry." } satisfies ChatRes,
+    { ok: false, error: publicChatErrorMessage("generation") } satisfies ChatRes,
     { status: 502 }
   );
 }
@@ -3693,11 +3713,13 @@ try {
       p_idempotency_key: idempotencyKey,
     });
 
-    if (error)
+    if (error) {
+      console.error("[chat:usage-update-failed]", publicChatErrorDiagnostic(error));
       return NextResponse.json(
-        { ok: false, error: `consume_talk_v2 failed: ${error.message}` } satisfies ChatRes,
+        { ok: false, error: publicChatErrorMessage("usage") } satisfies ChatRes,
         { status: 500 }
       );
+    }
 
     const usage = (Array.isArray(data) ? data[0] : data) as ConsumeTalkV2Result | null;
     if (!usage)
@@ -3760,8 +3782,9 @@ try {
       { status: 200 }
     );
   } catch (e: any) {
+    console.error("[chat:unexpected-failed]", publicChatErrorDiagnostic(e));
     return NextResponse.json(
-      { ok: false, error: e?.message ?? "Unknown error" } satisfies ChatRes,
+      { ok: false, error: publicChatErrorMessage("unexpected") } satisfies ChatRes,
       { status: 500 }
     );
   }
