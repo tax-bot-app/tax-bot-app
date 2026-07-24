@@ -2074,18 +2074,11 @@ async function writeDebugEvent(params: { db: any; trace: DebugTrace }) {
   });
 
   if (error) {
-    console.error("[chat-debug-db-failed]", {
-      message: error.message,
-      details: (error as any).details,
-      hint: (error as any).hint,
-      code: (error as any).code,
-    });
+    console.error(
+      "[chat-debug-db-failed]",
+      publicChatErrorDiagnostic(error)
+    );
   }
-}
-
-
-function emitDebug(trace: DebugTrace) {
-  console.log(`[chat-trace] ${JSON.stringify(trace)}`);
 }
 
 async function fetchPrevDebugLite(
@@ -2239,7 +2232,7 @@ export async function buildAnswerCore(params: {
   // ルール：
   // - いまPOST内にある `let answer = ""; try { ... }` の try本体を、そのままここへ。
   // - `return NextResponse.json(...)` はこの関数では使えないので、catchは呼び出し側（POST）でやる。
-  // - 末尾の `emitDebug(trace); await writeDebugEvent(...)` は persistDebug でガードする（下の指示参照）
+  // - 末尾の `await writeDebugEvent(...)` は persistDebug でガードする（下の指示参照）
   //
   // 置換が必要なのは基本この2つだけ：
   // 1) trace.userId: user.id → userId
@@ -3437,7 +3430,6 @@ meta.answer_head = dbgHead(answer, 200);
       };
 
       if (persistDebug) {
-  emitDebug(trace);
   await writeDebugEvent({ db, trace });
 }
   // --- END MOVED BLOCK ---
@@ -3610,7 +3602,10 @@ await writeDebugEvent({
 
 
   } catch (e) {
-    console.error("[guardrail:block persist failed]", e);
+    console.error(
+      "[guardrail:block-persist-failed]",
+      publicChatErrorDiagnostic(e)
+    );
   }
 
   // ④ レスポンス（フロントが判別できるフラグ付き）
@@ -3722,11 +3717,13 @@ try {
     }
 
     const usage = (Array.isArray(data) ? data[0] : data) as ConsumeTalkV2Result | null;
-    if (!usage)
+    if (!usage) {
+      console.error("[chat:usage-empty-result]", { type: "empty-result" });
       return NextResponse.json(
-        { ok: false, error: "consume_talk_v2: empty result" } satisfies ChatRes,
+        { ok: false, error: publicChatErrorMessage("usage") } satisfies ChatRes,
         { status: 500 }
       );
+    }
 
     if (!usage.allowed) {
       return NextResponse.json(
@@ -3766,7 +3763,10 @@ try {
         if (m2) throw m2;
       }
     } catch (e) {
-      console.error("[messages-insert-failed]", e);
+      console.error(
+        "[chat:messages-insert-failed]",
+        publicChatErrorDiagnostic(e)
+      );
     }
 
 
