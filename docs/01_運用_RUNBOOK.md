@@ -85,6 +85,19 @@ Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployす�
 2. Customer Portalを終了し、`NEXT_PUBLIC_SITE_URL` の `/chat` へ戻ることを確認
 3. Vercel Runtime Logsに `Invalid NEXT_PUBLIC_SITE_URL` が出ていないことを確認
 
+## セキュリティヘッダ確認
+
+本番デプロイ後、トップページと認証・チャット画面のレスポンスヘッダを確認する。
+
+- `Content-Security-Policy` に `frame-ancestors 'none'` がある
+- `X-Frame-Options` が `DENY`
+- `X-Content-Type-Options` が `nosniff`
+- `Referrer-Policy` が `strict-origin-when-cross-origin`
+- `Permissions-Policy` でcamera、microphone、geolocation、paymentが無効
+- 本番だけ `Strict-Transport-Security: max-age=31536000` がある
+
+あわせて、Meta Pixel、Supabaseログイン、Stripe Checkout、Customer Portal、無料体験、有料チャットが従来どおり動くことを確認する。
+
 ## Stripe Webhookの再実行管理
 
 初回リリース前にSupabase SQL Editorで次を実行する。
