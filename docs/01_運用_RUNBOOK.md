@@ -83,6 +83,14 @@ Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployす�
 3. Checkoutをキャンセルし、`NEXT_PUBLIC_SITE_URL` のトップへ戻ることを確認
 4. VercelのプレビューURLからCheckoutを開始した場合も、完了・キャンセル後は本番サイトへ戻ることを確認
 
+### Checkout重複作成防止の確認
+
+1. 同じ未契約ユーザー・同じプランで、Checkout作成APIを短時間に2回実行する
+2. 2回とも同じCheckout SessionのURLが返ることを確認する
+3. Stripe Dashboardで同じ条件のCheckout Sessionが重複作成されていないことを確認する
+4. 別プランまたはPrice ID切替後は、異なる冪等キーで新しいCheckout Sessionを作成できることを確認する
+5. 既存の有効契約がある場合は、従来どおり409で新規Checkoutが停止することを確認する
+
 ### 認証・Customer Portal戻り先の確認
 
 1. 認証メールのリンクから認証し、`NEXT_PUBLIC_SITE_URL` のプラン選択またはCheckoutへ戻ることを確認

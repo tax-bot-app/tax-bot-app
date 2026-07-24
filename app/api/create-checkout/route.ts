@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 
+import { checkoutIdempotencyKey } from "../../lib/checkoutIdempotency";
 import { getPriceId, type PlanKey } from "../../lib1/planMaster";
 import { siteOrigin } from "../../lib/siteOrigin";
 
@@ -101,19 +102,28 @@ export async function POST(req: Request) {
     const priceId = getPriceId(plan);
     const siteUrl = siteOrigin();
 
-    const session = await stripeClient().checkout.sessions.create({
-      mode: "subscription",
-      ...(existingCustomerId
-        ? { customer: existingCustomerId }
-        : { customer_email: userRes.user.email ?? undefined }),
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${siteUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${siteUrl}/`,
-      metadata: {
-        user_id: uid,
-        plan,
+    const session = await stripeClient().checkout.sessions.create(
+      {
+        mode: "subscription",
+        ...(existingCustomerId
+          ? { customer: existingCustomerId }
+          : { customer_email: userRes.user.email ?? undefined }),
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: `${siteUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${siteUrl}/`,
+        metadata: {
+          user_id: uid,
+          plan,
+        },
       },
-    });
+      {
+        idempotencyKey: checkoutIdempotencyKey({
+          userId: uid,
+          plan,
+          priceId,
+        }),
+      }
+    );
 
     const sessCustomerId = typeof session.customer === "string" ? session.customer : null;
     if (sessCustomerId && !urow?.stripe_customer_id) {
