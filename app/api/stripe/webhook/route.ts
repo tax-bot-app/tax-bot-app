@@ -9,6 +9,10 @@ import {
   normalizePlanKey,
   type PlanKey,
 } from "../../../lib1/planMaster";
+import {
+  resolveCheckoutUserIdentity,
+  type ResolvedCheckoutUserIdentity,
+} from "../../../lib/checkoutUserIdentity";
 import { selectBestStripePlan } from "../../../lib/stripePlanSelection";
 
 export const runtime = "nodejs";
@@ -217,31 +221,54 @@ async function syncUsageCurrentMonth(params: {
   if (error) throw error;
 }
 
-async function upsertUserByEmail(params: {
-  email: string;
-  plan: PlanKey;
-  monthly_quota: number;
+async function writeCheckoutUser(params: {
+  identity: ResolvedCheckoutUserIdentity;
+  plan?: PlanKey;
+  monthly_quota?: number;
   stripe_customer_id?: string | null;
   stripe_subscription_id?: string | null;
 }): Promise<{ userId: string }> {
   const supabase = adminSupabase();
 
-  const { data: user, error: findErr } = await supabase
+  const lookup = supabase
     .from("users")
-    .select("id,email")
-    .eq("email", params.email)
-    .maybeSingle();
+    .select("id,email");
+  const { data: user, error: findErr } =
+    params.identity.kind === "user_id"
+      ? await lookup.eq("id", params.identity.userId).maybeSingle()
+      : await lookup.eq("email", params.identity.email).maybeSingle();
 
   if (findErr) throw findErr;
 
-  // insert
+  const planFields =
+    params.plan !== undefined && params.monthly_quota !== undefined
+      ? {
+          plan: params.plan,
+          monthly_quota: params.monthly_quota,
+        }
+      : {};
+
   if (!user?.id) {
+    const email = params.identity.email;
+    if (!email) {
+      throw new Error(
+        `Checkout user ${
+          params.identity.kind === "user_id"
+            ? params.identity.userId
+            : params.identity.email
+        } was not found and has no email`
+      );
+    }
+
     const { data: inserted, error: insErr } = await supabase
       .from("users")
       .insert({
-        email: params.email,
-        plan: params.plan,
-        monthly_quota: params.monthly_quota,
+        ...(params.identity.kind === "user_id"
+          ? { id: params.identity.userId }
+          : {}),
+        email,
+        plan: params.plan ?? "free",
+        monthly_quota: params.monthly_quota ?? 0,
         stripe_customer_id: params.stripe_customer_id ?? null,
         stripe_subscription_id: params.stripe_subscription_id ?? null,
       })
@@ -253,12 +280,10 @@ async function upsertUserByEmail(params: {
     return { userId: inserted.id };
   }
 
-  // update
   const { error: updErr } = await supabase
     .from("users")
     .update({
-      plan: params.plan,
-      monthly_quota: params.monthly_quota,
+      ...planFields,
       stripe_customer_id: params.stripe_customer_id ?? null,
       stripe_subscription_id: params.stripe_subscription_id ?? null,
       updated_at: new Date().toISOString(),
@@ -521,13 +546,23 @@ export async function POST(req: Request) {
         email = cust.email ?? null;
       }
 
-      if (!email) {
-        console.warn("checkout.session.completed but no email", {
+      const identity = resolveCheckoutUserIdentity({
+        metadataUserId: session.metadata?.user_id,
+        email,
+      });
+
+      if (identity.kind === "unresolved") {
+        throw new Error(
+          `Checkout user identity could not be resolved for session ${session.id}: ${identity.reason}`
+        );
+      }
+
+      if (identity.kind === "legacy_email") {
+        console.warn("[stripeWebhook] using legacy email identity", {
           id: session.id,
           customerId,
           subscriptionId,
         });
-        return processedResponse(event.id, processingToken);
       }
 
       // 一旦このsubscriptionのpriceIdから暫定プランを入れる（紐付け優先）
@@ -539,15 +574,15 @@ export async function POST(req: Request) {
         priceId = sub.items.data?.[0]?.price?.id ?? null;
       }
 
-            const planDef = getPlanByPriceId(priceId);
+      const planDef = getPlanByPriceId(priceId);
 
       // ✅ unknown price は free に丸めて users.plan を壊さない
       if (planDef) {
         const tempPlanKey: PlanKey = normalizePlanKey(planDef.key);
         const tempPlan = getPlan(tempPlanKey);
 
-        const { userId } = await upsertUserByEmail({
-          email,
+        const { userId } = await writeCheckoutUser({
+          identity,
           plan: tempPlanKey,
           monthly_quota: tempPlan.monthlyQuota,
           stripe_customer_id: customerId,
@@ -560,42 +595,16 @@ export async function POST(req: Request) {
           monthly_quota: tempPlan.monthlyQuota,
         });
       } else {
-        const supabase = adminSupabase();
-
-        const { data: existingUser, error: findErr } = await supabase
-          .from("users")
-          .select("id")
-          .eq("email", email)
-          .maybeSingle();
-
-        if (findErr) throw findErr;
-
-        if (existingUser?.id) {
-          const { error: updErr } = await supabase
-            .from("users")
-            .update({
-              stripe_customer_id: customerId,
-              stripe_subscription_id: subscriptionId,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", existingUser.id);
-
-          if (updErr) throw updErr;
-        } else {
-          // 新規でprice不明はレアだが、紐付けだけ残して plan は free のまま
-          const { error: insErr } = await supabase.from("users").insert({
-            email,
-            plan: "free",
-            monthly_quota: 0,
-            stripe_customer_id: customerId,
-            stripe_subscription_id: subscriptionId,
-          });
-
-          if (insErr) throw insErr;
-        }
+        // Price不明でも、認証済みuser_idとの紐付けだけは保持する。
+        // planは変更せず、最後の正同期を失敗させて再送対象にする。
+        await writeCheckoutUser({
+          identity,
+          stripe_customer_id: customerId,
+          stripe_subscription_id: subscriptionId,
+        });
 
         console.error("[planSync] unknown priceId on checkout.session.completed", {
-          email,
+          identityKind: identity.kind,
           customerId,
           subscriptionId,
           priceId,

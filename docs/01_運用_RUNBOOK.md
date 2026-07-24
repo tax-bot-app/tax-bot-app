@@ -42,6 +42,9 @@ npm test
 - 旧Price IDを認識する
 - 有効契約のPrice IDがすべて未知の場合は `free` にせず未解決として扱う
 - 解約済み・延滞中の契約は有効プラン判定から除外する
+- Checkout完了時は認証済み `user_id` をメールアドレスより優先する
+- `user_id` のない旧Checkoutだけメールアドレスで紐付ける
+- 不正な `user_id` や識別情報なしを、別利用者へフォールバックしない
 
 ## 有料チャットの回数上限確認
 
@@ -128,6 +131,9 @@ docs/sql/20260723_stripe_webhook_event_status.sql
 4. `processing` が5分以上更新されていない場合、再送で処理を再取得できることを確認
 5. 同一顧客に複数の有効契約がある場合、`users.plan` と `usage.limit_talks` が最上位プランになることを確認
 6. 未登録のPrice IDだけを持つ有効契約では、既存ユーザーを `free` へ変更せずWebhookが `failed` になることを確認
+7. Checkout完了後、Stripe Sessionの `metadata.user_id` と同じ `users.id` に `stripe_customer_id`、プラン、回数が反映されることを確認
+8. Stripe側のメールアドレス表記が変わっていても、`metadata.user_id` が一致する利用者へ反映されることを確認
+9. `metadata.user_id` が不正なイベントは別のメール利用者へ紐付かず、Webhookが `failed` になることを確認
 
 ## OpenAIモデル設定
 
