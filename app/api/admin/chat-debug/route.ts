@@ -1,21 +1,12 @@
 // app/api/admin/chat-debug/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import {
+  adminApiError,
+  createAdminSupabase,
+  requireAdmin,
+} from "../../../lib/adminAccess";
 
 export const runtime = "nodejs";
-
-function mustEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
-
-function bearer(req: Request): string | null {
-  const h = req.headers.get("authorization") || req.headers.get("Authorization");
-  if (!h) return null;
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] : null;
-}
 
 function safeStr(x: unknown): string {
   return typeof x === "string" ? x : "";
@@ -45,7 +36,7 @@ function csvEscape(v: unknown): string {
 function toCsv(rows: Record<string, unknown>[], headers: string[]): string {
   const head = headers.map(csvEscape).join(",");
   const body = rows
-    .map((r) => headers.map((h) => csvEscape((r as any)[h])).join(","))
+    .map((r) => headers.map((h) => csvEscape(r[h])).join(","))
     .join("\n");
   return `${head}\n${body}\n`;
 }
@@ -60,27 +51,37 @@ function jsonish(v: unknown): string {
   }
 }
 
-function pickedQaTitles(meta: any): string {
-  const arr = Array.isArray(meta?.picked_qa) ? meta.picked_qa : [];
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function pickedQaTitles(metaValue: unknown): string {
+  const meta = asRecord(metaValue);
+  const arr = Array.isArray(meta.picked_qa) ? meta.picked_qa : [];
   return arr
-    .map((q: any) => {
-      const id = safeStr(q?.id).trim();
-      const title = safeStr(q?.title).trim();
-      const pr = q?.priority ?? "";
+    .map((value) => {
+      const q = asRecord(value);
+      const id = safeStr(q.id).trim();
+      const title = safeStr(q.title).trim();
+      const pr = q.priority ?? "";
       return [id && `#${id}`, title, pr !== "" ? `p${pr}` : ""].filter(Boolean).join(" ");
     })
     .filter(Boolean)
     .join(" | ");
 }
 
-function pickedLinesSimple(meta: any): string {
-  const arr = Array.isArray(meta?.picked_lines) ? meta.picked_lines : [];
+function pickedLinesSimple(metaValue: unknown): string {
+  const meta = asRecord(metaValue);
+  const arr = Array.isArray(meta.picked_lines) ? meta.picked_lines : [];
   return arr
-    .map((l: any) => {
-      const stance = safeStr(l?.stance);
-      const lens = safeStr(l?.lens);
-      const pr = l?.priority ?? "";
-      const topic = safeStr(l?.topic);
+    .map((value) => {
+      const line = asRecord(value);
+      const stance = safeStr(line.stance);
+      const lens = safeStr(line.lens);
+      const pr = line.priority ?? "";
+      const topic = safeStr(line.topic);
       const core = [stance, lens, pr].filter(Boolean).join("/");
       return topic ? `${core}:${topic}` : core;
     })
@@ -88,29 +89,12 @@ function pickedLinesSimple(meta: any): string {
     .join("\n");
 }
 
-type ApiRes = { ok: true; rows: any[] } | { ok: false; error: string };
+type ApiRes = { ok: true; rows: unknown[] } | { ok: false; error: string };
 
 export async function GET(req: Request) {
   try {
-    const token = bearer(req);
-    if (!token) {
-      return NextResponse.json({ ok: false, error: "Missing bearer token" } satisfies ApiRes, { status: 401 });
-    }
-
-    // anon + Bearer（RLS前提）
-    const url = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
-    const anon = mustEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-
-    const authClient = createClient(url, anon, { auth: { persistSession: false } });
-    const { data: userRes, error: userErr } = await authClient.auth.getUser(token);
-    if (userErr || !userRes?.user) {
-      return NextResponse.json({ ok: false, error: "Invalid session" } satisfies ApiRes, { status: 401 });
-    }
-
-    const db = createClient(url, anon, {
-      auth: { persistSession: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
+    const db = createAdminSupabase();
+    await requireAdmin(req, db);
 
     const u = new URL(req.url);
     const limit = clampInt(u.searchParams.get("limit"), 50, 1, 200);
@@ -262,8 +246,9 @@ export async function GET(req: Request) {
 
       ];
 
-      const csvRows = rows.map((r: any) => {
-        const meta = r?.meta ?? {};
+      const csvRows = rows.map((value) => {
+        const r = asRecord(value);
+        const meta = asRecord(r.meta);
 
         return {
           created_at: safeStr(r?.created_at),
@@ -427,7 +412,12 @@ suppress_branding_reason: safeStr(meta?.suppress_branding_reason ?? ""),
     }
 
     return NextResponse.json({ ok: true, rows } satisfies ApiRes, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" } satisfies ApiRes, { status: 500 });
+  } catch (error: unknown) {
+    const api = adminApiError(error);
+    if (api.status >= 500) console.error("admin chat-debug api error", error);
+    return NextResponse.json(
+      { ok: false, error: api.message } satisfies ApiRes,
+      { status: api.status }
+    );
   }
 }
