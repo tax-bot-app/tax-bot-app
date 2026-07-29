@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import {
   adminApiError,
+  adminApiErrorDiagnostic,
   createAdminSupabase,
   requireAdmin,
 } from "../../../lib/adminAccess";
@@ -129,9 +130,7 @@ export async function GET(req: Request) {
     if (q) query = query.ilike("message_head", `%${q}%`);
 
     const { data, error } = await query;
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message } satisfies ApiRes, { status: 400 });
-    }
+    if (error) throw error;
 
     const rows = data ?? [];
 
@@ -414,7 +413,9 @@ suppress_branding_reason: safeStr(meta?.suppress_branding_reason ?? ""),
     return NextResponse.json({ ok: true, rows } satisfies ApiRes, { status: 200 });
   } catch (error: unknown) {
     const api = adminApiError(error);
-    if (api.status >= 500) console.error("admin chat-debug api error", error);
+    if (api.status >= 500) {
+      console.error("[admin-chat-debug:failed]", adminApiErrorDiagnostic(error));
+    }
     return NextResponse.json(
       { ok: false, error: api.message } satisfies ApiRes,
       { status: api.status }

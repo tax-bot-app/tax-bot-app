@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import {
   adminApiError,
+  adminApiErrorDiagnostic,
   createAdminSupabase,
   requireAdmin,
 } from "../../../lib/adminAccess";
@@ -40,7 +41,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
     const api = adminApiError(error);
-    if (api.status >= 500) console.error("admin user-plan api error", error);
+    if (api.status >= 500) {
+      console.error("[admin-user-plan:failed]", adminApiErrorDiagnostic(error));
+    }
     return NextResponse.json({ ok: false, error: api.message }, { status: api.status });
   }
 }

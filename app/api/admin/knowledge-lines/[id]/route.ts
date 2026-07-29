@@ -1,6 +1,8 @@
 // app/api/admin/knowledge-lines/[id]/route.ts
 import { NextResponse } from "next/server";
 import {
+  adminApiError,
+  adminApiErrorDiagnostic,
   createAdminSupabase,
   requireAdmin,
 } from "../../../../lib/adminAccess";
@@ -83,9 +85,12 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (error) throw error;
 
     return NextResponse.json({ ok: true, row: data }, { status: 200 });
-  } catch (e: any) {
-    const status = e?.status ?? 500;
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
+  } catch (error: unknown) {
+    const api = adminApiError(error);
+    if (api.status >= 500) {
+      console.error("[admin-knowledge-line:patch-failed]", adminApiErrorDiagnostic(error));
+    }
+    return NextResponse.json({ ok: false, error: api.message }, { status: api.status });
   }
 }
 
@@ -101,8 +106,11 @@ export async function DELETE(req: Request, ctx: Ctx) {
     if (error) throw error;
 
     return NextResponse.json({ ok: true }, { status: 200 });
-  } catch (e: any) {
-    const status = e?.status ?? 500;
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
+  } catch (error: unknown) {
+    const api = adminApiError(error);
+    if (api.status >= 500) {
+      console.error("[admin-knowledge-line:delete-failed]", adminApiErrorDiagnostic(error));
+    }
+    return NextResponse.json({ ok: false, error: api.message }, { status: api.status });
   }
 }

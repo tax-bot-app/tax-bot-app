@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import {
+  adminApiError,
+  adminApiErrorDiagnostic,
   createAdminSupabase,
   requireAdmin,
 } from "../../../lib/adminAccess";
@@ -30,10 +32,12 @@ export async function GET(req: Request) {
     }));
 
     return NextResponse.json({ ok: true, data: rows });
-  } catch (e: any) {
-    const status = e?.status ?? 500;
-    if (status >= 500) console.error("admin allowlist api error", e);
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
+  } catch (error: unknown) {
+    const api = adminApiError(error);
+    if (api.status >= 500) {
+      console.error("[admin-allowlist:get-failed]", adminApiErrorDiagnostic(error));
+    }
+    return NextResponse.json({ ok: false, error: api.message }, { status: api.status });
   }
 }
 
@@ -53,10 +57,12 @@ export async function POST(req: Request) {
     if (error) throw error;
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    const status = e?.status ?? 500;
-    if (status >= 500) console.error("admin allowlist api error", e);
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
+  } catch (error: unknown) {
+    const api = adminApiError(error);
+    if (api.status >= 500) {
+      console.error("[admin-allowlist:post-failed]", adminApiErrorDiagnostic(error));
+    }
+    return NextResponse.json({ ok: false, error: api.message }, { status: api.status });
   }
 }
 
@@ -75,9 +81,11 @@ export async function DELETE(req: Request) {
     if (error) throw error;
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    const status = e?.status ?? 500;
-    if (status >= 500) console.error("admin allowlist api error", e);
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status });
+  } catch (error: unknown) {
+    const api = adminApiError(error);
+    if (api.status >= 500) {
+      console.error("[admin-allowlist:delete-failed]", adminApiErrorDiagnostic(error));
+    }
+    return NextResponse.json({ ok: false, error: api.message }, { status: api.status });
   }
 }

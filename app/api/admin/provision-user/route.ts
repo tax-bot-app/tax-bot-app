@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   adminApiError,
+  adminApiErrorDiagnostic,
   createAdminSupabase,
   requireAdmin,
 } from "../../../lib/adminAccess";
@@ -55,7 +56,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, user_id, created: true });
   } catch (error: unknown) {
     const api = adminApiError(error);
-    if (api.status >= 500) console.error("admin provision-user api error", error);
+    if (api.status >= 500) {
+      console.error("[admin-provision-user:failed]", adminApiErrorDiagnostic(error));
+    }
     return NextResponse.json({ ok: false, error: api.message }, { status: api.status });
   }
 }

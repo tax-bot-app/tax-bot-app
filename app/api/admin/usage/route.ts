@@ -1,6 +1,8 @@
 // app/api/admin/usage/route.ts
 import { NextResponse } from "next/server";
 import {
+  adminApiError,
+  adminApiErrorDiagnostic,
   createAdminSupabase,
   requireAdmin,
 } from "../../../lib/adminAccess";
@@ -80,13 +82,15 @@ export async function GET(req: Request) {
     });
 
     return NextResponse.json({ ok: true, data: out });
-  } catch (e: any) {
-    const status = e?.status ?? 500;
-    if (status >= 500) console.error("admin usage api error", e);
+  } catch (error: unknown) {
+    const api = adminApiError(error);
+    if (api.status >= 500) {
+      console.error("[admin-usage:failed]", adminApiErrorDiagnostic(error));
+    }
 
     return NextResponse.json(
-      { ok: false, error: e?.message ?? String(e) },
-      { status }
+      { ok: false, error: api.message },
+      { status: api.status }
     );
   }
 }

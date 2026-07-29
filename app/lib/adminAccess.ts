@@ -1,9 +1,21 @@
 import { createClient } from "@supabase/supabase-js";
 
+type AdminAuthorizationStatus = 401 | 403;
+
 function mustEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing env: ${name}`);
   return value;
+}
+
+function adminAuthorizationError(
+  message: string,
+  status: AdminAuthorizationStatus
+): Error {
+  return Object.assign(new Error(message), {
+    status,
+    safeAdminAuthorizationError: true,
+  });
 }
 
 export function createAdminSupabase() {
@@ -28,15 +40,13 @@ export async function requireAdmin(
 ): Promise<{ uid: string; email: string | null }> {
   const token = bearerToken(req);
   if (!token) {
-    throw Object.assign(new Error("Missing Authorization Bearer token"), {
-      status: 401,
-    });
+    throw adminAuthorizationError("Missing Authorization Bearer token", 401);
   }
 
   const { data: userResult, error: userError } =
     await supabase.auth.getUser(token);
   if (userError || !userResult?.user?.id) {
-    throw Object.assign(new Error("Invalid session"), { status: 401 });
+    throw adminAuthorizationError("Invalid session", 401);
   }
 
   const uid = userResult.user.id;
@@ -49,7 +59,7 @@ export async function requireAdmin(
 
   if (adminError) throw adminError;
   if (adminRow?.is_admin !== true) {
-    throw Object.assign(new Error("Forbidden (admin only)"), { status: 403 });
+    throw adminAuthorizationError("Forbidden (admin only)", 403);
   }
 
   return { uid, email };
@@ -59,14 +69,52 @@ export function adminApiError(error: unknown): {
   message: string;
   status: number;
 } {
-  if (!(error instanceof Error)) {
-    return { message: String(error), status: 500 };
+  const status =
+    error instanceof Error
+      ? Number((error as Error & { status?: unknown }).status)
+      : 500;
+
+  const safeAuthorizationError =
+    error instanceof Error &&
+    (error as Error & { safeAdminAuthorizationError?: unknown })
+      .safeAdminAuthorizationError === true;
+
+  if (
+    error instanceof Error &&
+    safeAuthorizationError &&
+    (status === 401 || status === 403)
+  ) {
+    return { message: error.message, status };
   }
 
-  const status = Number((error as Error & { status?: unknown }).status);
   return {
-    message: error.message,
-    status:
-      Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500,
+    message:
+      "管理機能の処理を完了できませんでした。時間をおいて、もう一度お試しください。",
+    status: 500,
   };
+}
+
+export function adminApiErrorDiagnostic(
+  error: unknown
+): Record<string, string | number> {
+  if (!error || typeof error !== "object") {
+    return { type: typeof error };
+  }
+
+  const source = error as Record<string, unknown>;
+  const diagnostic: Record<string, string | number> = {};
+
+  for (const key of ["name", "code", "type", "status", "request_id"]) {
+    const value = source[key];
+    if (typeof value === "string" && value) {
+      diagnostic[key] = value.slice(0, 120);
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      diagnostic[key] = value;
+    }
+  }
+
+  return Object.keys(diagnostic).length > 0
+    ? diagnostic
+    : { type: "object" };
 }

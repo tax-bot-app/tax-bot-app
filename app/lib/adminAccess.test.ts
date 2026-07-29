@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   adminApiError,
+  adminApiErrorDiagnostic,
   bearerToken,
   requireAdmin,
 } from "./adminAccess";
@@ -97,12 +98,54 @@ describe("admin access", () => {
     expect(supabase.auth.getUser).toHaveBeenCalledWith("token");
   });
 
-  it("normalizes known HTTP errors and hides invalid status values", () => {
+  it("preserves authorization errors and hides internal errors", () => {
     expect(
-      adminApiError(Object.assign(new Error("Forbidden"), { status: 403 }))
+      adminApiError(
+        Object.assign(new Error("Forbidden"), {
+          status: 403,
+          safeAdminAuthorizationError: true,
+        })
+      )
     ).toEqual({ message: "Forbidden", status: 403 });
     expect(
+      adminApiError(Object.assign(new Error("database policy detail"), { status: 403 }))
+    ).toEqual({
+      message:
+        "管理機能の処理を完了できませんでした。時間をおいて、もう一度お試しください。",
+      status: 500,
+    });
+    expect(
       adminApiError(Object.assign(new Error("Bad status"), { status: 999 }))
-    ).toEqual({ message: "Bad status", status: 500 });
+    ).toEqual({
+      message:
+        "管理機能の処理を完了できませんでした。時間をおいて、もう一度お試しください。",
+      status: 500,
+    });
+    expect(adminApiError(new Error("relation users does not exist"))).toEqual({
+      message:
+        "管理機能の処理を完了できませんでした。時間をおいて、もう一度お試しください。",
+      status: 500,
+    });
+  });
+
+  it("keeps only safe diagnostic fields", () => {
+    const diagnostic = adminApiErrorDiagnostic({
+      name: "PostgrestError",
+      code: "42P01",
+      status: 500,
+      request_id: "req_123",
+      message: "relation users does not exist",
+      stack: "secret stack",
+      details: "sensitive details",
+    });
+
+    expect(diagnostic).toEqual({
+      name: "PostgrestError",
+      code: "42P01",
+      status: 500,
+      request_id: "req_123",
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain("relation users");
+    expect(JSON.stringify(diagnostic)).not.toContain("secret stack");
   });
 });
