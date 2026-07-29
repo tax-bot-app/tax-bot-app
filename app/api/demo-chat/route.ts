@@ -4,6 +4,11 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { judgeGuardrails } from "../../lib2/guardrails";
 import { buildAnswerCore } from "../chat/route";
 import { completeDemoAttempt } from "../../lib/demoAttemptLifecycle";
+import {
+  demoRouteErrorDiagnostic,
+  demoRouteErrorMessage,
+  isDemoTimeout,
+} from "../../lib/demoRouteError";
 import crypto from "crypto";
 
 export const runtime = "nodejs";
@@ -518,7 +523,10 @@ export async function POST(req: Request) {
 
     if (attemptResult.kind === "empty") {
       reservedDeviceKey = null;
-      return NextResponse.json({ ok: false, error: "AI returned empty response" } satisfies DemoRes, { status: 502 });
+      return NextResponse.json(
+        { ok: false, error: demoRouteErrorMessage("generation") } satisfies DemoRes,
+        { status: 502 }
+      );
     }
 
     if (attemptResult.kind === "error") {
@@ -536,30 +544,20 @@ export async function POST(req: Request) {
       await releaseDeviceAttempt(reservationDb, reservedDeviceKey);
     }
 
-    const errorName =
-      e && typeof e === "object" && "name" in e ? String(e.name ?? "") : "";
-    const msg =
-      e && typeof e === "object" && "message" in e ? String(e.message ?? "") : "";
-    const cause =
-      e && typeof e === "object" && "cause" in e ? String(e.cause ?? "") : "";
-    const aborted =
-      errorName === "AbortError" ||
-      /aborted/i.test(msg) ||
-      msg.includes("DEMO_TIMEOUT") ||
-      cause.includes("DEMO_TIMEOUT");
+    const aborted = isDemoTimeout(e);
 
-      // ★追加：Abort以外の500原因をVercelログに出す
-    if (!aborted) console.error("[demo-chat]", e);
+    if (!aborted) {
+      console.error("[demo-chat:failed]", demoRouteErrorDiagnostic(e));
+    }
 
     if (aborted) {
       return NextResponse.json(
-        { ok: false, error: "混み合っています。少し時間をおいて、もう一度お試しください。" } satisfies DemoRes,
+        { ok: false, error: demoRouteErrorMessage("timeout") } satisfies DemoRes,
         { status: 504 }
       );
     }
-    // 生エラーは返さない（内部情報っぽく見えるしUXも悪い）
     return NextResponse.json(
-      { ok: false, error: "エラーが発生しました。内容を少し変えて再送してください。" } satisfies DemoRes,
+      { ok: false, error: demoRouteErrorMessage("unexpected") } satisfies DemoRes,
       { status: 500 }
     );
   }
