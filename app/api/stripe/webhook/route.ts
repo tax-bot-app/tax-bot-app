@@ -14,6 +14,10 @@ import {
   type ResolvedCheckoutUserIdentity,
 } from "../../../lib/checkoutUserIdentity";
 import { selectBestStripePlan } from "../../../lib/stripePlanSelection";
+import {
+  stripeRouteErrorDiagnostic,
+  stripeRouteErrorMessage,
+} from "../../../lib/stripeRouteError";
 
 export const runtime = "nodejs";
 
@@ -21,10 +25,6 @@ function mustEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
   return v;
-}
-
-function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 let stripe: Stripe | null = null;
@@ -164,13 +164,13 @@ async function markWebhookEventFailed(
   token: string,
   cause: unknown
 ): Promise<void> {
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const diagnostic = stripeRouteErrorDiagnostic(cause);
   const { error } = await adminSupabase()
     .from("stripe_webhook_events")
     .update({
       status: "failed",
       processing_token: null,
-      last_error: message.slice(0, 2000),
+      last_error: JSON.stringify(diagnostic).slice(0, 2000),
       updated_at: new Date().toISOString(),
     })
     .eq("event_id", eventId)
@@ -178,10 +178,10 @@ async function markWebhookEventFailed(
     .eq("processing_token", token);
 
   if (error) {
-    console.error("[stripeWebhook] failed to persist event failure", {
-      eventId,
-      error: error.message,
-    });
+    console.error(
+      "[stripe-webhook:failure-persist-failed]",
+      stripeRouteErrorDiagnostic(error)
+    );
   }
 }
 
@@ -362,12 +362,11 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
 
   if (debug) {
     console.log("[planSync] subs", JSON.stringify({
-      customerId,
       total: subs.data.length,
       statuses: subs.data.map((s) => s.status),
-      candidates: subscriptions.filter((subscription) =>
+      activeCount: subscriptions.filter((subscription) =>
         ["active", "trialing"].includes(subscription.status)
-      ),
+      ).length,
     }));
   }
 
@@ -385,8 +384,7 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
   if (selection.kind === "unresolved") {
     if (debug) {
       console.warn("[planSync] unresolved active subscriptions", JSON.stringify({
-        customerId,
-        subscriptionIds: selection.activeSubscriptionIds,
+        activeCount: selection.activeSubscriptionIds.length,
       }));
     }
     throw new Error(
@@ -399,9 +397,7 @@ async function computeBestPlanForCustomer(customerId: string): Promise<{
 
   if (debug) {
     console.log("[planSync] best", JSON.stringify({
-      customerId,
       picked: {
-        subId: selection.subscriptionId,
         plan,
         sortOrder: planDef.sortOrder,
       },
@@ -419,15 +415,13 @@ async function syncUserPlanByCustomerId(customerId: string): Promise<{
   userId: string;
   monthly_quota: number;
 } | null> {
-  console.log("[planSync] start", JSON.stringify({ customerId }));
+  console.log("[planSync] start");
 
   const best = await computeBestPlanForCustomer(customerId);
 
   console.log("[planSync] resolved", JSON.stringify({
-    customerId,
     plan: best.plan,
     monthly_quota: best.monthly_quota,
-    subscription_id: best.subscription_id,
   }));
 
   const updated = await updateUserByCustomerId({
@@ -438,7 +432,7 @@ async function syncUserPlanByCustomerId(customerId: string): Promise<{
   });
 
   if (!updated?.userId) {
-    console.warn("[planSync] user not found for customer", { customerId });
+    console.warn("[planSync] user not found for customer");
     return null;
   }
 
@@ -448,8 +442,6 @@ async function syncUserPlanByCustomerId(customerId: string): Promise<{
   });
 
   console.log("[planSync] applied", JSON.stringify({
-    customerId,
-    userId: updated.userId,
     monthly_quota: best.monthly_quota,
   }));
 
@@ -475,10 +467,14 @@ export async function POST(req: Request) {
       mustEnv("STRIPE_WEBHOOK_SECRET"),
     );
   } catch (e: unknown) {
+    console.warn(
+      "[stripe-webhook:signature-invalid]",
+      stripeRouteErrorDiagnostic(e)
+    );
     return NextResponse.json(
       {
         ok: false,
-        error: `Webhook signature verification failed: ${errorMessage(e)}`,
+        error: "Webhook signature verification failed",
       },
       { status: 400 }
     );
@@ -502,16 +498,18 @@ export async function POST(req: Request) {
     }
     processingToken = claim.token;
   } catch (e: unknown) {
-    console.error("webhook claim failed", e);
+    console.error(
+      "[stripe-webhook:claim-failed]",
+      stripeRouteErrorDiagnostic(e)
+    );
     return NextResponse.json(
-      { ok: false, error: errorMessage(e) },
+      { ok: false, error: stripeRouteErrorMessage("webhook") },
       { status: 500 }
     );
   }
 
   try {
     console.log("[stripeWebhook] received", JSON.stringify({
-      id: event.id,
       type: event.type,
       created: event.created,
     }));
@@ -532,10 +530,7 @@ export async function POST(req: Request) {
           : null);
 
       console.log("[stripeWebhook] checkout.session.completed", JSON.stringify({
-        sessionId: session.id,
-        customerId,
-        subscriptionId,
-        email,
+        identitySource: session.metadata?.user_id ? "user_id" : "legacy",
       }));
 
 
@@ -558,11 +553,7 @@ export async function POST(req: Request) {
       }
 
       if (identity.kind === "legacy_email") {
-        console.warn("[stripeWebhook] using legacy email identity", {
-          id: session.id,
-          customerId,
-          subscriptionId,
-        });
+        console.warn("[stripeWebhook] using legacy identity");
       }
 
       // 一旦このsubscriptionのpriceIdから暫定プランを入れる（紐付け優先）
@@ -603,11 +594,8 @@ export async function POST(req: Request) {
           stripe_subscription_id: subscriptionId,
         });
 
-        console.error("[planSync] unknown priceId on checkout.session.completed", {
+        console.error("[planSync] unknown price on checkout.session.completed", {
           identityKind: identity.kind,
-          customerId,
-          subscriptionId,
-          priceId,
         });
       }
 
@@ -628,10 +616,8 @@ export async function POST(req: Request) {
 
       console.log("[stripeWebhook] subscription.event", JSON.stringify({
         type: event.type,
-        subId: sub.id,
-        customerId,
         status: sub.status,
-        prices: (sub.items?.data ?? []).map((it) => it.price?.id ?? null),
+        itemCount: sub.items?.data?.length ?? 0,
       }));
 
       if (customerId) {
@@ -648,10 +634,8 @@ export async function POST(req: Request) {
 
       console.log("[stripeWebhook] subscription.event", JSON.stringify({
         type: event.type,
-        subId: sub.id,
-        customerId,
         status: sub.status,
-        prices: (sub.items?.data ?? []).map((it) => it.price?.id ?? null),
+        itemCount: sub.items?.data?.length ?? 0,
       }));
 
       if (customerId) {
@@ -659,8 +643,7 @@ export async function POST(req: Request) {
           await syncUserPlanByCustomerId(customerId);
         } catch (e) {
           console.warn("[planSync] first deleted-sync failed, retrying once", {
-            customerId,
-            error: e instanceof Error ? e.message : String(e),
+            diagnostic: stripeRouteErrorDiagnostic(e),
           });
 
           await new Promise((r) => setTimeout(r, 1500));
@@ -673,10 +656,13 @@ export async function POST(req: Request) {
 
     return processedResponse(event.id, processingToken);
   } catch (e: unknown) {
-    console.error("webhook handler error", e);
+    console.error(
+      "[stripe-webhook:handler-failed]",
+      stripeRouteErrorDiagnostic(e)
+    );
     await markWebhookEventFailed(event.id, processingToken, e);
     return NextResponse.json(
-      { ok: false, error: errorMessage(e) },
+      { ok: false, error: stripeRouteErrorMessage("webhook") },
       { status: 500 }
     );
   }

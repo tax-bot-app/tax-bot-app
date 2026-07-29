@@ -6,6 +6,10 @@ import { createClient } from "@supabase/supabase-js";
 import { checkoutIdempotencyKey } from "../../lib/checkoutIdempotency";
 import { getPriceId, type PlanKey } from "../../lib1/planMaster";
 import { siteOrigin } from "../../lib/siteOrigin";
+import {
+  stripeRouteErrorDiagnostic,
+  stripeRouteErrorMessage,
+} from "../../lib/stripeRouteError";
 
 function mustEnv(name: string) {
   const v = process.env[name];
@@ -138,8 +142,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, url: session.url }, { status: 200 });
   } catch (e: unknown) {
-    console.error("create-checkout error:", e);
-    const message = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    console.error(
+      "[stripe-checkout:failed]",
+      stripeRouteErrorDiagnostic(e)
+    );
+    return NextResponse.json(
+      { ok: false, error: stripeRouteErrorMessage("checkout") },
+      { status: 500 }
+    );
   }
 }

@@ -131,6 +131,15 @@ Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployす�
 3. 未購入利用者で請求設定を開き、Stripe Customerが新規作成されずトップのプラン選択へ戻ることを確認
 4. 別利用者の `stripe_customer_id` が使用されていないことをStripe Dashboardで確認
 
+### Stripe系APIの内部エラー非表示確認
+
+1. テスト環境でCheckout Session作成を意図的に失敗させ、画面には決済画面を準備できない旨の固定案内だけが表示されることを確認
+2. Customer Portal Session作成を意図的に失敗させ、画面には請求情報を開けない旨の固定案内だけが表示されることを確認
+3. Webhookの署名検証と処理をそれぞれ失敗させ、レスポンスへStripe・Supabase・ENV・内部テーブルのエラー本文が含まれないことを確認
+4. Vercelログにメールアドレス、User ID、Customer ID、Subscription ID、Session ID、Price ID、Event ID、生のエラー本文が出ていないことを確認
+5. 失敗したWebhookの `stripe_webhook_events.last_error` が、安全な診断項目だけのJSONになっていることを確認
+6. 正常なCheckout、Customer Portal、Webhook処理とStripe再送が従来どおり動作することを確認
+
 ## セキュリティヘッダ確認
 
 本番デプロイ後、トップページと認証・チャット画面のレスポンスヘッダを確認する。

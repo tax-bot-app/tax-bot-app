@@ -5,6 +5,10 @@ import { NextResponse } from "next/server";
 
 import { resolvePortalCustomerAccess } from "../../../lib/portalCustomerAccess";
 import { siteOrigin } from "../../../lib/siteOrigin";
+import {
+  stripeRouteErrorDiagnostic,
+  stripeRouteErrorMessage,
+} from "../../../lib/stripeRouteError";
 
 export const runtime = "nodejs";
 
@@ -12,10 +16,6 @@ function mustEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
   return v;
-}
-
-function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function bearerFromReq(req: Request): string | null {
@@ -87,7 +87,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, url: session.url }, { status: 200 });
   } catch (e: unknown) {
-    console.error("portal route error", e);
-    return NextResponse.json({ ok: false, error: errorMessage(e) }, { status: 500 });
+    console.error("[stripe-portal:failed]", stripeRouteErrorDiagnostic(e));
+    return NextResponse.json(
+      { ok: false, error: stripeRouteErrorMessage("portal") },
+      { status: 500 }
+    );
   }
 }
