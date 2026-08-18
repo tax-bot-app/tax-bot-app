@@ -889,33 +889,90 @@ const bypass = (() => {
 
             <div style={styles.exampleAnswer}>
               <p style={{ margin: 0 }}>
-                <strong>1日2万円に設定できる可能性はあります。</strong>
+                <strong>1日2万円は「高いから即NG」という金額ではありません。</strong>
                 <br />
-                ただし、旅費規程に書けば、その全額が自動的に非課税になるわけではありません。
-              </p>
-
-              <ul style={{ margin: "12px 0 0 20px", padding: 0 }}>
-                <li>
-                  出張日当は、出張に通常必要と認められる範囲であれば、給与として課税されない可能性があります。
-                </li>
-                <li>
-                  金額の妥当性は、役員と従業員のバランスや、同業・同規模の会社と比べて不自然でないかなどから判断されます。
-                </li>
-              </ul>
-
-              <p style={{ margin: "12px 0 0" }}>
-                <strong>注意したいのは、社長だけが2万円で、従業員との差が大きいケースです。</strong>
-                <br />
-                出張の距離や日数に関係なく一律に支給している場合も、税務調査では理由を聞かれやすくなります。
+                ただし、社長だけ2万円で従業員との差が大きい場合や、近距離出張まで一律2万円にしている場合は、理由を説明できる設計が必要です。
               </p>
 
               <p style={{ margin: "12px 0 0" }}>
-                御社で2万円が現実的か整理するには、会社規模・従業員数、役員報酬、出張先や頻度、交通費・宿泊費の精算方法、旅費規程の内容を確認する必要があります。
+                宿泊と日帰りをどう分けるか、旅費規程にどう定めているか、実際も規程どおり運用しているかによって、税務上の見え方は変わります。
               </p>
 
-              <p style={{ margin: "12px 0 0", fontWeight: 900, color: "#0B1220" }}>
-                条件を確認しながら、無理のない金額と運用方法を整理しましょう。
+              <div
+                style={{
+                  marginTop: 16,
+                  padding: "14px 14px 15px",
+                  border: "1px solid #E6EAF2",
+                  borderRadius: 12,
+                  background: "rgba(248,246,240,0.72)",
+                }}
+              >
+                <p style={{ margin: 0, fontWeight: 900, color: "#0B1220" }}>
+                  🔒 ここからは、自社条件で具体的に整理
+                </p>
+
+                <ul style={{ margin: "10px 0 0 20px", padding: 0 }}>
+                  <li>社長2万円／従業員○円の役職差</li>
+                  <li>宿泊／日帰りの線引き</li>
+                  <li>近距離出張をどう扱うか</li>
+                  <li>税務調査で説明しやすい旅費規程の組み方</li>
+                </ul>
+
+                <p style={{ margin: "12px 0 0", fontWeight: 800, color: "#0B1220" }}>
+                  御社なら2万円をどう設計するかまで、本サービスで具体的に整理できます。
+                </p>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <button style={styles.btnPrimary} onClick={onClickExampleTry}>
+                自社の場合を相談してみる
+              </button>
+            </div>
+          </article>
+
+          <article style={styles.exampleCard} aria-labelledby="example-entertainment-expense">
+            <p style={styles.exampleLabel}>相談例・回答例</p>
+            <h3 id="example-entertainment-expense" style={styles.exampleQuestion}>
+              取引先との高級クラブで、一晩20万円使いました。交際費にして大丈夫ですか？
+            </h3>
+
+            <div style={styles.exampleAnswer}>
+              <p style={{ margin: 0 }}>
+                <strong>20万円だからという理由だけで、直ちに経費にできないわけではありません。</strong>
+                <br />
+                大切なのは、誰と行ったか、何の目的だったか、その支出が会社の事業とどう関係するかを説明できることです。
               </p>
+
+              <p style={{ margin: "12px 0 0" }}>
+                取引先との関係づくりとして必要な飲食なのか、社長個人の飲食を会社負担にしたものなのか。その線引きは、金額だけでなく利用実態から判断されます。
+              </p>
+
+              <div
+                style={{
+                  marginTop: 16,
+                  padding: "14px 14px 15px",
+                  border: "1px solid #E6EAF2",
+                  borderRadius: 12,
+                  background: "rgba(248,246,240,0.72)",
+                }}
+              >
+                <p style={{ margin: 0, fontWeight: 900, color: "#0B1220" }}>
+                  🔒 ここからは、自社条件で具体的に整理
+                </p>
+
+                <ul style={{ margin: "10px 0 0 20px", padding: 0 }}>
+                  <li>20万円、30万円と高額になった場合の考え方</li>
+                  <li>同じクラブへ毎月行っている場合の見え方</li>
+                  <li>領収書以外に何を残しておくと説明しやすいか</li>
+                  <li>二次会・三次会まで会社負担にした場合</li>
+                  <li>税務調査で聞かれたときの論点</li>
+                </ul>
+
+                <p style={{ margin: "12px 0 0", fontWeight: 800, color: "#0B1220" }}>
+                  「一般論として経費になるか」ではなく、御社の使い方ならどこまで現実的かを整理します。
+                </p>
+              </div>
             </div>
 
             <div style={{ marginTop: 14 }}>
