@@ -665,8 +665,36 @@ const bypass = (() => {
   whiteSpace: "nowrap",
 },
 
-    footer: { marginTop: 40, color: "rgba(11,18,32,0.62)", fontSize: 12, lineHeight: 1.7 },
-    footerTitle: { fontWeight: 900, color: "rgba(11,18,32,0.92)" },
+    footer: {
+      marginTop: 48,
+      padding: "26px 24px 18px",
+      border: "1px solid #E6EAF2",
+      borderRadius: 20,
+      background: "rgba(255,255,255,0.76)",
+      boxShadow: "0 18px 44px rgba(17,43,70,0.06)",
+      color: "rgba(11,18,32,0.68)",
+      fontSize: 13,
+      lineHeight: 1.75,
+    },
+    footerTitle: { margin: 0, fontSize: 18, fontWeight: 950, color: "#0B1220" },
+    footerLead: { margin: "8px 0 0", maxWidth: 460, color: "rgba(11,18,32,0.76)", lineHeight: 1.75 },
+    footerMeta: { margin: "14px 0 0", color: "rgba(11,18,32,0.68)" },
+    footerHeading: {
+      margin: 0,
+      color: "#9A7027",
+      fontSize: 12,
+      fontWeight: 900,
+      letterSpacing: "0.08em",
+    },
+    footerLinks: { display: "grid", gap: 8, marginTop: 10 },
+    footerLink: { color: "rgba(11,18,32,0.82)", fontWeight: 700, textDecoration: "none" },
+    footerBottom: {
+      marginTop: 24,
+      paddingTop: 14,
+      borderTop: "1px solid #E6EAF2",
+      color: "rgba(11,18,32,0.52)",
+      fontSize: 12,
+    },
   };
 
   return (
@@ -1108,10 +1136,62 @@ const bypass = (() => {
 
         {/* Footer */}
         <footer style={styles.footer}>
-          <div style={styles.footerTitle}>税理士法人GLADZ</div>
-          <div>大阪府大阪市北区梅田1-3-1</div>
-          <div>大阪駅前第１ビル10階</div>
-          <div>代表税理士　野口　集平</div>
+          <div className="footerGrid">
+            <div>
+              <p style={styles.footerTitle}>さじかげん｜税務相談</p>
+              <p style={styles.footerLead}>
+                税理士法人GLADZが提供する、経営者向けAI税務相談です。
+                税務調査の現実まで踏まえ、自社に合った判断材料を整理します。
+              </p>
+              <p style={styles.footerMeta}>
+                運営：税理士法人GLADZ
+                <br />
+                代表社員・税理士　野口 集平
+                <br />
+                〒530-0001 大阪府大阪市北区梅田1-3-1
+                <br />
+                大阪駅前第1ビル10階
+              </p>
+            </div>
+
+            <nav aria-label="サービス関連リンク">
+              <p style={styles.footerHeading}>サービス</p>
+              <div style={styles.footerLinks}>
+                <Link href="/faq" style={styles.footerLink}>
+                  FAQ
+                </Link>
+                <Link href="/login" style={styles.footerLink}>
+                  ログイン
+                </Link>
+                <a
+                  href="https://www.gladplan.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="税理士法人GLADZ公式サイト（新しいタブで開く）"
+                  style={styles.footerLink}
+                >
+                  税理士法人GLADZ 公式サイト ↗
+                </a>
+              </div>
+            </nav>
+
+            <nav aria-label="法務関連リンク">
+              <p style={styles.footerHeading}>ご利用にあたって</p>
+              <div style={styles.footerLinks}>
+                <Link href="/terms" style={styles.footerLink}>
+                  利用規約
+                </Link>
+                <Link href="/privacy" style={styles.footerLink}>
+                  プライバシーポリシー
+                </Link>
+                <Link href="/commerce" style={styles.footerLink}>
+                  販売・提供条件
+                </Link>
+              </div>
+            </nav>
+          </div>
+
+          <div style={styles.footerBottom}>© 税理士法人GLADZ</div>
         </footer>
 
         <style jsx>{`
@@ -1168,6 +1248,13 @@ const bypass = (() => {
     margin: 34px auto 0;
   }
 
+  .footerGrid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(150px, 0.65fr) minmax(180px, 0.8fr);
+    gap: 34px;
+    align-items: start;
+  }
+
   @media (max-width: 860px) {
     .introGrid {
       grid-template-columns: 1fr;
@@ -1177,6 +1264,11 @@ const bypass = (() => {
 
     .introGrid #demo {
       margin-top: 14px !important;
+    }
+
+    .footerGrid {
+      grid-template-columns: 1fr;
+      gap: 24px;
     }
 
     #hero {
