@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { getSupabaseClient } from "./lib/supabaseClient";
 import { trackDemoStart, trackInitiateCheckout, trackPlanView } from "./lib/metaPixel";
@@ -564,6 +565,17 @@ const bypass = (() => {
       background: "rgba(255,255,255,0.78)",
       boxShadow: "0 18px 44px rgba(17,43,70,0.06)",
     },
+    flowSection: {
+      marginTop: 34,
+    },
+    flowDesktopImage: {
+      width: "100%",
+      height: "auto",
+      display: "block",
+      borderRadius: 20,
+      border: "1px solid rgba(176,132,52,0.22)",
+      boxShadow: "0 20px 50px rgba(17,43,70,0.08)",
+    },
     exampleLabel: {
       margin: 0,
       color: "#9A7027",
@@ -838,7 +850,7 @@ const bypass = (() => {
           <h2 style={styles.sectionTitle}>無料体験（3回）</h2>
 
           <div style={styles.expertCard}>
-            <img
+            <Image
               src="/ai-noguchi-signup.PNG"
               alt="税理士 野口集平"
               style={styles.expertPhoto}
@@ -907,6 +919,59 @@ const bypass = (() => {
           </div>
         </section>
         </div>
+
+        <section
+          className="serviceFlowSection"
+          style={styles.flowSection}
+          aria-label="さじかげんで相談を前に進める流れ"
+        >
+          <div className="serviceFlowDesktop">
+            <img
+              src="/sajikagen-service-flow.webp"
+              alt="知り合いの話を聞き、顧問税理士へ相談して止まった話を、さじかげんで整理して次へ進めるサービスの流れ"
+              style={styles.flowDesktopImage}
+              width={1672}
+              height={941}
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+
+          <div className="serviceFlowMobile">
+            <h2>「ダメです」で終わった話にも、次の一手が見えてくる。</h2>
+            <p>
+              さじかげんは、顧問税理士を変えるサービスではなく、相談を前に進めるための整理役です。
+            </p>
+
+            <ol aria-label="相談を前に進める4つの場面">
+              {[1, 2, 3, 4].map((step) => (
+                <li key={step}>
+                  <Image
+                    src={`/sajikagen-service-flow-step-${step}.webp`}
+                    alt={
+                      [
+                        "知り合いの話を聞く",
+                        "顧問税理士に相談する",
+                        "腑に落ちず、モヤモヤしたまま止まる",
+                        "さじかげんで整理して、次へ進む",
+                      ][step - 1]
+                    }
+                    width={[400, 377, 369, 485][step - 1]}
+                    height={506}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </li>
+              ))}
+            </ol>
+
+            <div className="serviceFlowBenefits">
+              <p><strong>理由が分かる</strong><span>納得できる説明で判断できます。</span></p>
+              <p><strong>リスクを承知して判断できる</strong><span>メリット・デメリットと現実解が見えます。</span></p>
+              <p><strong>やりたいことを通しやすくなる</strong><span>顧問税理士への相談が具体的になります。</span></p>
+            </div>
+          </div>
+        </section>
 
         <section className="contentSection">
           <article style={styles.exampleCard} aria-labelledby="example-trip-allowance">
@@ -1248,6 +1313,10 @@ const bypass = (() => {
     margin: 34px auto 0;
   }
 
+  .serviceFlowMobile {
+    display: none;
+  }
+
   .footerGrid {
     display: grid;
     grid-template-columns: minmax(0, 1.5fr) minmax(150px, 0.65fr) minmax(180px, 0.8fr);
@@ -1269,6 +1338,78 @@ const bypass = (() => {
     .footerGrid {
       grid-template-columns: 1fr;
       gap: 24px;
+    }
+
+    .serviceFlowSection {
+      margin-top: 30px !important;
+    }
+
+    .serviceFlowDesktop {
+      display: none;
+    }
+
+    .serviceFlowMobile {
+      display: block;
+      padding: 22px 16px;
+      border: 1px solid rgba(176,132,52,0.24);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.70);
+      box-shadow: 0 18px 44px rgba(17,43,70,0.06);
+    }
+
+    .serviceFlowMobile h2 {
+      margin: 0;
+      color: #112B46;
+      font-size: 25px;
+      line-height: 1.5;
+    }
+
+    .serviceFlowMobile > p {
+      margin: 12px 0 0;
+      color: rgba(17,43,70,0.76);
+      line-height: 1.8;
+    }
+
+    .serviceFlowMobile ol {
+      display: grid;
+      gap: 14px;
+      margin: 20px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .serviceFlowMobile li {
+      overflow: hidden;
+      border-radius: 14px;
+      box-shadow: 0 12px 28px rgba(17,43,70,0.10);
+    }
+
+    .serviceFlowMobile li img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .serviceFlowBenefits {
+      display: grid;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .serviceFlowBenefits p {
+      display: grid;
+      gap: 3px;
+      margin: 0;
+      padding: 12px 14px;
+      border-left: 3px solid #168F8B;
+      background: rgba(22,143,139,0.06);
+      color: #112B46;
+      line-height: 1.6;
+    }
+
+    .serviceFlowBenefits span {
+      color: rgba(17,43,70,0.72);
+      font-size: 13px;
     }
 
     #hero {
