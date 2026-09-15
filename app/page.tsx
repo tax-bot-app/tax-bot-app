@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { getSupabaseClient } from "./lib/supabaseClient";
 import { trackDemoStart, trackInitiateCheckout, trackPlanView } from "./lib/metaPixel";
+import { trackOpenAILeadCreatedOnce } from "./lib/openaiAds";
 
 type Plan = "lite" | "standard" | "enterprise";
 
@@ -46,7 +47,12 @@ const PLAN_META_PRICE: Record<Plan, number> = {
 
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
 type DemoRes =
-  | { ok: true; answer: string; usedAttempts: number }
+  | {
+      ok: true;
+      answer: string;
+      usedAttempts: number;
+      conversionEligible?: boolean;
+    }
   | { ok: false; error: string; usedAttempts?: number };
 
 declare global {
@@ -121,6 +127,7 @@ export default function Home() {
   const [demoAnswer, setDemoAnswer] = useState<string | null>(null);
   const [demoError, setDemoError] = useState<string | null>(null);
   const [demoAnsweredThisSession, setDemoAnsweredThisSession] = useState(false);
+  const [demoLeadEligible, setDemoLeadEligible] = useState(false);
 
   // plans
   const [agreed, setAgreed] = useState(false);
@@ -216,6 +223,16 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [demoBusy]);
 
+  useEffect(() => {
+    if (
+      demoAnsweredThisSession &&
+      demoLeadEligible &&
+      demoAnswer
+    ) {
+      trackOpenAILeadCreatedOnce();
+    }
+  }, [demoAnswer, demoAnsweredThisSession, demoLeadEligible]);
+
   const scrollTo = (el: HTMLElement | null) => {
     if (!el) return;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -236,6 +253,7 @@ export default function Home() {
   const submitDemo = async () => {
     setDemoError(null);
     setDemoAnsweredThisSession(false);
+    setDemoLeadEligible(false);
     if (demoLimitReached) {
       setDemoAnswer("無料体験は3回までです。続きはプランから整理できます。");
       setPlansOpen(true);
@@ -293,6 +311,7 @@ const bypass = (() => {
       setDemoAnswer(json.answer);
       setDemoUsed(json.usedAttempts);
       setDemoAnsweredThisSession(true);
+      setDemoLeadEligible(json.conversionEligible === true);
       markDemoCountCookieAndLS(json.usedAttempts);
 
       // ✅ デモ回答表示後は、ユーザーの視線を回答に固定（自動スクロールしない）

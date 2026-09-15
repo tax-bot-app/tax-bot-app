@@ -1,9 +1,10 @@
 // app/checkout/page.tsx
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
+import { trackOpenAICheckoutStarted } from "@/app/lib/openaiAds";
 
 const ALLOWED = new Set(["lite", "standard", "enterprise"]);
 
@@ -11,6 +12,7 @@ function CheckoutInner() {
   const supabase = useMemo(() => getSupabaseClient(), []);
   const sp = useSearchParams();
   const [msg, setMsg] = useState("決済画面を開いています…");
+  const checkoutMeasuredRef = useRef(false);
 
   useEffect(() => {
     const planRaw = String(sp.get("plan") ?? "").toLowerCase();
@@ -51,6 +53,10 @@ function CheckoutInner() {
           throw new Error(json?.error || "決済ページの作成に失敗しました。");
         }
 
+        if (!checkoutMeasuredRef.current) {
+          trackOpenAICheckoutStarted();
+          checkoutMeasuredRef.current = true;
+        }
         window.location.href = json.url;
       } catch (e: any) {
         setMsg(e?.message ?? "決済ページの作成に失敗しました。");

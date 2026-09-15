@@ -110,7 +110,33 @@ ChatGPTは、次の条件を満たす上書き用ZIPを返す。
 6. OpenAI Ads Managerのイベントストリームで、Pixelからの受信を確認する。反映に時間がかかる場合は、二重実装せず時間を置いて再確認する。
 7. Meta PixelのPageView／既存イベントとGoogle Adsの計測が従来どおり動作することを確認する。
 
-この段階では `DemoSubmit`、`PlanView`、`Checkout`、`Purchase` を送信しない。Pixel本体の受信確認後、イベント実装を別リリースで行う。
+### コンバージョンイベントの本番確認
+
+確認前に、ブラウザの開発者ツールでConsoleとNetworkを開き、OpenAI Ads Managerの対象Pixelのイベントストリームも表示する。質問本文、メールアドレス、User ID、Stripe ID等がイベントpayloadへ含まれていないことも確認する。
+
+#### 無料体験成功：`lead_created`
+
+1. OpenAI Adsの計測用保存値がない新しいブラウザ環境で、無料体験へ有効な相談を送信する。
+2. 送信直後や「いま内容を整理しています」の表示中には `lead_created` が送られないことを確認する。
+3. 通常回答が画面へ表示された直後に、`lead_created` と `{ type: "customer_action" }` が1回だけ送られることを確認する。
+4. 同じ端末で2回目、3回目の無料体験を正常完了しても再送されないことを確認する。
+5. 上限拒否、ガードレール遮断、空回答、タイムアウト、APIエラーでは送られないことを確認する。
+
+#### Checkout開始：`checkout_started`
+
+1. ログイン済みの未契約ユーザーでプランを選び、Checkoutへ進む。
+2. `/api/create-checkout` が200を返し、Stripe Checkout URLを取得した後、Stripe画面へ移動する直前に `checkout_started` と `{ type: "contents" }` が1回送られることを確認する。
+3. 未ログイン、認証失敗、API失敗、URL未取得の場合には送られないことを確認する。
+
+#### 契約成立：`subscription_created`
+
+1. Stripeの本番確認用契約を正常完了し、`/success?session_id=...` へ戻る。
+2. `/api/openai-ads/subscription-confirmation` が、ログイン本人とCheckout Sessionの利用者情報、Checkout完了、Subscriptionの `active` または `trialing` を確認して200を返すことをNetworkで確認する。
+3. 確認後に `subscription_created` と `{ type: "plan_enrollment" }` が1回だけ送られることを確認する。
+4. success画面を再読み込みしても、同じ契約について再送されないことを確認する。
+5. `session_id` なし、別利用者のSession、未完了Session、`active`／`trialing` 以外のSubscriptionでは送られないことを確認する。
+
+最後にOpenAI Ads Managerのイベントストリームで、`lead_created`、`checkout_started`、`subscription_created` の3件を確認する。反映に時間がかかる場合はコードを二重実装せず、時間を置いて再確認する。あわせてMeta PixelとGoogle Adsの既存イベントが従来どおり動作することを確認する。
 
 ## 無料体験APIの内部エラー非表示確認
 

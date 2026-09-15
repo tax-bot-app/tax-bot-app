@@ -14,7 +14,12 @@ import crypto from "crypto";
 export const runtime = "nodejs";
 
 type DemoRes =
-  | { ok: true; answer: string; usedAttempts: number }
+  | {
+      ok: true;
+      answer: string;
+      usedAttempts: number;
+      conversionEligible: boolean;
+    }
   | { ok: false; error: string; usedAttempts?: number };
 
 const DEMO_MAX_INPUT = 400;
@@ -482,7 +487,12 @@ export async function POST(req: Request) {
     if (gr.action === "block") {
       // block でも「1回消費」扱いにする（抜け道防止）
       keepReservation = true;
-      const res = NextResponse.json({ ok: true, answer: String(gr.userMessage ?? "").trim(), usedAttempts } satisfies DemoRes);
+      const res = NextResponse.json({
+        ok: true,
+        answer: String(gr.userMessage ?? "").trim(),
+        usedAttempts,
+        conversionEligible: false,
+      } satisfies DemoRes);
       if (!bypass) setDemoCookie(res, usedAttempts);
       return res;
     }
@@ -536,7 +546,12 @@ export async function POST(req: Request) {
 
     const answer = attemptResult.answer;
     keepReservation = true;
-    const res = NextResponse.json({ ok: true, answer, usedAttempts } satisfies DemoRes);
+    const res = NextResponse.json({
+      ok: true,
+      answer,
+      usedAttempts,
+      conversionEligible: true,
+    } satisfies DemoRes);
     if (!bypass) setDemoCookie(res, usedAttempts);
     return res;
   } catch (e: unknown) {

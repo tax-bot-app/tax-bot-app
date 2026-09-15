@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { trackPurchase } from "../lib/metaPixel";
+import { trackOpenAISubscriptionCreatedOnce } from "../lib/openaiAds";
+import { getSupabaseClient } from "../lib/supabaseClient";
 
 export default function SuccessPage() {
   const router = useRouter();
@@ -11,6 +13,58 @@ export default function SuccessPage() {
 
   useEffect(() => {
     trackPurchase();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const confirmSubscription = async () => {
+      const sessionId = new URLSearchParams(window.location.search).get(
+        "session_id"
+      );
+      if (!sessionId) return;
+
+      const supabase = getSupabaseClient();
+      let token = "";
+      for (let i = 0; i < 2; i++) {
+        const { data } = await supabase.auth.getSession();
+        token = data.session?.access_token ?? "";
+        if (token) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
+      if (!token || cancelled) return;
+
+      const response = await fetch(
+        "/api/openai-ads/subscription-confirmation",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ sessionId }),
+        }
+      );
+      const result = (await response.json().catch(() => null)) as {
+        confirmed?: boolean;
+        conversionId?: string;
+      } | null;
+
+      if (!response.ok || !result?.confirmed || !result.conversionId) return;
+
+      for (let i = 0; i < 3 && !cancelled; i++) {
+        if (trackOpenAISubscriptionCreatedOnce(result.conversionId)) return;
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
+    };
+
+    void confirmSubscription().catch(() => {
+      // 広告計測に失敗しても申込完了画面と既存導線は止めない。
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ✅ 5秒カウントダウン → /chat へ自動遷移
