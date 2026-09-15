@@ -91,6 +91,27 @@ ChatGPTは、次の条件を満たす上書き用ZIPを返す。
 7. DB取得・保存を意図的に失敗させ、画面とレスポンスにSupabase、ENV、内部テーブル等のエラー本文が出ないことを確認
 8. Vercelログに本文、会話内容、Bearer token、メールアドレス、エラー本文、スタックが出ていないことを確認
 
+## OpenAI Ads Pixel
+
+### Vercel設定
+
+1. Vercel Productionに `NEXT_PUBLIC_OPENAI_ADS_PIXEL_ID` を設定する。
+2. 値にはOpenAI Ads Managerで作成した公開用Pixel IDを使用する。
+3. 設定後にProductionをRedeployする。
+4. `debug` 用のENVや秘密値は追加しない。
+
+### 本番確認
+
+1. VercelのDeploymentが `Ready` になったことを確認する。
+2. 本番サイトを通常のブラウザで1回開く。
+3. ブラウザのNetworkで `https://bzrcdn.openai.com/sdk/oaiq.min.js` が正常取得されることを確認する。
+4. ConsoleでOpenAI Ads Pixelの読込エラーや初期化エラーが出ていないことを確認する。
+5. ページ内遷移や再描画でSDKの読込・初期化が重複していないことを確認する。
+6. OpenAI Ads Managerのイベントストリームで、Pixelからの受信を確認する。反映に時間がかかる場合は、二重実装せず時間を置いて再確認する。
+7. Meta PixelのPageView／既存イベントとGoogle Adsの計測が従来どおり動作することを確認する。
+
+この段階では `DemoSubmit`、`PlanView`、`Checkout`、`Purchase` を送信しない。Pixel本体の受信確認後、イベント実装を別リリースで行う。
+
 ## 無料体験APIの内部エラー非表示確認
 
 1. 空回答を発生させ、画面に英語の内部文言やOpenAI・Supabaseのエラー本文が表示されず、回答作成失敗の固定案内になることを確認
