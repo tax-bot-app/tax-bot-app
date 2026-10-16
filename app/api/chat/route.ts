@@ -8,6 +8,7 @@ import { decideSuppressBrandingByLLM } from "../../lib2/guardrails/brandSuppress
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { precheckChatQuota } from "../../lib/chatQuotaPrecheck";
+import { chooseChatCreditSource } from "../../lib/chatCreditSource";
 import {
   publicChatErrorDiagnostic,
   publicChatErrorMessage,
@@ -118,6 +119,7 @@ type ChatRes =
       plan: string;
       used_talks: number | null;
       limit_talks: number | null;
+      single_credits: number;
       conversation_id: string | null;
       message: string;
 // ★追加（任意）
@@ -129,6 +131,7 @@ guardrail_action?: "block" | "inject" | "none";
       error: string;
       used_talks?: number | null;
       limit_talks?: number | null;
+      single_credits?: number;
       conversation_id?: string | null;
 
       // ★追加（任意）
@@ -3520,9 +3523,32 @@ export async function POST(req: Request) {
     const plan = normalizePlanKey(urow?.plan);
     const limit = getPlan(plan).monthlyQuota;
 
-    if (limit <= 0) {
+    const { data: singleCreditRow, error: singleCreditError } = await db
+      .from("single_credit_balances")
+      .select("balance")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (singleCreditError) {
+      console.error(
+        "[chat:single-credit-lookup-failed]",
+        publicChatErrorDiagnostic(singleCreditError)
+      );
       return NextResponse.json(
-        { ok: false, error: "Plan does not allow chat", used_talks: 0, limit_talks: 0 } satisfies ChatRes,
+        { ok: false, error: publicChatErrorMessage("status") } satisfies ChatRes,
+        { status: 500 }
+      );
+    }
+    let singleCredits = Number(singleCreditRow?.balance ?? 0);
+
+    if (limit <= 0 && singleCredits <= 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Plan does not allow chat",
+          used_talks: 0,
+          limit_talks: 0,
+          single_credits: 0,
+        } satisfies ChatRes,
         { status: 403 }
       );
     }
@@ -3615,6 +3641,7 @@ await writeDebugEvent({
       plan,
       used_talks: null,
       limit_talks: null,
+      single_credits: singleCredits,
       conversation_id: convId,
       message: gr.userMessage,
       guardrail_block: true,
@@ -3659,13 +3686,20 @@ await writeDebugEvent({
       );
     }
 
-    if (quotaPrecheck.kind === "exceeded") {
+    const creditSource = chooseChatCreditSource({
+      monthlyAvailable: quotaPrecheck.kind === "allowed",
+      singleCredits,
+    });
+    const useSingleCredit = creditSource === "single";
+
+    if (quotaPrecheck.kind === "exceeded" && creditSource === "none") {
       return NextResponse.json(
         {
           ok: false,
           error: "Monthly quota exceeded",
           used_talks: quotaPrecheck.usedTalks,
           limit_talks: limit,
+          single_credits: singleCredits,
         } satisfies ChatRes,
         { status: 429 }
       );
@@ -3702,36 +3736,98 @@ try {
   );
 }
 
-    const { data, error } = await db.rpc("consume_talk_v2", {
-      p_user_id: user.id,
-      p_limit: limit,
-      p_idempotency_key: idempotencyKey,
-    });
+    let usage: ConsumeTalkV2Result = {
+      month_key: currentJstMonth(),
+      used_talks:
+        quotaPrecheck.kind === "exceeded" ? quotaPrecheck.usedTalks : 0,
+      limit_talks: limit,
+      allowed: false,
+      already_counted: false,
+    };
+    let usedSingleCredit = useSingleCredit;
 
-    if (error) {
-      console.error("[chat:usage-update-failed]", publicChatErrorDiagnostic(error));
-      return NextResponse.json(
-        { ok: false, error: publicChatErrorMessage("usage") } satisfies ChatRes,
-        { status: 500 }
-      );
+    if (!usedSingleCredit) {
+      const { data, error } = await db.rpc("consume_talk_v2", {
+        p_user_id: user.id,
+        p_limit: limit,
+        p_idempotency_key: idempotencyKey,
+      });
+
+      if (error) {
+        console.error(
+          "[chat:usage-update-failed]",
+          publicChatErrorDiagnostic(error)
+        );
+        return NextResponse.json(
+          { ok: false, error: publicChatErrorMessage("usage") } satisfies ChatRes,
+          { status: 500 }
+        );
+      }
+
+      const monthlyUsage = (Array.isArray(data) ? data[0] : data) as
+        | ConsumeTalkV2Result
+        | null;
+      if (!monthlyUsage) {
+        console.error("[chat:usage-empty-result]", { type: "empty-result" });
+        return NextResponse.json(
+          { ok: false, error: publicChatErrorMessage("usage") } satisfies ChatRes,
+          { status: 500 }
+        );
+      }
+
+      usage = monthlyUsage;
+      usedSingleCredit =
+        chooseChatCreditSource({
+          monthlyAvailable: monthlyUsage.allowed,
+          singleCredits,
+        }) === "single";
     }
 
-    const usage = (Array.isArray(data) ? data[0] : data) as ConsumeTalkV2Result | null;
-    if (!usage) {
-      console.error("[chat:usage-empty-result]", { type: "empty-result" });
-      return NextResponse.json(
-        { ok: false, error: publicChatErrorMessage("usage") } satisfies ChatRes,
-        { status: 500 }
-      );
+    if (usedSingleCredit) {
+      const { data, error } = await db.rpc("consume_single_credit", {
+        p_user_id: user.id,
+        p_idempotency_key: idempotencyKey,
+      });
+      if (error) {
+        console.error(
+          "[chat:single-credit-consume-failed]",
+          publicChatErrorDiagnostic(error)
+        );
+        return NextResponse.json(
+          { ok: false, error: publicChatErrorMessage("usage") } satisfies ChatRes,
+          { status: 500 }
+        );
+      }
+
+      const singleUsage = (Array.isArray(data) ? data[0] : data) as
+        | { allowed: boolean; already_counted: boolean; balance: number }
+        | null;
+      if (!singleUsage) {
+        console.error("[chat:single-credit-empty-result]", {
+          type: "empty-result",
+        });
+        return NextResponse.json(
+          { ok: false, error: publicChatErrorMessage("usage") } satisfies ChatRes,
+          { status: 500 }
+        );
+      }
+
+      singleCredits = Number(singleUsage.balance ?? 0);
+      usage = {
+        ...usage,
+        allowed: Boolean(singleUsage.allowed),
+        already_counted: Boolean(singleUsage.already_counted),
+      };
     }
 
     if (!usage.allowed) {
       return NextResponse.json(
         {
           ok: false,
-          error: "Monthly quota exceeded",
+          error: "No available consultations",
           used_talks: usage.used_talks,
           limit_talks: usage.limit_talks,
+          single_credits: singleCredits,
         } satisfies ChatRes,
         { status: 429 }
       );
@@ -3776,6 +3872,7 @@ try {
         plan,
         used_talks: usage.used_talks,
         limit_talks: usage.limit_talks,
+        single_credits: singleCredits,
         conversation_id: convId,
         message: answer,
       } satisfies ChatRes,

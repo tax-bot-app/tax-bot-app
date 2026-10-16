@@ -22,14 +22,20 @@ function bearer(req: Request): string | null {
 }
 
 type StatusRes =
-  | { ok: true; plan: string; used_talks: number | null; limit_talks: number | null }
+  | {
+      ok: true;
+      plan: string;
+      used_talks: number | null;
+      limit_talks: number | null;
+      single_credits: number;
+    }
   | { ok: false; error: string };
 
 export async function GET(req: Request) {
   try {
     const token = bearer(req);
     if (!token) {
-      const res: StatusRes = { ok: true, plan: "free", used_talks: 0, limit_talks: 0 };
+      const res: StatusRes = { ok: true, plan: "free", used_talks: 0, limit_talks: 0, single_credits: 0 };
       return NextResponse.json(res);
     }
 
@@ -41,7 +47,7 @@ export async function GET(req: Request) {
     const { data: userRes, error: userErr } = await authClient.auth.getUser(token);
 
     if (userErr || !userRes?.user) {
-      const res: StatusRes = { ok: true, plan: "free", used_talks: 0, limit_talks: 0 };
+      const res: StatusRes = { ok: true, plan: "free", used_talks: 0, limit_talks: 0, single_credits: 0 };
       return NextResponse.json(res);
     }
 
@@ -72,6 +78,21 @@ export async function GET(req: Request) {
     const plan = (urow?.plan as string) ?? "free";
     const baseLimit = Number(urow?.monthly_quota ?? 0);
 
+    const { data: singleCreditRow, error: singleCreditError } = await db
+      .from("single_credit_balances")
+      .select("balance")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (singleCreditError) {
+      console.error(
+        "[chat-status:single-credit-lookup-failed]",
+        publicChatErrorDiagnostic(singleCreditError)
+      );
+      const res: StatusRes = { ok: false, error: publicChatErrorMessage("status") };
+      return NextResponse.json(res, { status: 500 });
+    }
+    const single_credits = Number(singleCreditRow?.balance ?? 0);
+
      // ✅ 無制限（allowlist）なら usage 参照せずに返す
  const { data: isUnlimited, error: ulErr } = await db.rpc("is_unlimited_user", {
    p_user_id: user.id,
@@ -82,7 +103,7 @@ export async function GET(req: Request) {
    return NextResponse.json(res, { status: 500 });
  }
  if (Boolean(isUnlimited)) {
-   const res: StatusRes = { ok: true, plan, used_talks: 0, limit_talks: null };
+   const res: StatusRes = { ok: true, plan, used_talks: 0, limit_talks: null, single_credits };
    return NextResponse.json(res);
  }
 
@@ -108,6 +129,7 @@ export async function GET(req: Request) {
       plan,
       used_talks,
       limit_talks,
+      single_credits,
     };
     return NextResponse.json(res);
   } catch (e: unknown) {

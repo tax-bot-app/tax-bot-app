@@ -237,6 +237,49 @@ npm test
 6. 回数更新RPCが空結果を返す場合も、画面には利用回数更新の固定案内だけが表示されることを確認
 7. 正常な相談後もVercelログへ会話トレース、質問本文、回答全文が出ておらず、管理画面のchat-debugには従来どおり記録されることを確認
 
+## 単発購入クレジットの本番反映
+
+この変更はDB、Stripe Webhook、利用回数制御を同時に扱うため、`MAINTENANCE_MODE=hard` 相当で実施する。秘密値やPrice IDの実値はGitHub、作業ZIP、画面共有、運用文書へ貼らない。
+
+### 反映順
+
+1. Vercel Productionの `MAINTENANCE_MODE` を `hard` に変更してRedeployし、通常画面がメンテナンス表示になることを確認する。
+2. Supabase SQL Editorで `docs/sql/20261016_single_credits.sql` を実行し、`single_credit_balances`、`single_credit_ledger`、`grant_single_credits`、`consume_single_credit` が作成されたことを確認する。
+3. Vercel Productionへ `PRICE_ID_SINGLE_1`（980円の一回払いPrice）と `PRICE_ID_SINGLE_3`（1,980円の一回払いPrice）を追加する。Preview／Developmentへ入れる場合も各環境のStripeモードを混在させない。
+4. Stripe Webhook endpointで `checkout.session.completed`、`checkout.session.async_payment_succeeded`、`checkout.session.async_payment_failed` を受信できることを確認する。
+5. 変更ファイルをCommit、Pushし、Vercel Deploymentが `Ready` になるまで待つ。hard中も `/api/stripe/webhook` は署名検証付きで到達できることを確認する。
+6. 管理用の本番確認ユーザーで下記テストを行う。問題がなければ `MAINTENANCE_MODE=off` に戻してRedeployし、トップ・ログイン・無料体験・月額・単発・チャットを確認する。
+
+### DB・決済・利用回数の確認
+
+1. 980円商品を購入し、Stripe Sessionが `payment`／`paid`、台帳の購入行が1件、残数が+1になることを確認する。
+2. 1,980円商品を購入し、台帳の購入行が1件、残数が+3になることを確認する。
+3. 同じStripe Webhookイベントを再送し、台帳行と残数が増えないことを確認する。
+4. 単発残数だけを持つユーザーで正常回答を1回生成し、回答表示と残数-1を確認する。
+5. OpenAIエラー、タイムアウト、空回答を発生させ、残数が変わらないことを確認する。
+6. 残数0では回答生成を開始せず、利用案内になることを確認する。
+7. 残数1で同時送信し、成功は最大1件、残数は0未満にならないことを確認する。
+8. 月額ユーザーは従来どおり月間回数を使用することを確認する。
+9. 月額枠と単発残数の両方を持つユーザーでは月額だけが減り、単発残数が温存されることを確認する。月額上限後は単発が減ることを確認する。
+10. 未ログイン無料体験は従来どおり1端末3回で、単発残数へ影響しないことを確認する。
+
+### 画面・広告計測の確認
+
+1. 無料体験後に「1回だけ相談する 980円」「3回相談パック 1,980円」と「継続して相談する方はこちら」の月額3プランが表示されることを確認する。
+2. 未ログインから単発商品を選び、登録・メール認証・ログイン後も選択商品が保持され、対応する一回払いCheckoutへ進むことを確認する。
+3. Checkout URL取得後だけOpenAI Adsの `checkout_started` が送られることを確認する。
+4. 決済後はWebhook付与確認までsuccess画面が待機し、確認後に付与回数・残数を表示してチャットへ移動することを確認する。
+5. OpenAI Ads Managerのイベントストリームで、単発購入は `order_created` と `{ type: "contents", amount: 980または1980, currency: "JPY" }` が1回だけ記録されることを確認する。
+6. 単発購入で `subscription_created` が送られず、月額契約では従来どおり `subscription_created` が送られることを確認する。
+7. Meta Purchaseは単発の付与確認後に対応金額で1回送られ、既存Google／Meta／OpenAI Adsの月額計測が従来どおりであることを確認する。
+8. イベントpayloadに質問本文、メール、User ID、Stripe ID、Price IDが含まれないことを確認する。
+
+### 停止・ロールバック
+
+- SQL適用前にコードを公開しない。ENV不足、未知のPrice、Webhook失敗、残数不一致、二重付与、負数、月額回数の誤消費が1件でもあれば `hard` のまま停止する。
+- コードを戻す場合も、購入済みクレジットの台帳・残数テーブルは削除しない。Stripe商品・Priceを直ちにアーカイブせず、未処理Webhookと購入履歴を照合する。
+- `off` へ戻す前にStripe Dashboard、Vercel Runtime Logs、Supabase台帳の3点が一致することを確認する。
+
 ## Stripe料金設定
 
 Vercel Productionに新料金のPrice IDを設定し、変更後はRedeployする。

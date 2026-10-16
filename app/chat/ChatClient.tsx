@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
 import { yuji } from "../fonts";
 import type { PlanKey } from "../lib1/planMaster";
+import type { SinglePurchaseKey } from "../lib/singlePurchase";
 import {
   clearFeedbackDraft,
   saveFeedbackDraft,
@@ -30,8 +31,8 @@ type ThreadItem = {
   preview: string;
 };
 
-type StatusOk = { ok: true; plan: string; used_talks: number | null; limit_talks: number | null };
-type StatusNg = { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null };
+type StatusOk = { ok: true; plan: string; used_talks: number | null; limit_talks: number | null; single_credits: number };
+type StatusNg = { ok: false; error: string; used_talks?: number | null; limit_talks?: number | null; single_credits?: number };
 type StatusRes = StatusOk | StatusNg;
 
 type ChatRes =
@@ -40,6 +41,7 @@ type ChatRes =
       plan: string;
       used_talks: number | null;
       limit_talks: number | null;
+      single_credits: number;
       message: string;
       conversation_id: string | null;
 
@@ -51,6 +53,7 @@ type ChatRes =
       error: string;
       used_talks?: number | null;
       limit_talks?: number | null;
+      single_credits?: number;
       conversation_id?: string | null;
 
       guardrail_block?: boolean;
@@ -281,6 +284,16 @@ const startCheckoutFromChat = async (planKey: PlanKey) => {
   }
 };
 
+const startSinglePurchaseFromChat = async (purchase: SinglePurchaseKey) => {
+  if (!planAgree) {
+    alert("利用規約への同意が必要です。");
+    return;
+  }
+
+  setPlanLoading(purchase);
+  window.location.href = `/checkout?purchase=${encodeURIComponent(purchase)}`;
+};
+
   const MAX_INPUT_LENGTH = 6000;
   const WARN_THRESHOLD = Math.floor(MAX_INPUT_LENGTH * 0.8); // 4800
   const cut = (s: string) => (s.length > MAX_INPUT_LENGTH ? s.slice(0, MAX_INPUT_LENGTH) : s);
@@ -293,6 +306,7 @@ const startCheckoutFromChat = async (planKey: PlanKey) => {
   const [statusLoaded, setStatusLoaded] = useState(false);
   const [usedTalks, setUsedTalks] = useState<number | null>(null);
   const [limitTalks, setLimitTalks] = useState<number | null>(null);
+  const [singleCredits, setSingleCredits] = useState(0);
 
   const [dialect, setDialect] = useState<Dialect>(() => (loadLocal("chat:dialect") === "kansai" ? "kansai" : "standard"));
   const [stance, setStance] = useState<Stance>(() => (loadLocal("chat:stance") === "zubatto" ? "zubatto" : "sanbo"));
@@ -342,7 +356,7 @@ const [aiTarget, setAiTarget] = useState<AiTarget | null>(null);
 
   const [planSheetOpen, setPlanSheetOpen] = useState(false);
 const [planAgree, setPlanAgree] = useState(false);
-const [planLoading, setPlanLoading] = useState<PlanKey | null>(null);
+const [planLoading, setPlanLoading] = useState<PlanKey | SinglePurchaseKey | null>(null);
 
   // pins (local)
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
@@ -516,8 +530,9 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
       setPlan(json.plan);
       setUsedTalks(json.used_talks);
       setLimitTalks(json.limit_talks);
+      setSingleCredits(json.single_credits);
       setStatusLoaded(true);
-      if (String(json.plan).toLowerCase() === "free") {
+      if (String(json.plan).toLowerCase() === "free" && json.single_credits <= 0) {
         setPlanSheetOpen(true);
       }
     } catch (e: any) {
@@ -707,22 +722,26 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
     });
   };
 
-  const canSend = (() => {
-    if (loading) return false;
-    if (!statusLoaded || String(plan).toLowerCase() === "free") return false;
+  const hasChatAccess = (() => {
+    if (!statusLoaded) return false;
     if (limitTalks === null) return true;
     const used = usedTalks ?? 0;
-    return used < limitTalks;
+    return used < (limitTalks ?? 0) || singleCredits > 0;
   })();
+
+  const canSend = !loading && hasChatAccess;
 
   const badge = (() => {
     // null = 無制限（allowlist）
-   if (limitTalks === null) return `プラン: ${plan} / 残り ∞ 回（無制限）`;
+   if (limitTalks === null) return `プラン: ${plan} / 残り ∞ 回（無制限）${singleCredits > 0 ? ` / 単発 ${singleCredits}回` : ""}`;
    // 0 or undefined は「未取得 or 未設定」扱い（表示は控えめに）
    if (limitTalks === undefined) return `プラン: ${plan}`;
     const used = usedTalks ?? 0;
     const left = Math.max(0, limitTalks - used);
-    return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）`;
+    if (String(plan).toLowerCase() === "free") {
+      return `単発クレジット: 残り ${singleCredits}回`;
+    }
+    return `プラン: ${plan} / 残り ${left} 回（${used}/${limitTalks}）${singleCredits > 0 ? ` / 単発 ${singleCredits}回` : ""}`;
   })();
 
   const openUrl = (url: string) => {
@@ -818,8 +837,8 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
   const sendMessage = async (overrideText?: string) => {
     const text = String(overrideText ?? input).trim();
     if (!text) return;
-    if (!statusLoaded || String(plan).toLowerCase() === "free") {
-      setErrMsg("プランを選択すると相談できます。");
+    if (!hasChatAccess) {
+      setErrMsg("月額プランまたは単発クレジットが必要です。");
       setPlanSheetOpen(true);
       return;
     }
@@ -881,6 +900,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
           setPlan("free");
           setUsedTalks(0);
           setLimitTalks(0);
+          setSingleCredits(json.single_credits ?? 0);
           setPlanSheetOpen(true);
           return;
         }
@@ -907,6 +927,7 @@ const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL || "";
       setPlan(json.plan);
       if (json.used_talks !== null && json.used_talks !== undefined) setUsedTalks(json.used_talks);
       if (json.limit_talks !== null && json.limit_talks !== undefined) setLimitTalks(json.limit_talks);
+      if (json.single_credits !== undefined) setSingleCredits(json.single_credits);
 
       const convId = json.conversation_id && isUuid(json.conversation_id) ? json.conversation_id : null;
 
@@ -1259,14 +1280,14 @@ const goFeedbackReport = () => {
             </div>
 
             {errMsg && <div className="errorLine">{errMsg}</div>}
-            {statusLoaded && String(plan).toLowerCase() === "free" && (
+            {statusLoaded && !hasChatAccess && (
               <button
                 type="button"
                 className="errorLine"
                 style={{ width: "100%", cursor: "pointer", textAlign: "center" }}
                 onClick={() => setPlanSheetOpen(true)}
               >
-                相談を始めるにはプランを選択してください
+                月額プランまたは単発相談を選択してください
               </button>
             )}
 
@@ -1419,8 +1440,8 @@ const goFeedbackReport = () => {
         maxLength={MAX_INPUT_LENGTH}
         // Enter送信は無効（誤爆防止）。送信はボタンのみ。
         placeholder={
-          statusLoaded && String(plan).toLowerCase() === "free"
-            ? "プラン選択後に相談できます"
+          statusLoaded && !hasChatAccess
+            ? "購入後に相談できます"
             : loading
               ? "回答中…"
               : "相談内容を入力"
@@ -1474,8 +1495,8 @@ const goFeedbackReport = () => {
         disabled={!canSend}
       >
         <span className="dockPlaceholder">
-          {statusLoaded && String(plan).toLowerCase() === "free"
-            ? "プラン選択後に相談できます"
+          {statusLoaded && !hasChatAccess
+            ? "購入後に相談できます"
             : loading
               ? "回答中…"
               : "相談内容を入力"}
@@ -1719,7 +1740,29 @@ const goFeedbackReport = () => {
       </div>
 
       <div className="sheetSection">
-        <div className="sheetLabel">継続利用にはプラン契約が必要です</div>
+        <div className="sheetLabel">必要な分だけ相談する</div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button
+            type="button"
+            style={{ ...BTN, width: "100%", textAlign: "left" }}
+            disabled={planLoading !== null}
+            onClick={() => startSinglePurchaseFromChat("single_1")}
+          >
+            1回だけ相談する　980円
+          </button>
+
+          <button
+            type="button"
+            style={{ ...BTN, width: "100%", textAlign: "left" }}
+            disabled={planLoading !== null}
+            onClick={() => startSinglePurchaseFromChat("single_3")}
+          >
+            3回相談パック　1,980円
+          </button>
+        </div>
+
+        <div className="sheetLabel" style={{ marginTop: 18 }}>継続して相談する方はこちら</div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <button

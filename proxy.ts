@@ -7,7 +7,7 @@ import {
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // ===== 0) allowlist（常に通す：ループ防止＆ログイン導線確保） =====
+  // ===== 0) allowlist（常に通す：ループ防止・ログイン導線・Stripe通知確保） =====
   const ALWAYS_ALLOW_PREFIXES = ["/maintenance", "/login", "/_next"];
   const AUTH_CALLBACK_PREFIXES = [
     "/auth/v1",
@@ -26,6 +26,7 @@ export async function proxy(req: NextRequest) {
     AUTH_CALLBACK_PREFIXES.some(
       (p) => pathname === p || pathname.startsWith(p + "/")
     ) ||
+    pathname === "/api/stripe/webhook" ||
     pathname === "/favicon.ico" ||
     STATIC_EXT_RE.test(pathname);
 

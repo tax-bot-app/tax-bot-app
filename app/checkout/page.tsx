@@ -5,6 +5,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabaseClient";
 import { trackOpenAICheckoutStarted } from "@/app/lib/openaiAds";
+import { isSinglePurchaseKey } from "@/app/lib/singlePurchase";
 
 const ALLOWED = new Set(["lite", "standard", "enterprise"]);
 
@@ -13,14 +14,21 @@ function CheckoutInner() {
   const sp = useSearchParams();
   const [msg, setMsg] = useState("決済画面を開いています…");
   const checkoutMeasuredRef = useRef(false);
+  const attemptIdRef = useRef("");
 
   useEffect(() => {
     const planRaw = String(sp.get("plan") ?? "").toLowerCase();
     const plan = ALLOWED.has(planRaw) ? planRaw : "";
+    const purchaseRaw = String(sp.get("purchase") ?? "").toLowerCase();
+    const purchase = isSinglePurchaseKey(purchaseRaw) ? purchaseRaw : "";
 
-    if (!plan) {
+    if ((!plan && !purchase) || (plan && purchase)) {
       window.location.href = "/";
       return;
+    }
+
+    if (!attemptIdRef.current) {
+      attemptIdRef.current = crypto.randomUUID();
     }
 
     (async () => {
@@ -34,19 +42,29 @@ function CheckoutInner() {
       }
 
       if (!token) {
-        window.location.href = `/login?plan=${encodeURIComponent(plan)}`;
+        const query = plan
+          ? `plan=${encodeURIComponent(plan)}`
+          : `purchase=${encodeURIComponent(purchase)}`;
+        window.location.href = `/login?${query}`;
         return;
       }
 
       try {
-        const res = await fetch("/api/create-checkout", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ plan }),
-        });
+        const res = await fetch(
+          purchase ? "/api/create-single-checkout" : "/api/create-checkout",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(
+              purchase
+                ? { purchase, attemptId: attemptIdRef.current }
+                : { plan }
+            ),
+          }
+        );
 
         const json = await res.json().catch(() => null);
         if (!res.ok || !json?.ok || !json?.url) {
@@ -58,8 +76,12 @@ function CheckoutInner() {
           checkoutMeasuredRef.current = true;
         }
         window.location.href = json.url;
-      } catch (e: any) {
-        setMsg(e?.message ?? "決済ページの作成に失敗しました。");
+      } catch (error: unknown) {
+        setMsg(
+          error instanceof Error
+            ? error.message
+            : "決済ページの作成に失敗しました。"
+        );
       }
     })();
   }, [sp, supabase]);

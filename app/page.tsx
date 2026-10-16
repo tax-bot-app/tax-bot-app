@@ -6,6 +6,7 @@ import Link from "next/link";
 import { getSupabaseClient } from "./lib/supabaseClient";
 import { trackDemoStart, trackInitiateCheckout, trackPlanView } from "./lib/metaPixel";
 import { trackOpenAILeadCreatedOnce } from "./lib/openaiAds";
+import type { SinglePurchaseKey } from "./lib/singlePurchase";
 
 type Plan = "lite" | "standard" | "enterprise";
 
@@ -44,6 +45,15 @@ const PLAN_META_PRICE: Record<Plan, number> = {
   standard: 4800,
   enterprise: 9800,
 };
+
+const SINGLE_PURCHASES: Array<{
+  key: SinglePurchaseKey;
+  title: string;
+  price: number;
+}> = [
+  { key: "single_1", title: "1回だけ相談する", price: 980 },
+  { key: "single_3", title: "3回相談パック", price: 1980 },
+];
 
 type CheckoutRes = { ok: true; url: string } | { ok: false; error: string };
 type DemoRes =
@@ -133,6 +143,7 @@ export default function Home() {
   const [agreed, setAgreed] = useState(false);
   const [plansOpen, setPlansOpen] = useState(false);
   const [busyPlan, setBusyPlan] = useState<Plan | null>(null);
+  const [busyPurchase, setBusyPurchase] = useState<SinglePurchaseKey | null>(null);
 
   const supabase = useMemo(() => {
     try {
@@ -351,6 +362,35 @@ const bypass = (() => {
       alert(`決済に進めません：${e?.message ?? String(e)}`);
     } finally {
       setBusyPlan(null);
+    }
+  };
+
+  const goSinglePurchase = async (purchase: SinglePurchaseKey, price: number) => {
+    if (!supabase) {
+      alert("初期化に失敗しています（Supabase環境変数を確認）");
+      return;
+    }
+    if (!agreed) {
+      alert("利用規約への同意が必要です。");
+      return;
+    }
+
+    setBusyPurchase(purchase);
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data.session?.access_token) {
+        window.location.href = `/login?purchase=${encodeURIComponent(purchase)}`;
+        return;
+      }
+
+      trackInitiateCheckout(purchase, price);
+      window.location.href = `/checkout?purchase=${encodeURIComponent(purchase)}`;
+    } catch (error: unknown) {
+      alert(
+        `決済に進めません：${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      setBusyPurchase(null);
     }
   };
 
@@ -1173,8 +1213,79 @@ const bypass = (() => {
               </div>
 
               <div style={styles.planGrid}>
+                {SINGLE_PURCHASES.map((purchase) => {
+                  const disabled =
+                    !supabase || busyPlan !== null || busyPurchase !== null || !agreed;
+                  return (
+                    <button
+                      key={purchase.key}
+                      onClick={() =>
+                        goSinglePurchase(purchase.key, purchase.price)
+                      }
+                      disabled={disabled}
+                      style={{
+                        ...styles.planBtn,
+                        opacity: disabled ? 0.6 : 1,
+                        cursor: disabled ? "not-allowed" : "pointer",
+                        background: "#fff",
+                        border: "1px solid rgba(176,132,52,0.35)",
+                      }}
+                    >
+                      <div style={styles.planTop}>
+                        <div>
+                          <div style={{ fontSize: 18, fontWeight: 950 }}>
+                            {purchase.title}
+                          </div>
+                          <div
+                            style={{
+                              color: "rgba(11,18,32,0.68)",
+                              fontSize: 13,
+                              marginTop: 2,
+                            }}
+                          >
+                            一回払い・自動更新なし・有効期限なし
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 14,
+                            color: "rgba(11,18,32,0.92)",
+                            fontWeight: 900,
+                            whiteSpace: "nowrap",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {purchase.price.toLocaleString("ja-JP")}円
+                        </div>
+                      </div>
+                      {busyPurchase === purchase.key && (
+                        <div
+                          style={{
+                            marginTop: 10,
+                            color: "rgba(11,18,32,0.75)",
+                          }}
+                        >
+                          決済ページを開いています…
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+
+                <div
+                  style={{
+                    marginTop: 14,
+                    color: "rgba(11,18,32,0.72)",
+                    fontSize: 13,
+                    fontWeight: 800,
+                  }}
+                >
+                  継続して相談する方はこちら
+                </div>
+
                 {PLANS.map((p) => {
-                  const disabled = !supabase || busyPlan !== null || !agreed;
+                  const disabled =
+                    !supabase || busyPlan !== null || busyPurchase !== null || !agreed;
                   return (
                     <button
                       key={p.key}

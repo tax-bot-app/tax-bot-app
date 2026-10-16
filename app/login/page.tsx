@@ -4,8 +4,14 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createBrowserClient } from "@supabase/ssr";
 import { Eye, EyeOff } from "lucide-react";
+import { isSinglePurchaseKey } from "@/app/lib/singlePurchase";
 
 type Msg = { kind: "error" | "info"; text: string } | null;
+type CheckoutPlan = "lite" | "standard" | "enterprise";
+
+function isCheckoutPlan(value: string): value is CheckoutPlan {
+  return value === "lite" || value === "standard" || value === "enterprise";
+}
 
 function normalizeEmail(s: string) {
   return String(s ?? "").trim().toLowerCase();
@@ -39,7 +45,14 @@ function LoginInner() {
   const router = useRouter();
   const sp = useSearchParams();
   const planRaw = String(sp.get("plan") ?? "").toLowerCase();
-  const plan = (["lite", "standard", "enterprise"] as const).includes(planRaw as any) ? planRaw : "";
+  const plan = isCheckoutPlan(planRaw) ? planRaw : "";
+  const purchaseRaw = String(sp.get("purchase") ?? "").toLowerCase();
+  const purchase = isSinglePurchaseKey(purchaseRaw) ? purchaseRaw : "";
+  const checkoutPath = plan
+    ? `/checkout?plan=${encodeURIComponent(plan)}`
+    : purchase
+      ? `/checkout?purchase=${encodeURIComponent(purchase)}`
+      : "/chat";
 
   const supabase = useMemo(() => {
     return createBrowserClient(
@@ -67,14 +80,14 @@ function LoginInner() {
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       if (data.session) {
-        router.replace(plan ? `/checkout?plan=${encodeURIComponent(plan)}` : "/chat");
+        router.replace(checkoutPath);
         router.refresh();
       }
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) {
-        router.replace(plan ? `/checkout?plan=${encodeURIComponent(plan)}` : "/chat");
+        router.replace(checkoutPath);
         router.refresh();
       }
     });
@@ -83,7 +96,7 @@ function LoginInner() {
       mounted = false;
       sub.subscription.unsubscribe();
     };
-  }, [router, supabase, plan]);
+  }, [checkoutPath, router, supabase]);
 
   const signIn = async () => {
     setMsg(null);
@@ -124,7 +137,12 @@ if (busy) return; // 二重クリック防止
 
     setBusy(true);
     try {
-      const emailRedirectTo = `${window.location.origin}/auth/callback${plan ? `?plan=${encodeURIComponent(plan)}` : ""}`;
+      const checkoutQuery = plan
+        ? `?plan=${encodeURIComponent(plan)}`
+        : purchase
+          ? `?purchase=${encodeURIComponent(purchase)}`
+          : "";
+      const emailRedirectTo = `${window.location.origin}/auth/callback${checkoutQuery}`;
 
       const { data, error } = await supabase.auth.signUp({
         email: e,
@@ -144,7 +162,7 @@ if (busy) return; // 二重クリック防止
 
       setMsg({
         kind: "info",
-        text: plan
+        text: plan || purchase
           ? "登録を受け付けました。確認メールのリンクを開くと、そのまま決済画面に進みます（迷惑メールもご確認ください）。"
           : "登録を受け付けました。確認メールのリンクを開くと、プラン選択に進みます（迷惑メールもご確認ください）。",
       });

@@ -14,6 +14,7 @@ import {
   type ResolvedCheckoutUserIdentity,
 } from "../../../lib/checkoutUserIdentity";
 import { selectBestStripePlan } from "../../../lib/stripePlanSelection";
+import { resolveSinglePurchaseByPriceId } from "../../../lib/singlePurchase";
 import {
   stripeRouteErrorDiagnostic,
   stripeRouteErrorMessage,
@@ -448,6 +449,55 @@ async function syncUserPlanByCustomerId(customerId: string): Promise<{
   return { userId: updated.userId, monthly_quota: best.monthly_quota };
 }
 
+async function grantSingleCreditsForSession(
+  session: Stripe.Checkout.Session
+): Promise<void> {
+  if (
+    session.mode !== "payment" ||
+    session.payment_status !== "paid" ||
+    session.metadata?.checkout_kind !== "single_credit"
+  ) {
+    throw new Error("Single credit Checkout is not paid");
+  }
+
+  const userId = session.metadata?.user_id?.trim();
+  if (!userId) throw new Error("Single credit Checkout has no user identity");
+
+  const lineItems = await stripeClient().checkout.sessions.listLineItems(
+    session.id,
+    { limit: 10 }
+  );
+  const item = lineItems.data[0];
+  const definition = resolveSinglePurchaseByPriceId(item?.price?.id);
+
+  if (
+    lineItems.data.length !== 1 ||
+    item?.quantity !== 1 ||
+    !definition ||
+    session.metadata?.single_purchase !== definition.key
+  ) {
+    throw new Error("Single credit Checkout has an unknown product");
+  }
+
+  const { data, error } = await adminSupabase().rpc("grant_single_credits", {
+    p_user_id: userId,
+    p_credits: definition.credits,
+    p_source_key: `stripe_checkout:${session.id}`,
+  });
+  if (error) throw error;
+
+  const result = Array.isArray(data) ? data[0] : data;
+  if (!result || typeof result.balance !== "number") {
+    throw new Error("Single credit grant returned no balance");
+  }
+
+  console.log("[single-credit] grant applied", {
+    credits: definition.credits,
+    granted: Boolean(result.granted),
+    balance: result.balance,
+  });
+}
+
 export async function POST(req: Request) {
   const sig = req.headers.get("stripe-signature");
   if (!sig) {
@@ -514,9 +564,35 @@ export async function POST(req: Request) {
       created: event.created,
     }));
 
+    if (event.type === "checkout.session.async_payment_succeeded") {
+      const session = event.data.object as Stripe.Checkout.Session;
+      if (
+        session.mode === "payment" &&
+        session.metadata?.checkout_kind === "single_credit"
+      ) {
+        await grantSingleCreditsForSession(session);
+      }
+      return processedResponse(event.id, processingToken);
+    }
+
+    if (event.type === "checkout.session.async_payment_failed") {
+      return processedResponse(event.id, processingToken);
+    }
+
     // 1) Checkout完了（emailが取れる最強イベント）
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
+
+      if (session.mode === "payment") {
+        if (session.metadata?.checkout_kind !== "single_credit") {
+          throw new Error("Unknown one-time Checkout product");
+        }
+
+        if (session.payment_status === "paid") {
+          await grantSingleCreditsForSession(session);
+        }
+        return processedResponse(event.id, processingToken);
+      }
 
       const customerId =
         typeof session.customer === "string" ? session.customer : null;
