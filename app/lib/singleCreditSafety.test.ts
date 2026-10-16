@@ -38,7 +38,10 @@ describe("single credit payment and consumption safety", () => {
     expect(chat.indexOf("core.answer")).toBeLessThan(
       chat.indexOf('rpc("consume_single_credit"')
     );
-    expect(migration).toContain("and balance > 0");
+    expect(migration).toContain("and credit_balance.balance > 0");
+    expect(migration).toContain(
+      "set balance = credit_balance.balance - 1"
+    );
     expect(migration).toContain("check (balance >= 0)");
   });
 
